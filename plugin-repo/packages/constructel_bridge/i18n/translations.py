@@ -60,6 +60,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pg.configured": "QGIS connection 'constructel_bridge' configured",
         "pg.already_configured": "QGIS connection 'constructel_bridge' already set up — skipped",
 
+        # -- Layer datasource check --
+        "layers.bad_host": "{count} layer(s) still point to localhost ({names}). "
+                           "Re-save the project with the correct server ({host}).",
+
         # -- Language dialog --
         "lang.title": "Constructel Bridge - Language",
         "lang.prompt": "Select language:",
@@ -213,6 +217,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- QGIS PG connection --
         "pg.configured": "Connexion QGIS 'constructel_bridge' configuree",
         "pg.already_configured": "Connexion QGIS 'constructel_bridge' deja en place — ignoree",
+
+        # -- Layer datasource check --
+        "layers.bad_host": "{count} couche(s) pointent encore vers localhost ({names}). "
+                           "Re-sauvegardez le projet avec le bon serveur ({host}).",
 
         # -- Language dialog --
         "lang.title": "Constructel Bridge - Langue",
@@ -369,6 +377,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- QGIS PG connection --
         "pg.configured": "Ligacao QGIS 'constructel_bridge' configurada",
         "pg.already_configured": "Ligacao QGIS 'constructel_bridge' ja configurada — ignorada",
+
+        # -- Layer datasource check --
+        "layers.bad_host": "{count} camada(s) ainda apontam para localhost ({names}). "
+                           "Guarde novamente o projeto com o servidor correto ({host}).",
 
         # -- Language dialog --
         "lang.title": "Constructel Bridge - Idioma",
