@@ -9,6 +9,8 @@ Affiche apres la premiere connexion reussie:
   Page 4: Resume et finalisation
 """
 
+import re
+
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtWidgets import (
@@ -91,15 +93,25 @@ class UserProfilePage(QWizardPage):
         self._username_edit.setReadOnly(True)
         form.addRow(tr("onboard.user.field_id"), self._username_edit)
 
+        # Split PascalCase username (e.g. "SimonDucourneau" -> "Simon", "Ducourneau")
+        parts = re.findall(r'[A-Z][a-z]*|[a-z]+', username)
+        if len(parts) >= 2:
+            default_first = parts[0]
+            default_last = " ".join(parts[1:])
+        else:
+            default_first = ""
+            default_last = username
+
         self._firstname_edit = QLineEdit()
         self._firstname_edit.setPlaceholderText(tr("onboard.user.field_firstname_hint"))
         self.registerField("first_name", self._firstname_edit)
+        self._firstname_edit.setText(default_first)
         form.addRow(tr("onboard.user.field_firstname"), self._firstname_edit)
 
         self._lastname_edit = QLineEdit()
         self._lastname_edit.setPlaceholderText(tr("onboard.user.field_lastname_hint"))
         self.registerField("last_name", self._lastname_edit)
-        self._lastname_edit.setText(username)
+        self._lastname_edit.setText(default_last)
         form.addRow(tr("onboard.user.field_lastname"), self._lastname_edit)
 
         self._email_edit = QLineEdit()
@@ -124,15 +136,10 @@ class UserProfilePage(QWizardPage):
         layout.addWidget(note)
 
     def _build_email(self, *_) -> str:
-        """Build email from firstname.lastname (lowercase, no spaces)."""
+        """Build email from firstnamelastname (lowercase, no dots, no spaces)."""
         first = self._firstname_edit.text().strip() if hasattr(self, "_firstname_edit") else ""
         last = self._lastname_edit.text().strip() if hasattr(self, "_lastname_edit") else ""
-        if first and last:
-            local = f"{first}.{last}"
-        elif last:
-            local = last
-        else:
-            local = "user"
+        local = f"{first}{last}" if first or last else "user"
         # Lowercase, remove spaces
         local = local.lower().replace(" ", "")
         return f"{local}@{self._EMAIL_DOMAIN}"
