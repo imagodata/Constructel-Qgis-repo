@@ -1,0 +1,22 @@
+services:
+  qgis-repo:
+    build: .
+    container_name: qgis-repo
+    restart: unless-stopped
+    ports:
+      - "192.168.160.31:9080:80"
+      - "192.168.160.31:9081:81"
+    volumes:
+      - plugin-repo:/data/plugin-repo
+      - resource-repo:/data/resource-repo
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  plugin-repo:
+    driver: local
+  resource-repo:
+    driver: local

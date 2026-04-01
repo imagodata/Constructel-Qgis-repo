@@ -1,0 +1,12 @@
+.git
+.gitignore
+.claude
+docs
+scripts
+*.md
+*.py
+*.service
+*.zip
+consolidate_networks.zip
+merge_gpkg_by_jms_legacy.py
+resource-repo.git
