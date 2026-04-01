@@ -31,7 +31,7 @@ TAG = "Constructel Bridge"
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "192.168.160.31")
+DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or "192.168.160.31"
 DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", "5432"))
 DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "wyre_ftth")
 DEFAULT_USER = "ftth_editor"
@@ -88,8 +88,14 @@ class ConstructelBridgePlugin:
         self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_language)
         self._actions.append(action_language)
 
+        # Corriger une eventuelle connexion QGIS sauvegardee avec un mauvais host
+        self._fix_saved_pg_connection()
+
         # Auto-connect au demarrage si le password est deja en memoire
-        self._try_auto_connect()
+        try:
+            self._try_auto_connect()
+        except Exception as exc:
+            self._log(f"Auto-connect failed: {exc}", Qgis.Warning)
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -141,10 +147,10 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _try_auto_connect(self):
-        """Tente une connexion automatique si le mot de passe est stocke."""
-        password = QgsSettings().value("constructel_bridge/password", "") or _DEFAULT_PW
-        if password:
-            self._connect(password)
+        """Tente une connexion automatique uniquement si le mot de passe a ete sauvegarde."""
+        stored_pw = QgsSettings().value("constructel_bridge/password", "")
+        if stored_pw:
+            self._connect(stored_pw)
 
     def _on_connect(self):
         """Action manuelle: dialogue de connexion."""
@@ -183,29 +189,47 @@ class ConstructelBridgePlugin:
             )
             self._conn.autocommit = True
         except Exception as exc:
-            self._log(f"Connection failed: {exc}", Qgis.Critical)
+            self._log(
+                f"Connection failed to {DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DBNAME}: {exc}",
+                Qgis.Critical,
+            )
             QMessageBox.critical(
                 self.iface.mainWindow(),
                 "Constructel Bridge",
-                tr("conn.failed", error=exc),
+                tr("conn.failed", error=f"{DEFAULT_HOST}:{DEFAULT_PORT} — {exc}"),
             )
             return
 
         self._connected = True
         self._log(tr("conn.established"))
 
-        is_new_user = self._register_bridge_user()
-        self._setup_qgis_pg_connection(password)
-        self._hook_layers()
+        try:
+            is_new_user = self._register_bridge_user()
+        except Exception as exc:
+            self._log(f"User registration failed: {exc}", Qgis.Warning)
+            is_new_user = False
+
+        try:
+            self._setup_qgis_pg_connection(password)
+        except Exception as exc:
+            self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
+
+        try:
+            self._hook_layers()
+        except Exception as exc:
+            self._log(f"Hook install failed: {exc}", Qgis.Warning)
 
         self.iface.messageBar().pushSuccess(
             "Constructel Bridge",
             tr("conn.connected_as", user=self._bridge_user),
         )
 
-        onboarding_done = QgsSettings().value("constructel_bridge/onboarding_done", False)
-        if not onboarding_done or is_new_user:
-            self._run_onboarding(is_new_user)
+        try:
+            onboarding_done = QgsSettings().value("constructel_bridge/onboarding_done", False)
+            if not onboarding_done or is_new_user:
+                self._run_onboarding(is_new_user)
+        except Exception as exc:
+            self._log(f"Onboarding failed: {exc}", Qgis.Warning)
 
     # =====================================================================
     # Identification et enregistrement utilisateur
@@ -290,10 +314,41 @@ class ConstructelBridgePlugin:
     # Configuration connexion QGIS
     # =====================================================================
 
-    def _setup_qgis_pg_connection(self, password: str):
-        """Enregistre la connexion PostgreSQL dans les settings QGIS."""
+    def _fix_saved_pg_connection(self):
+        """Corrige le host de la connexion QGIS sauvegardee si elle pointe vers localhost."""
         settings = QgsSettings()
         base = "PostgreSQL/connections/constructel_bridge"
+        existing_host = settings.value(f"{base}/host", "")
+        if existing_host and existing_host != DEFAULT_HOST:
+            self._log(
+                f"Fixing saved PG connection: {existing_host} -> {DEFAULT_HOST}",
+                Qgis.Warning,
+            )
+            settings.setValue(f"{base}/host", DEFAULT_HOST)
+            settings.setValue(f"{base}/port", str(DEFAULT_PORT))
+            settings.setValue(f"{base}/database", DEFAULT_DBNAME)
+
+    def _setup_qgis_pg_connection(self, password: str):
+        """Enregistre la connexion PostgreSQL dans les settings QGIS si absente ou différente."""
+        settings = QgsSettings()
+        base = "PostgreSQL/connections/constructel_bridge"
+
+        # Vérifie si la connexion existe déjà avec les mêmes paramètres
+        existing_host = settings.value(f"{base}/host", "")
+        existing_port = settings.value(f"{base}/port", "")
+        existing_db = settings.value(f"{base}/database", "")
+        existing_user = settings.value(f"{base}/username", "")
+        existing_pw = settings.value(f"{base}/password", "")
+
+        if (
+            existing_host == DEFAULT_HOST
+            and existing_port == str(DEFAULT_PORT)
+            and existing_db == DEFAULT_DBNAME
+            and existing_user == DEFAULT_USER
+            and existing_pw == password
+        ):
+            self._log(tr("pg.already_configured"))
+            return
 
         settings.setValue(f"{base}/host", DEFAULT_HOST)
         settings.setValue(f"{base}/port", str(DEFAULT_PORT))
