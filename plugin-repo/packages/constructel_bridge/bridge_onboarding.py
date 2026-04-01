@@ -64,10 +64,17 @@ RESOURCE_SHARING_REPO_URL = "http://192.168.160.31:9081/"
 # =========================================================================
 class UserProfilePage(QWizardPage):
 
-    def __init__(self, username: str, user_id: str, is_new: bool, parent=None):
+    _EMAIL_DOMAIN = "constructel.be"  # overridden in __init__ from credentials
+
+    def __init__(self, username: str, user_id: str, is_new: bool, parent=None, email_domain: str = ""):
         super().__init__(parent)
+        if email_domain:
+            self._EMAIL_DOMAIN = email_domain
         self.setTitle(tr("onboard.user.title"))
         self.setSubTitle(tr("onboard.user.subtitle"))
+
+        # Track whether the user has manually edited the email
+        self._email_manual = False
 
         layout = QVBoxLayout(self)
 
@@ -89,21 +96,59 @@ class UserProfilePage(QWizardPage):
         self.registerField("first_name", self._firstname_edit)
         form.addRow(tr("onboard.user.field_firstname"), self._firstname_edit)
 
-        self._lastname_edit = QLineEdit(username)
+        self._lastname_edit = QLineEdit()
         self._lastname_edit.setPlaceholderText(tr("onboard.user.field_lastname_hint"))
-        self.registerField("last_name*", self._lastname_edit)
+        self.registerField("last_name", self._lastname_edit)
+        self._lastname_edit.setText(username)
         form.addRow(tr("onboard.user.field_lastname"), self._lastname_edit)
 
-        self._email_edit = QLineEdit(f"{username}@constructel.be")
+        self._email_edit = QLineEdit()
         self._email_edit.setPlaceholderText(tr("onboard.user.field_email_hint"))
-        self.registerField("email*", self._email_edit)
+        self.registerField("email", self._email_edit)
+        self._email_edit.setText(self._build_email(username))
         form.addRow(tr("onboard.user.field_email"), self._email_edit)
 
         layout.addLayout(form)
 
+        # Connect signals: firstname/lastname changes update email automatically
+        self._firstname_edit.textChanged.connect(self._sync_email)
+        self._lastname_edit.textChanged.connect(self._sync_email)
+        self._email_edit.textEdited.connect(self._on_email_edited)
+
+        # Notify wizard when completeness changes
+        self._lastname_edit.textChanged.connect(self.completeChanged)
+        self._email_edit.textChanged.connect(self.completeChanged)
+
         note = QLabel(tr("onboard.user.note"))
         note.setWordWrap(True)
         layout.addWidget(note)
+
+    def _build_email(self, *_) -> str:
+        """Build email from firstname.lastname (lowercase, no spaces)."""
+        first = self._firstname_edit.text().strip() if hasattr(self, "_firstname_edit") else ""
+        last = self._lastname_edit.text().strip() if hasattr(self, "_lastname_edit") else ""
+        if first and last:
+            local = f"{first}.{last}"
+        elif last:
+            local = last
+        else:
+            local = "user"
+        # Lowercase, remove spaces
+        local = local.lower().replace(" ", "")
+        return f"{local}@{self._EMAIL_DOMAIN}"
+
+    def _sync_email(self):
+        """Auto-update email when name fields change (unless user edited manually)."""
+        if not self._email_manual:
+            self._email_edit.setText(self._build_email())
+
+    def _on_email_edited(self):
+        """Mark email as manually edited so auto-sync stops."""
+        self._email_manual = True
+
+    def isComplete(self) -> bool:
+        """Page is complete when last_name and email are filled."""
+        return bool(self._lastname_edit.text().strip() and self._email_edit.text().strip())
 
 
 # =========================================================================
@@ -244,6 +289,7 @@ class OnboardingWizard(QWizard):
         user_id: str,
         is_new_user: bool,
         db_conn=None,
+        email_domain: str = "",
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("wizard.title"))
@@ -256,7 +302,7 @@ class OnboardingWizard(QWizard):
         self._db_conn = db_conn
         self._actions_done: list[str] = []
 
-        self._page_user = UserProfilePage(username, user_id, is_new_user)
+        self._page_user = UserProfilePage(username, user_id, is_new_user, email_domain=email_domain)
         self._page_plugins = PluginBundlePage()
         self._page_rs = ResourceSharingPage()
         self._page_summary = SummaryPage()

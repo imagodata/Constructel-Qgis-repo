@@ -28,6 +28,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.role": "Role:",
         "dialog.password": "Password:",
         "dialog.password_placeholder": "ftth_editor password",
+        "dialog.show_password": "Show password",
+        "dialog.hide_password": "Hide password",
         "dialog.save_password": "Remember password",
 
         # -- Connection messages --
@@ -186,6 +188,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.role": "Role:",
         "dialog.password": "Mot de passe:",
         "dialog.password_placeholder": "Mot de passe ftth_editor",
+        "dialog.show_password": "Afficher le mot de passe",
+        "dialog.hide_password": "Masquer le mot de passe",
         "dialog.save_password": "Retenir le mot de passe",
 
         # -- Connection messages --
@@ -346,6 +350,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "dialog.role": "Papel:",
         "dialog.password": "Palavra-passe:",
         "dialog.password_placeholder": "Palavra-passe ftth_editor",
+        "dialog.show_password": "Mostrar palavra-passe",
+        "dialog.hide_password": "Ocultar palavra-passe",
         "dialog.save_password": "Guardar palavra-passe",
 
         # -- Connection messages --
