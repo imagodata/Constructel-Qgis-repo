@@ -16,6 +16,8 @@ from typing import Optional
 from qgis.core import (
     Qgis,
     QgsApplication,
+    QgsAuthMethodConfig,
+    QgsDataSourceUri,
     QgsMessageLog,
     QgsProject,
     QgsSettings,
@@ -28,19 +30,125 @@ from qgis.PyQt.QtWidgets import QAction, QDialog, QInputDialog, QMessageBox
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 
 TAG = "Constructel Bridge"
+AUTH_CFG_NAME = "constructel_bridge_pw"
 
 # ---------------------------------------------------------------------------
-# Defaults
+# Credentials — loaded from credentials.json next to this file
 # ---------------------------------------------------------------------------
-DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or "192.168.160.31"
-DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", "5432"))
-DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "wyre_ftth")
-DEFAULT_USER = "ftth_editor"
-_DEFAULT_PW = base64.b64decode("aXQ0RG9BNXV6aHZjZk9OWVVsUWNXQT09").decode()
-DEFAULT_SRID = 31370
-PG_SERVICE_NAME = "constructel_bridge"
+_CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
+
+def _load_credentials() -> dict:
+    """Load connection parameters from credentials.json."""
+    import json
+    with open(_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+_CREDS = _load_credentials()
+
+DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _CREDS["host"]
+DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_CREDS["port"])))
+DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _CREDS["dbname"]
+DEFAULT_USER = _CREDS["user"]
+_DEFAULT_PW = base64.b64decode(_CREDS["password"]).decode()
+DEFAULT_SRID = _CREDS.get("srid", 31370)
+DEFAULT_SSLMODE = _CREDS.get("sslmode", "require")
+PG_SERVICE_NAME = _CREDS.get("service_name", "constructel_bridge")
+EMAIL_DOMAIN = _CREDS.get("email_domain", "constructel.be")
 
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
+
+
+def _ensure_auth_manager_ready() -> bool:
+    """Ensure the Auth Manager is initialized and master password is set.
+
+    Prompts the user to set a master password if not yet configured.
+    Returns True if Auth Manager is ready.
+    """
+    auth_mgr = QgsApplication.authManager()
+    if not auth_mgr.isDisabled():
+        if not auth_mgr.masterPasswordIsSet():
+            # This will prompt the user to enter/create a master password
+            return auth_mgr.setMasterPassword(True)
+        return True
+    return False
+
+
+def _store_password_encrypted(password: str) -> bool:
+    """Store the password in QGIS Auth Manager (encrypted SQLite DB).
+
+    Returns True on success.
+    """
+    if not _ensure_auth_manager_ready():
+        QgsMessageLog.logMessage(
+            "Auth Manager not available, cannot store encrypted password.",
+            TAG, level=Qgis.Warning,
+        )
+        return False
+    auth_mgr = QgsApplication.authManager()
+    # Look for an existing config with our name
+    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    if cfg_id and cfg_id in auth_mgr.configIds():
+        # Update existing config
+        config = QgsAuthMethodConfig()
+        auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
+        config.setConfig("password", password)
+        ok = auth_mgr.updateAuthenticationConfig(config)
+    else:
+        # Create new config
+        config = QgsAuthMethodConfig("Basic")
+        config.setName(AUTH_CFG_NAME)
+        config.setConfig("username", DEFAULT_USER)
+        config.setConfig("password", password)
+        ok = auth_mgr.storeAuthenticationConfig(config)
+        if ok:
+            QgsSettings().setValue("constructel_bridge/auth_cfg_id", config.id())
+    # Remove legacy plaintext password if present
+    QgsSettings().remove("constructel_bridge/password")
+    return ok
+
+
+def _retrieve_password_encrypted() -> str:
+    """Retrieve the password from QGIS Auth Manager.
+
+    Returns the password string, or empty string if not found.
+    """
+    if not _ensure_auth_manager_ready():
+        return ""
+    auth_mgr = QgsApplication.authManager()
+    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    if not cfg_id or cfg_id not in auth_mgr.configIds():
+        # Fallback: check legacy plaintext storage and migrate
+        legacy_pw = QgsSettings().value("constructel_bridge/password", "")
+        if legacy_pw:
+            _store_password_encrypted(legacy_pw)
+            return legacy_pw
+        return ""
+    config = QgsAuthMethodConfig()
+    auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
+    return config.config("password", "")
+
+
+def _remove_stored_password():
+    """Remove the stored password from Auth Manager and legacy settings."""
+    auth_mgr = QgsApplication.authManager()
+    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    if cfg_id and cfg_id in auth_mgr.configIds():
+        auth_mgr.removeAuthenticationConfig(cfg_id)
+    QgsSettings().remove("constructel_bridge/auth_cfg_id")
+    QgsSettings().remove("constructel_bridge/password")
+
+
+def _get_plugin_version() -> str:
+    """Read current plugin version from metadata.txt."""
+    meta_path = os.path.join(os.path.dirname(__file__), "metadata.txt")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("version="):
+                return line.strip().split("=", 1)[1]
+    return ""
+
+
+PLUGIN_VERSION = _get_plugin_version()
 
 
 class ConstructelBridgePlugin:
@@ -92,14 +200,30 @@ class ConstructelBridgePlugin:
         self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_language)
         self._actions.append(action_language)
 
-        # Corriger une eventuelle connexion QGIS sauvegardee avec un mauvais host
-        self._fix_saved_pg_connection()
+        # Toujours forcer la connexion QGIS PG depuis credentials.json
+        self._setup_qgis_pg_connection(_DEFAULT_PW)
 
-        # Auto-connect au demarrage si le password est deja en memoire
-        try:
-            self._try_auto_connect()
-        except Exception as exc:
-            self._log(f"Auto-connect failed: {exc}", Qgis.Warning)
+        # Detecter install/mise a jour: comparer version stockee vs actuelle
+        settings = QgsSettings()
+        stored_version = settings.value("constructel_bridge/plugin_version", "")
+        is_fresh = (stored_version != PLUGIN_VERSION)
+
+        if is_fresh:
+            # Nouvelle install ou mise a jour: nettoyer et ouvrir le dialog
+            _remove_stored_password()
+            settings.remove("constructel_bridge/onboarding_done")
+            settings.setValue("constructel_bridge/plugin_version", PLUGIN_VERSION)
+            self._log(
+                f"Plugin {'installed' if not stored_version else 'updated'}: "
+                f"{stored_version or '(none)'} -> {PLUGIN_VERSION}"
+            )
+            self._on_connect()
+        else:
+            # Version inchangee: auto-connect si password sauvegarde
+            try:
+                self._try_auto_connect()
+            except Exception as exc:
+                self._log(f"Auto-connect failed: {exc}", Qgis.Warning)
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -152,11 +276,10 @@ class ConstructelBridgePlugin:
 
     def _try_auto_connect(self):
         """Tente une connexion automatique uniquement si le mot de passe a ete sauvegarde."""
-        stored_pw = QgsSettings().value("constructel_bridge/password", "")
+        stored_pw = _retrieve_password_encrypted()
         if stored_pw:
             if not self._connect(stored_pw, silent=True):
-                # Mot de passe stocke invalide : on le supprime et on ouvre le dialogue
-                QgsSettings().remove("constructel_bridge/password")
+                _remove_stored_password()
                 self._log("Stored password invalid, cleared. Opening connection dialog.", Qgis.Warning)
                 self._on_connect()
 
@@ -169,12 +292,12 @@ class ConstructelBridgePlugin:
             host=DEFAULT_HOST,
             port=DEFAULT_PORT,
             dbname=DEFAULT_DBNAME,
+            default_password=_DEFAULT_PW,
         )
         if dlg.exec_() == QDialog.Accepted:
             password = dlg.password() or _DEFAULT_PW
-            save = dlg.save_password()
-            if save:
-                QgsSettings().setValue("constructel_bridge/password", password)
+            if dlg.save_password():
+                _store_password_encrypted(password)
             self._connect(password)
 
     def _connect(self, password: str, silent: bool = False):
@@ -197,7 +320,8 @@ class ConstructelBridgePlugin:
                 user=DEFAULT_USER,
                 password=password,
                 application_name=app_name,
-                options="-c search_path=infra,public",
+                options="-c search_path=infra",
+                sslmode=DEFAULT_SSLMODE,
             )
             self._conn.autocommit = True
         except Exception as exc:
@@ -223,7 +347,7 @@ class ConstructelBridgePlugin:
             is_new_user = False
 
         try:
-            self._setup_qgis_pg_connection(password)
+            self._setup_qgis_pg_connection(password, use_authcfg=True)
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
@@ -334,20 +458,6 @@ class ConstructelBridgePlugin:
     # Configuration connexion QGIS
     # =====================================================================
 
-    def _fix_saved_pg_connection(self):
-        """Corrige le host de la connexion QGIS sauvegardee si elle pointe vers localhost."""
-        settings = QgsSettings()
-        base = "PostgreSQL/connections/constructel_bridge"
-        existing_host = settings.value(f"{base}/host", "")
-        if existing_host and existing_host != DEFAULT_HOST:
-            self._log(
-                f"Fixing saved PG connection: {existing_host} -> {DEFAULT_HOST}",
-                Qgis.Warning,
-            )
-            settings.setValue(f"{base}/host", DEFAULT_HOST)
-            settings.setValue(f"{base}/port", str(DEFAULT_PORT))
-            settings.setValue(f"{base}/database", DEFAULT_DBNAME)
-
     def _check_layer_datasources(self):
         """Verifie que les couches PostgreSQL ne pointent pas vers localhost."""
         bad_hosts = ("localhost", "127.0.0.1", "::1")
@@ -381,36 +491,24 @@ class ConstructelBridgePlugin:
                 ),
             )
 
-    def _setup_qgis_pg_connection(self, password: str):
-        """Enregistre la connexion PostgreSQL dans les settings QGIS si absente ou différente."""
+    def _setup_qgis_pg_connection(self, password: str, use_authcfg: bool = False):
+        """Enregistre la connexion PostgreSQL dans les settings QGIS.
+
+        Always writes all values to ensure consistency and fix any
+        leftover misconfiguration from previous plugin versions.
+
+        When *use_authcfg* is True, stores credentials in Auth Manager
+        and references the authcfg ID instead of storing the password
+        in plaintext (equivalent to "Convertir en configuration").
+        """
         settings = QgsSettings()
         base = "PostgreSQL/connections/constructel_bridge"
-
-        # Vérifie si la connexion existe déjà avec les mêmes paramètres
-        existing_host = settings.value(f"{base}/host", "")
-        existing_port = settings.value(f"{base}/port", "")
-        existing_db = settings.value(f"{base}/database", "")
-        existing_user = settings.value(f"{base}/username", "")
-        existing_pw = settings.value(f"{base}/password", "")
-
-        if (
-            existing_host == DEFAULT_HOST
-            and existing_port == str(DEFAULT_PORT)
-            and existing_db == DEFAULT_DBNAME
-            and existing_user == DEFAULT_USER
-            and existing_pw == password
-        ):
-            self._log(tr("pg.already_configured"))
-            return
 
         settings.setValue(f"{base}/host", DEFAULT_HOST)
         settings.setValue(f"{base}/port", str(DEFAULT_PORT))
         settings.setValue(f"{base}/database", DEFAULT_DBNAME)
         settings.setValue(f"{base}/username", DEFAULT_USER)
-        settings.setValue(f"{base}/password", password)
-        settings.setValue(f"{base}/saveUsername", True)
-        settings.setValue(f"{base}/savePassword", True)
-        settings.setValue(f"{base}/sslmode", "1")
+        settings.setValue(f"{base}/sslmode", "3")
         settings.setValue(f"{base}/estimatedMetadata", True)
         settings.setValue(f"{base}/allowGeometrylessTables", False)
         settings.setValue(f"{base}/geometryColumnsOnly", True)
@@ -419,6 +517,24 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
         settings.setValue(f"{base}/schemas", "infra")
+        settings.setValue(f"{base}/schema", "infra")
+
+        if use_authcfg:
+            # Store credentials in Auth Manager (encrypted)
+            _store_password_encrypted(password)
+            auth_cfg_id = settings.value("constructel_bridge/auth_cfg_id", "")
+            settings.setValue(f"{base}/authcfg", auth_cfg_id)
+            # Clear plaintext credentials from connection
+            settings.setValue(f"{base}/password", "")
+            settings.setValue(f"{base}/savePassword", False)
+            settings.setValue(f"{base}/saveUsername", False)
+            self._log("PG connection configured with authcfg (encrypted).")
+        else:
+            # Plaintext password (initial setup before dialog validation)
+            settings.remove(f"{base}/authcfg")
+            settings.setValue(f"{base}/password", password)
+            settings.setValue(f"{base}/saveUsername", True)
+            settings.setValue(f"{base}/savePassword", True)
 
         self._log(tr("pg.configured"))
         self.iface.browserModel().reload()
@@ -531,10 +647,27 @@ class ConstructelBridgePlugin:
         selected = projects[idx]
 
         # Construire l'URI PostgreSQL du projet
-        uri = (
-            f"postgresql://{DEFAULT_USER}:{self._password}@{DEFAULT_HOST}:{DEFAULT_PORT}"
-            f"/{DEFAULT_DBNAME}?schema={selected['schema']}&project={selected['name']}"
-        )
+        # Utilise authcfg si disponible, sinon password en clair
+        from urllib.parse import quote
+        auth_cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+        if auth_cfg_id:
+            uri = (
+                f"postgresql://@{DEFAULT_HOST}:{DEFAULT_PORT}"
+                f"/?dbname={quote(DEFAULT_DBNAME, safe='')}"
+                f"&sslmode={DEFAULT_SSLMODE}"
+                f"&schema={selected['schema']}"
+                f"&project={quote(selected['name'], safe='')}"
+                f"&authcfg={auth_cfg_id}"
+            )
+        else:
+            uri = (
+                f"postgresql://{quote(DEFAULT_USER, safe='')}:{quote(self._password, safe='')}"
+                f"@{DEFAULT_HOST}:{DEFAULT_PORT}"
+                f"/?dbname={quote(DEFAULT_DBNAME, safe='')}"
+                f"&sslmode={DEFAULT_SSLMODE}"
+                f"&schema={selected['schema']}"
+                f"&project={quote(selected['name'], safe='')}"
+            )
 
         proj_name = selected["name"]
         project = QgsProject.instance()
@@ -548,7 +681,11 @@ class ConstructelBridgePlugin:
             self._layer_hooks_installed = False
             self._hook_layers()
         else:
-            error = project.error().summary() if project.error() else "Unknown error"
+            raw_error = project.error()
+            if hasattr(raw_error, "summary"):
+                error = raw_error.summary()
+            else:
+                error = str(raw_error) if raw_error else "Unknown error"
             self._log(tr("project.load_error", name=proj_name, error=error), Qgis.Critical)
             QMessageBox.critical(
                 self.iface.mainWindow(),
@@ -556,7 +693,7 @@ class ConstructelBridgePlugin:
                 tr("project.load_error", name=proj_name, error=error),
             )
 
-    _PROJECT_SCHEMAS = ("public", "infra")
+    _PROJECT_SCHEMAS = ("infra",)
 
     def _list_db_projects(self) -> list[dict] | None:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.
@@ -626,6 +763,7 @@ class ConstructelBridgePlugin:
             user_id=self._bridge_user_id or "",
             is_new_user=is_new_user,
             db_conn=self._conn,
+            email_domain=EMAIL_DOMAIN,
         )
         wizard.exec_()
 

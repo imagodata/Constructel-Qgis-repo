@@ -9,8 +9,10 @@ from qgis.PyQt.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
@@ -21,7 +23,7 @@ from .i18n import tr
 class ConstructelConnectDialog(QDialog):
     """Dialogue simple pour saisir le mot de passe ftth_editor."""
 
-    def __init__(self, parent=None, host="localhost", port=5432, dbname="wyre_ftth"):
+    def __init__(self, parent=None, host="localhost", port=5432, dbname="wyre_ftth", default_password=""):
         super().__init__(parent)
         self.setWindowTitle(tr("dialog.title"))
         self.setMinimumWidth(380)
@@ -52,10 +54,23 @@ class ConstructelConnectDialog(QDialog):
         self._user_edit.setReadOnly(True)
         form.addRow(tr("dialog.role"), self._user_edit)
 
+        # Password field with show/hide toggle
+        pw_layout = QHBoxLayout()
         self._password_edit = QLineEdit()
         self._password_edit.setEchoMode(QLineEdit.Password)
         self._password_edit.setPlaceholderText(tr("dialog.password_placeholder"))
-        form.addRow(tr("dialog.password"), self._password_edit)
+        if default_password:
+            self._password_edit.setText(default_password)
+        pw_layout.addWidget(self._password_edit)
+
+        self._toggle_pw_btn = QPushButton("\U0001F441")
+        self._toggle_pw_btn.setFixedWidth(32)
+        self._toggle_pw_btn.setToolTip(tr("dialog.show_password"))
+        self._toggle_pw_btn.setCheckable(True)
+        self._toggle_pw_btn.toggled.connect(self._toggle_password_visibility)
+        pw_layout.addWidget(self._toggle_pw_btn)
+
+        form.addRow(tr("dialog.password"), pw_layout)
 
         self._save_check = QCheckBox(tr("dialog.save_password"))
         self._save_check.setChecked(True)
@@ -69,6 +84,15 @@ class ConstructelConnectDialog(QDialog):
         layout.addWidget(buttons)
 
         self._password_edit.setFocus()
+
+    def _toggle_password_visibility(self, visible: bool):
+        """Toggle between masked and clear-text password display."""
+        if visible:
+            self._password_edit.setEchoMode(QLineEdit.Normal)
+            self._toggle_pw_btn.setToolTip(tr("dialog.hide_password"))
+        else:
+            self._password_edit.setEchoMode(QLineEdit.Password)
+            self._toggle_pw_btn.setToolTip(tr("dialog.show_password"))
 
     def password(self) -> str:
         return self._password_edit.text()
