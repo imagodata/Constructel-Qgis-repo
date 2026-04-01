@@ -94,7 +94,7 @@ class UserProfilePage(QWizardPage):
         self.registerField("last_name*", self._lastname_edit)
         form.addRow(tr("onboard.user.field_lastname"), self._lastname_edit)
 
-        self._email_edit = QLineEdit(f"{username}@qgis.local")
+        self._email_edit = QLineEdit(f"{username}@constructel.be")
         self._email_edit.setPlaceholderText(tr("onboard.user.field_email_hint"))
         self.registerField("email*", self._email_edit)
         form.addRow(tr("onboard.user.field_email"), self._email_edit)

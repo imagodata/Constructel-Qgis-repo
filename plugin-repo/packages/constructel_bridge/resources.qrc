@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/plugins/constructel_bridge">
+    <file>constructel_bridge_icon.png</file>
+  </qresource>
+</RCC>
