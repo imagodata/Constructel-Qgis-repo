@@ -1,0 +1,3 @@
+#!/bin/sh
+# Update info for dumb HTTP protocol after each push
+exec git update-server-info

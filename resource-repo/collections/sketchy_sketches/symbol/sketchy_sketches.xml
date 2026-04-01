@@ -1,0 +1,18 @@
+<!DOCTYPE sketchy_sketches>
+<sketchy_sketches>
+  <!--
+    Exemple de fichier de symboles QGIS.
+    Exportez vos symboles depuis le Sketches Manager de QGIS :
+      Settings > Style Manager > Export > Export as XML
+    Puis placez le fichier ici.
+  -->
+  <symbols>
+    <symbol name="exemple_point" type="marker" alpha="1" clip_to_extent="1">
+      <layer class="SimpleMarker" pass="0" locked="0" enabled="1">
+        <prop k="color" v="31,120,180,255"/>
+        <prop k="size" v="3"/>
+        <prop k="name" v="circle"/>
+      </layer>
+    </symbol>
+  </symbols>
+</sketchy_sketches>

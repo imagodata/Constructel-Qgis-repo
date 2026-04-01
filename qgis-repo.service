@@ -1,0 +1,15 @@
+[Unit]
+Description=QGIS Plugin & Resource Repository - Constructel
+After=network.target
+
+[Service]
+Type=simple
+User=sdadmin
+Group=sdadmin
+WorkingDirectory=/home/sdadmin/projects/qgis_repo
+ExecStart=/usr/bin/python3 /home/sdadmin/projects/qgis_repo/serve.py --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
