@@ -22,6 +22,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.gui import QgisInterface
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QDialog, QInputDialog, QMessageBox
 
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
@@ -62,7 +63,10 @@ class ConstructelBridgePlugin:
         """Appele par QGIS au chargement du plugin."""
         init_language()
 
-        action_connect = QAction(tr("menu.connect"), self.iface.mainWindow())
+        icon_path = os.path.join(os.path.dirname(__file__), "constructel_bridge_icon.png")
+        icon = QIcon(icon_path)
+
+        action_connect = QAction(icon, tr("menu.connect"), self.iface.mainWindow())
         action_connect.triggered.connect(self._on_connect)
         self.iface.addToolBarIcon(action_connect)
         self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_connect)
@@ -150,7 +154,11 @@ class ConstructelBridgePlugin:
         """Tente une connexion automatique uniquement si le mot de passe a ete sauvegarde."""
         stored_pw = QgsSettings().value("constructel_bridge/password", "")
         if stored_pw:
-            self._connect(stored_pw)
+            if not self._connect(stored_pw, silent=True):
+                # Mot de passe stocke invalide : on le supprime et on ouvre le dialogue
+                QgsSettings().remove("constructel_bridge/password")
+                self._log("Stored password invalid, cleared. Opening connection dialog.", Qgis.Warning)
+                self._on_connect()
 
     def _on_connect(self):
         """Action manuelle: dialogue de connexion."""
@@ -169,8 +177,12 @@ class ConstructelBridgePlugin:
                 QgsSettings().setValue("constructel_bridge/password", password)
             self._connect(password)
 
-    def _connect(self, password: str):
-        """Etablit la connexion et initialise l'utilisateur."""
+    def _connect(self, password: str, silent: bool = False):
+        """Etablit la connexion et initialise l'utilisateur.
+
+        Returns True on success, False on failure.
+        When *silent* is True, no error dialog is shown (used by auto-connect).
+        """
         self._password = password
         qgis_user = self._get_qgis_username()
 
@@ -193,12 +205,13 @@ class ConstructelBridgePlugin:
                 f"Connection failed to {DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DBNAME}: {exc}",
                 Qgis.Critical,
             )
-            QMessageBox.critical(
-                self.iface.mainWindow(),
-                "Constructel Bridge",
-                tr("conn.failed", error=f"{DEFAULT_HOST}:{DEFAULT_PORT} — {exc}"),
-            )
-            return
+            if not silent:
+                QMessageBox.critical(
+                    self.iface.mainWindow(),
+                    "Constructel Bridge",
+                    tr("conn.failed", error=f"{DEFAULT_HOST}:{DEFAULT_PORT} — {exc}"),
+                )
+            return False
 
         self._connected = True
         self._log(tr("conn.established"))
@@ -235,6 +248,8 @@ class ConstructelBridgePlugin:
                 self._run_onboarding(is_new_user)
         except Exception as exc:
             self._log(f"Onboarding failed: {exc}", Qgis.Warning)
+
+        return True
 
     # =====================================================================
     # Identification et enregistrement utilisateur
@@ -284,7 +299,7 @@ class ConstructelBridgePlugin:
                         SET last_login = NOW(), active = TRUE
                     RETURNING id
                     """,
-                    (username, f"{username}@qgis.local", username),
+                    (username, f"{username}@constructel.be", username),
                 )
                 self._bridge_user_id = str(cur.fetchone()[0])
                 self._log(tr("user.created", username=username, user_id=self._bridge_user_id))
@@ -401,6 +416,8 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/geometryColumnsOnly", True)
         settings.setValue(f"{base}/dontResolveType", False)
         settings.setValue(f"{base}/publicOnly", False)
+        settings.setValue(f"{base}/projectsInDatabase", True)
+        settings.setValue(f"{base}/metadataInDatabase", True)
         settings.setValue(f"{base}/schemas", "infra")
 
         self._log(tr("pg.configured"))
@@ -497,7 +514,7 @@ class ConstructelBridgePlugin:
             return
 
         # Dialogue de selection
-        items = [p["name"] for p in projects]
+        items = [f"{p['name']}  ({p['schema']})" for p in projects]
         choice, ok = QInputDialog.getItem(
             self.iface.mainWindow(),
             tr("project.title"),
@@ -509,47 +526,73 @@ class ConstructelBridgePlugin:
         if not ok or not choice:
             return
 
+        # Retrouver le projet selectionne
+        idx = items.index(choice)
+        selected = projects[idx]
+
         # Construire l'URI PostgreSQL du projet
         uri = (
             f"postgresql://{DEFAULT_USER}:{self._password}@{DEFAULT_HOST}:{DEFAULT_PORT}"
-            f"/{DEFAULT_DBNAME}?schema=public&project={choice}"
+            f"/{DEFAULT_DBNAME}?schema={selected['schema']}&project={selected['name']}"
         )
 
+        proj_name = selected["name"]
         project = QgsProject.instance()
         if project.read(uri):
-            self._log(tr("project.loaded", name=choice))
+            self._log(tr("project.loaded", name=proj_name))
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
-                tr("project.loaded", name=choice),
+                tr("project.loaded", name=proj_name),
             )
             # Re-hook les couches du projet charge
             self._layer_hooks_installed = False
             self._hook_layers()
         else:
             error = project.error().summary() if project.error() else "Unknown error"
-            self._log(tr("project.load_error", name=choice, error=error), Qgis.Critical)
+            self._log(tr("project.load_error", name=proj_name, error=error), Qgis.Critical)
             QMessageBox.critical(
                 self.iface.mainWindow(),
                 tr("project.title"),
-                tr("project.load_error", name=choice, error=error),
+                tr("project.load_error", name=proj_name, error=error),
             )
+
+    _PROJECT_SCHEMAS = ("public", "infra")
 
     def _list_db_projects(self) -> list[dict] | None:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.
 
-        QGIS stocke les projets dans la table `qgis_projects`
-        (schema configurable, par defaut public).
+        Cherche la table ``qgis_projects`` dans les schemas public et infra.
         """
         cur = self._conn.cursor()
         try:
-            # Verifier si la table qgis_projects existe
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_name = 'qgis_projects'
+            results: list[dict] = []
+            for schema in self._PROJECT_SCHEMAS:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = %s AND table_name = 'qgis_projects'
+                    )
+                    """,
+                    (schema,),
                 )
-            """)
-            if not cur.fetchone()[0]:
+                if not cur.fetchone()[0]:
+                    continue
+                cur.execute(
+                    f"""
+                    SELECT name,
+                           metadata->>'description' AS description,
+                           metadata->>'last_modified_time' AS updated,
+                           %s AS schema
+                    FROM {schema}.qgis_projects
+                    ORDER BY name
+                    """,
+                    (schema,),
+                )
+                columns = [desc[0] for desc in cur.description]
+                results.extend(dict(zip(columns, row)) for row in cur.fetchall())
+
+            if not results:
                 QMessageBox.information(
                     self.iface.mainWindow(),
                     tr("project.title"),
@@ -557,15 +600,7 @@ class ConstructelBridgePlugin:
                 )
                 return None
 
-            cur.execute("""
-                SELECT name,
-                       metadata->>'description' AS description,
-                       metadata->>'last_modified_time' AS updated
-                FROM public.qgis_projects
-                ORDER BY name
-            """)
-            columns = [desc[0] for desc in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            return results
 
         except Exception as exc:
             self._log(f"list_db_projects error: {exc}", Qgis.Warning)
