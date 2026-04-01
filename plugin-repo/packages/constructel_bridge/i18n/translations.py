@@ -58,6 +58,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- QGIS PG connection --
         "pg.configured": "QGIS connection 'constructel_bridge' configured",
+        "pg.already_configured": "QGIS connection 'constructel_bridge' already set up — skipped",
 
         # -- Language dialog --
         "lang.title": "Constructel Bridge - Language",
@@ -211,6 +212,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- QGIS PG connection --
         "pg.configured": "Connexion QGIS 'constructel_bridge' configuree",
+        "pg.already_configured": "Connexion QGIS 'constructel_bridge' deja en place — ignoree",
 
         # -- Language dialog --
         "lang.title": "Constructel Bridge - Langue",
@@ -366,6 +368,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- QGIS PG connection --
         "pg.configured": "Ligacao QGIS 'constructel_bridge' configurada",
+        "pg.already_configured": "Ligacao QGIS 'constructel_bridge' ja configurada — ignorada",
 
         # -- Language dialog --
         "lang.title": "Constructel Bridge - Idioma",
