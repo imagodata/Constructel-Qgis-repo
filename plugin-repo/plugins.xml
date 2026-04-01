@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugins>
+  <pyqgis_plugin name="Consolidate Networks" version="1.7">
+    <description><![CDATA[Consolidate Networks is a a Qgis plugin bringing together a set of tools to consolidate your network data.]]></description>
+    <about><![CDATA[Fix bug, This plugin provides processing algorithms that allow you to manipulate the vertices of a line layer. You can repair topological issues and clean up your data.]]></about>
+    <version>1.7</version>
+    <qgis_minimum_version>3.0</qgis_minimum_version>
+    <qgis_maximum_version>3.99</qgis_maximum_version>
+    <author_name><![CDATA[imagodata]]></author_name>
+    <email>imagodata+consolidate_networks@skiff.com</email>
+    <homepage><![CDATA[https://sducournau.github.io/consolidate_networks]]></homepage>
+    <tracker><![CDATA[https://github.com/sducournau/consolidate_networks/issues]]></tracker>
+    <repository><![CDATA[https://github.com/sducournau/consolidate_networks]]></repository>
+    <icon>icon.png</icon>
+    <tags><![CDATA[python,consolidate,network,library,geometry,lines,vector]]></tags>
+    <experimental>False</experimental>
+    <deprecated>False</deprecated>
+    <server>False</server>
+    <has_processing_provider>yes</has_processing_provider>
+    <file_name>consolidate_networks.zip</file_name>
+    <download_url>http://192.168.160.31:9080/plugin-repo/packages/consolidate_networks.zip</download_url>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="Constructel Bridge" version="1.1.0">
+    <description><![CDATA[Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.]]></description>
+    <about><![CDATA[Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS avec le role ftth_editor, identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user.]]></about>
+    <version>1.1.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>3.99</qgis_maximum_version>
+    <author_name><![CDATA[Equipe WYRE / Constructel]]></author_name>
+    <email>dev@wyre.be</email>
+    <homepage><![CDATA[https://github.com/wyre-ftth/wyre]]></homepage>
+    <tracker><![CDATA[https://github.com/wyre-ftth/wyre/issues]]></tracker>
+    <repository><![CDATA[https://github.com/wyre-ftth/wyre]]></repository>
+    <icon>constructel_bridge_icon.png</icon>
+    <tags><![CDATA[ftth,constructel,postgis,audit,wyre,database,bridge]]></tags>
+    <experimental>False</experimental>
+    <deprecated>False</deprecated>
+    <server>False</server>
+    <has_processing_provider>no</has_processing_provider>
+    <file_name>constructel_bridge.zip</file_name>
+    <download_url>http://192.168.160.31:9080/plugin-repo/packages/constructel_bridge.zip</download_url>
+  </pyqgis_plugin>
+</plugins>

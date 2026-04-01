@@ -215,6 +215,11 @@ class ConstructelBridgePlugin:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
         try:
+            self._check_layer_datasources()
+        except Exception as exc:
+            self._log(f"Layer datasource check failed: {exc}", Qgis.Warning)
+
+        try:
             self._hook_layers()
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
@@ -327,6 +332,39 @@ class ConstructelBridgePlugin:
             settings.setValue(f"{base}/host", DEFAULT_HOST)
             settings.setValue(f"{base}/port", str(DEFAULT_PORT))
             settings.setValue(f"{base}/database", DEFAULT_DBNAME)
+
+    def _check_layer_datasources(self):
+        """Verifie que les couches PostgreSQL ne pointent pas vers localhost."""
+        bad_hosts = ("localhost", "127.0.0.1", "::1")
+        project = QgsProject.instance()
+        bad_layers = []
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            provider = layer.dataProvider()
+            if not provider or provider.name() != "postgres":
+                continue
+            uri = provider.uri()
+            layer_host = uri.host()
+            if layer_host in bad_hosts:
+                bad_layers.append(layer.name())
+        if bad_layers:
+            names = ", ".join(bad_layers[:5])
+            if len(bad_layers) > 5:
+                names += f" (+{len(bad_layers) - 5})"
+            self._log(
+                f"{len(bad_layers)} layer(s) pointing to localhost: {names}",
+                Qgis.Warning,
+            )
+            self.iface.messageBar().pushWarning(
+                "Constructel Bridge",
+                tr(
+                    "layers.bad_host",
+                    count=len(bad_layers),
+                    names=names,
+                    host=DEFAULT_HOST,
+                ),
+            )
 
     def _setup_qgis_pg_connection(self, password: str):
         """Enregistre la connexion PostgreSQL dans les settings QGIS si absente ou différente."""
