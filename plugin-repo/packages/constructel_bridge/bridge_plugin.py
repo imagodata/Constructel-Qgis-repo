@@ -200,30 +200,16 @@ class ConstructelBridgePlugin:
         self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_language)
         self._actions.append(action_language)
 
-        # Toujours forcer la connexion QGIS PG depuis credentials.json
-        self._setup_qgis_pg_connection(_DEFAULT_PW)
-
-        # Detecter install/mise a jour: comparer version stockee vs actuelle
+        # Detecter install/mise a jour: mettre a jour la version stockee
         settings = QgsSettings()
         stored_version = settings.value("constructel_bridge/plugin_version", "")
-        is_fresh = (stored_version != PLUGIN_VERSION)
-
-        if is_fresh:
-            # Nouvelle install ou mise a jour: nettoyer et ouvrir le dialog
-            _remove_stored_password()
+        if stored_version != PLUGIN_VERSION:
             settings.remove("constructel_bridge/onboarding_done")
             settings.setValue("constructel_bridge/plugin_version", PLUGIN_VERSION)
             self._log(
                 f"Plugin {'installed' if not stored_version else 'updated'}: "
                 f"{stored_version or '(none)'} -> {PLUGIN_VERSION}"
             )
-            self._on_connect()
-        else:
-            # Version inchangee: auto-connect si password sauvegarde
-            try:
-                self._try_auto_connect()
-            except Exception as exc:
-                self._log(f"Auto-connect failed: {exc}", Qgis.Warning)
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -273,15 +259,6 @@ class ConstructelBridgePlugin:
     # =====================================================================
     # Connexion
     # =====================================================================
-
-    def _try_auto_connect(self):
-        """Tente une connexion automatique uniquement si le mot de passe a ete sauvegarde."""
-        stored_pw = _retrieve_password_encrypted()
-        if stored_pw:
-            if not self._connect(stored_pw, silent=True):
-                _remove_stored_password()
-                self._log("Stored password invalid, cleared. Opening connection dialog.", Qgis.Warning)
-                self._on_connect()
 
     def _on_connect(self):
         """Action manuelle: dialogue de connexion."""
