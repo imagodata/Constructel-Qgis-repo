@@ -335,10 +335,11 @@ class ConstructelBridgePlugin:
         # charge par n'importe quel moyen (explorateur PG, fichier, etc.)
         QgsProject.instance().readProject.connect(self._on_project_read)
 
-        # L'auto-connexion n'est plus lancee au demarrage de QGIS pour eviter
-        # de modifier le projet vide (marqueur "*" dirty) et le dialogue
-        # "Enregistrer le projet" intempestif. L'utilisateur se connecte
-        # manuellement via le menu ou le bouton toolbar.
+        # Auto-connexion silencieuse au demarrage: etablit uniquement la
+        # connexion DB et l'enregistrement utilisateur, sans toucher au
+        # projet (pas de fix credentials, hooks, etc.) pour eviter de
+        # rendre le projet vide "dirty" et le dialogue "Enregistrer".
+        self._auto_connect()
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -523,6 +524,28 @@ class ConstructelBridgePlugin:
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
+        # En mode silent (auto-connect au demarrage), ne pas toucher au
+        # projet pour eviter de le rendre "dirty" et declencher le
+        # dialogue "Enregistrer le projet".
+        if not silent:
+            self._apply_project_hooks()
+
+        self.iface.messageBar().pushSuccess(
+            "Constructel Bridge",
+            tr("conn.connected_as", user=self._bridge_user),
+        )
+
+        try:
+            onboarding_done = QgsSettings().value("constructel_bridge/onboarding_done", False)
+            if not onboarding_done or is_new_user:
+                self._run_onboarding(is_new_user)
+        except Exception as exc:
+            self._log(f"Onboarding failed: {exc}", Qgis.Warning)
+
+        return True
+
+    def _apply_project_hooks(self):
+        """Applique les hooks, corrections et traductions sur le projet courant."""
         try:
             self._fix_layer_credentials()
         except Exception as exc:
@@ -538,31 +561,15 @@ class ConstructelBridgePlugin:
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
 
-        # Masquer les couches sans geometrie (listes, ref)
         try:
             self._hide_no_geom_layers()
         except Exception as exc:
             self._log(f"Hide no-geom failed: {exc}", Qgis.Warning)
 
-        # Appliquer les traductions i18n sur les couches
         try:
             bridge_sketcher.apply_all_translations()
         except Exception as exc:
             self._log(f"i18n apply failed: {exc}", Qgis.Warning)
-
-        self.iface.messageBar().pushSuccess(
-            "Constructel Bridge",
-            tr("conn.connected_as", user=self._bridge_user),
-        )
-
-        try:
-            onboarding_done = QgsSettings().value("constructel_bridge/onboarding_done", False)
-            if not onboarding_done or is_new_user:
-                self._run_onboarding(is_new_user)
-        except Exception as exc:
-            self._log(f"Onboarding failed: {exc}", Qgis.Warning)
-
-        return True
 
     # =====================================================================
     # Identification et enregistrement utilisateur
