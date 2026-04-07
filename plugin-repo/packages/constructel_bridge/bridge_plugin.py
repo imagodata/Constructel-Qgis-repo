@@ -25,8 +25,16 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import QgisInterface
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QDialog, QInputDialog, QMessageBox
+from qgis.PyQt.QtWidgets import (
+    QAction,
+    QDialog,
+    QInputDialog,
+    QMenu,
+    QMessageBox,
+    QToolButton,
+)
 
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
@@ -177,33 +185,61 @@ class ConstructelBridgePlugin:
         QgsSettings().setValue("qgis/enableMacros", "Always")
 
         icon_path = os.path.join(os.path.dirname(__file__), "constructel_bridge_icon.png")
-        icon = QIcon(icon_path)
+        plugin_icon = QIcon(icon_path)
 
-        action_connect = QAction(icon, tr("menu.connect"), self.iface.mainWindow())
+        # Icones QGIS theme pour chaque action
+        theme = QgsApplication.getThemeIcon
+        icon_connect = theme("/mActionAddPostgisLayer.svg")
+        icon_status = theme("/mIconInfo.svg")
+        icon_onboarding = theme("/mActionNewBookmark.svg")
+        icon_load = theme("/mActionFileOpen.svg")
+        icon_language = theme("/mIconAtlas.svg")
+
+        parent = self.iface.mainWindow()
+
+        # -- Actions ----------------------------------------------------------
+        action_connect = QAction(plugin_icon, tr("menu.connect"), parent)
         action_connect.triggered.connect(self._on_connect)
-        self.iface.addToolBarIcon(action_connect)
-        self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_connect)
         self._actions.append(action_connect)
 
-        action_status = QAction(tr("menu.status"), self.iface.mainWindow())
+        action_status = QAction(icon_status, tr("menu.status"), parent)
         action_status.triggered.connect(self._on_status)
-        self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_status)
         self._actions.append(action_status)
 
-        action_onboarding = QAction(tr("menu.onboarding"), self.iface.mainWindow())
+        action_onboarding = QAction(icon_onboarding, tr("menu.onboarding"), parent)
         action_onboarding.triggered.connect(self._on_onboarding)
-        self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_onboarding)
         self._actions.append(action_onboarding)
 
-        action_load_project = QAction(tr("menu.load_project"), self.iface.mainWindow())
+        action_load_project = QAction(icon_load, tr("menu.load_project"), parent)
         action_load_project.triggered.connect(self._on_load_project)
-        self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_load_project)
         self._actions.append(action_load_project)
 
-        action_language = QAction(tr("menu.language"), self.iface.mainWindow())
+        action_language = QAction(icon_language, tr("menu.language"), parent)
         action_language.triggered.connect(self._on_change_language)
-        self.iface.addPluginToDatabaseMenu("Constructel Bridge", action_language)
         self._actions.append(action_language)
+
+        # -- Menu Database (sous-menu Constructel Bridge) ---------------------
+        for action in self._actions:
+            self.iface.addPluginToDatabaseMenu("Constructel Bridge", action)
+
+        # -- Toolbar dropdown -------------------------------------------------
+        self._toolbar_menu = QMenu(parent)
+        self._toolbar_menu.addAction(action_connect)
+        self._toolbar_menu.addSeparator()
+        self._toolbar_menu.addAction(action_status)
+        self._toolbar_menu.addAction(action_onboarding)
+        self._toolbar_menu.addAction(action_load_project)
+        self._toolbar_menu.addSeparator()
+        self._toolbar_menu.addAction(action_language)
+
+        self._tool_button = QToolButton(parent)
+        self._tool_button.setIcon(plugin_icon)
+        self._tool_button.setToolTip("Constructel Bridge")
+        self._tool_button.setMenu(self._toolbar_menu)
+        self._tool_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self._tool_button.clicked.connect(self._on_connect)
+
+        self._toolbar_action = self.iface.addToolBarWidget(self._tool_button)
 
         # Detecter install/mise a jour: mettre a jour la version stockee
         settings = QgsSettings()
@@ -228,8 +264,11 @@ class ConstructelBridgePlugin:
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
+        # Retirer le bouton toolbar dropdown
+        if hasattr(self, "_toolbar_action") and self._toolbar_action:
+            self.iface.removeToolBarIcon(self._toolbar_action)
+        # Retirer les entrees du menu Database
         for action in self._actions:
-            self.iface.removeToolBarIcon(action)
             self.iface.removePluginDatabaseMenu("Constructel Bridge", action)
         self._actions.clear()
 
