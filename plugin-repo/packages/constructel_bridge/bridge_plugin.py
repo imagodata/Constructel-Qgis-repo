@@ -28,6 +28,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QDialog, QInputDialog, QMessageBox
 
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
+from . import bridge_sketcher
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
@@ -170,6 +171,9 @@ class ConstructelBridgePlugin:
     def initGui(self):
         """Appele par QGIS au chargement du plugin."""
         init_language()
+        # Activer les macros projet pour que openProject/saveProject/closeProject
+        # s'executent automatiquement (evite le bandeau "macros desactivees")
+        QgsSettings().setValue("qgis/enableMacros", "Always")
 
         icon_path = os.path.join(os.path.dirname(__file__), "constructel_bridge_icon.png")
         icon = QIcon(icon_path)
@@ -242,9 +246,11 @@ class ConstructelBridgePlugin:
             set_language(lang_code)
             # Refresh menu labels
             self._refresh_action_labels()
-            self.iface.messageBar().pushInfo(
+            # Appliquer les traductions sur toutes les couches
+            bridge_sketcher.apply_all_translations(lang_code)
+            self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
-                tr("lang.restart", lang=LANG_LABELS.get(lang_code, lang_code)),
+                tr("lang.applied", lang=LANG_LABELS.get(lang_code, lang_code)),
             )
 
     def _refresh_action_labels(self):
@@ -337,6 +343,12 @@ class ConstructelBridgePlugin:
             self._hook_layers()
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
+
+        # Appliquer les traductions i18n sur les couches
+        try:
+            bridge_sketcher.apply_all_translations()
+        except Exception as exc:
+            self._log(f"i18n apply failed: {exc}", Qgis.Warning)
 
         self.iface.messageBar().pushSuccess(
             "Constructel Bridge",
@@ -547,6 +559,7 @@ class ConstructelBridgePlugin:
         for layer in layers:
             if isinstance(layer, QgsVectorLayer):
                 self._hook_single_layer(layer)
+                bridge_sketcher.apply_to_layer(layer)
 
     def _hook_single_layer(self, layer: QgsVectorLayer):
         provider = layer.dataProvider()
@@ -654,9 +667,10 @@ class ConstructelBridgePlugin:
                 "Constructel Bridge",
                 tr("project.loaded", name=proj_name),
             )
-            # Re-hook les couches du projet charge
+            # Re-hook les couches du projet charge + i18n
             self._layer_hooks_installed = False
             self._hook_layers()
+            bridge_sketcher.apply_all_translations()
         else:
             raw_error = project.error()
             if hasattr(raw_error, "summary"):
