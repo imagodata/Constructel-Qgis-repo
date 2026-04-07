@@ -287,6 +287,23 @@ class ConstructelBridgePlugin:
         self._actions.clear()
 
     # =====================================================================
+    # Auto-connexion
+    # =====================================================================
+
+    def _auto_connect(self):
+        """Tente une connexion silencieuse au demarrage du plugin.
+
+        Utilise le mot de passe stocke dans Auth Manager, ou a defaut
+        le mot de passe par defaut du fichier credentials.json.
+        En cas d'echec, aucune erreur n'est affichee — l'utilisateur
+        pourra se connecter manuellement via le menu.
+        """
+        if self._connected:
+            return
+        password = _retrieve_password_encrypted() or _DEFAULT_PW
+        self._connect(password, silent=True)
+
+    # =====================================================================
     # Language
     # =====================================================================
 
@@ -717,8 +734,9 @@ class ConstructelBridgePlugin:
                 group.addChildNode(clone)
                 node.parent().removeChildNode(node)
                 moved += 1
-        # Replier le groupe par defaut
+        # Replier et masquer le groupe par defaut
         group.setExpanded(False)
+        group.setItemVisibilityChecked(False)
         if moved:
             self._log(f"{moved} couche(s) sans geometrie deplacee(s) dans '{group.name()}'")
 
