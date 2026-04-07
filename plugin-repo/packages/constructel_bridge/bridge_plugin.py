@@ -701,22 +701,73 @@ class ConstructelBridgePlugin:
             or layer.geometryType() == QgsWkbTypes.NullGeometry
         )
 
-    def _hide_no_geom_layers(self):
-        """Retire du Layer Tree les couches sans geometrie et les groupes vides.
+    def _restore_hidden_layers(self):
+        """Re-cree les couches sans geometrie absentes du projet.
 
-        Les couches restent enregistrees dans QgsProject.mapLayers() donc
-        les widgets ValueRelation continuent de fonctionner.
+        A la sauvegarde QGIS n'ecrit que les couches presentes dans le
+        Layer Tree.  Les couches retirees sont donc perdues au prochain
+        chargement.  On stocke leurs definitions (name|provider|source)
+        dans une entree projet et on les restaure ici si necessaire.
+        """
+        project = QgsProject.instance()
+        raw, _ = project.readEntry("constructel_bridge", "hidden_layers", "")
+        if not raw:
+            return
+        existing_sources = {
+            layer.source() for layer in project.mapLayers().values()
+        }
+        restored = 0
+        for entry in raw.split("\n"):
+            if "|" not in entry:
+                continue
+            parts = entry.split("|", 2)
+            if len(parts) != 3:
+                continue
+            name, provider, source = parts
+            if source in existing_sources:
+                continue
+            layer = QgsVectorLayer(source, name, provider)
+            if layer.isValid():
+                project.addMapLayer(layer, False)
+                restored += 1
+                self._log(f"couche restauree (sans geometrie): {name}")
+        if restored:
+            self._log(f"{restored} couche(s) sans geometrie restauree(s)")
+
+    def _hide_no_geom_layers(self):
+        """Retire du Layer Tree les couches sans geometrie.
+
+        Stocke leurs definitions dans le projet pour pouvoir les
+        restaurer a la prochaine ouverture, puis supprime les groupes
+        Listes/Autres devenus vides.
         """
         from .i18n.layer_translations import GROUP_NAMES
-        root = QgsProject.instance().layerTreeRoot()
+        project = QgsProject.instance()
+        root = project.layerTreeRoot()
+
+        # D'abord restaurer les couches qui auraient disparu
+        self._restore_hidden_layers()
+
+        # Identifier et retirer les couches sans geometrie du tree
+        hidden_entries = []
         removed = 0
-        for layer in QgsProject.instance().mapLayers().values():
+        for layer in list(project.mapLayers().values()):
             if not self._is_no_geom(layer):
                 continue
+            hidden_entries.append(
+                f"{layer.name()}|{layer.dataProvider().name()}|{layer.source()}"
+            )
             node = root.findLayer(layer.id())
             if node:
                 node.parent().removeChildNode(node)
                 removed += 1
+
+        # Sauvegarder les definitions dans le projet
+        if hidden_entries:
+            project.writeEntry(
+                "constructel_bridge", "hidden_layers",
+                "\n".join(hidden_entries),
+            )
 
         # Supprimer les groupes Listes/Autres devenus vides
         tr_dict = GROUP_NAMES.get("Listes", {})
