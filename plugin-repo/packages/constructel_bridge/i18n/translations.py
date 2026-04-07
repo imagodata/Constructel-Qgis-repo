@@ -12,7 +12,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     "en": {
         # -- Menu / Actions --
-        "menu.connect": "Connect to WYRE",
+        "menu.connect": "Database connection",
         "menu.status": "Connection status",
         "menu.onboarding": "Initial setup",
         "menu.load_project": "Load project",
@@ -36,11 +36,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Connection failed:\n{error}",
         "conn.established": "Connection established (ftth_editor)",
         "conn.connected_as": "Connected as {user}",
-        "conn.connect_first": "Connect first via Constructel Bridge > Connect to WYRE.",
+        "conn.connect_first": "Connect first via Constructel Bridge > Database connection.",
 
         # -- Status --
         "status.title": "Constructel Bridge - Status",
-        "status.not_connected": "Not connected.\nUse Constructel Bridge > Connect to WYRE.",
+        "status.not_connected": "Not connected.\nUse Constructel Bridge > Database connection.",
         "status.connected_to": "Connected to: {host}:{port}/{dbname}\n"
                                "Role: {user}\n"
                                "User: {bridge_user}\n"
@@ -173,7 +173,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     "fr": {
         # -- Menu / Actions --
-        "menu.connect": "Connexion WYRE",
+        "menu.connect": "Connexion base de donnees",
         "menu.status": "Statut connexion",
         "menu.onboarding": "Configuration initiale",
         "menu.load_project": "Charger un projet",
@@ -197,11 +197,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Connexion impossible:\n{error}",
         "conn.established": "Connexion etablie (ftth_editor)",
         "conn.connected_as": "Connecte en tant que {user}",
-        "conn.connect_first": "Connectez-vous d'abord via Constructel Bridge > Connexion WYRE.",
+        "conn.connect_first": "Connectez-vous d'abord via Constructel Bridge > Connexion base de donnees.",
 
         # -- Status --
         "status.title": "Constructel Bridge - Statut",
-        "status.not_connected": "Non connecte.\nUtilisez Constructel Bridge > Connexion WYRE.",
+        "status.not_connected": "Non connecte.\nUtilisez Constructel Bridge > Connexion base de donnees.",
         "status.connected_to": "Connecte a: {host}:{port}/{dbname}\n"
                                "Role: {user}\n"
                                "Utilisateur: {bridge_user}\n"
@@ -336,7 +336,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     "pt": {
         # -- Menu / Actions --
-        "menu.connect": "Ligar ao WYRE",
+        "menu.connect": "Ligacao a base de dados",
         "menu.status": "Estado da ligacao",
         "menu.onboarding": "Configuracao inicial",
         "menu.load_project": "Carregar projeto",
@@ -360,11 +360,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Ligacao impossivel:\n{error}",
         "conn.established": "Ligacao estabelecida (ftth_editor)",
         "conn.connected_as": "Ligado como {user}",
-        "conn.connect_first": "Ligue-se primeiro via Constructel Bridge > Ligar ao WYRE.",
+        "conn.connect_first": "Ligue-se primeiro via Constructel Bridge > Ligacao a base de dados.",
 
         # -- Status --
         "status.title": "Constructel Bridge - Estado",
-        "status.not_connected": "Nao ligado.\nUse Constructel Bridge > Ligar ao WYRE.",
+        "status.not_connected": "Nao ligado.\nUse Constructel Bridge > Ligacao a base de dados.",
         "status.connected_to": "Ligado a: {host}:{port}/{dbname}\n"
                                "Papel: {user}\n"
                                "Utilizador: {bridge_user}\n"

@@ -198,7 +198,7 @@ class ConstructelBridgePlugin:
         parent = self.iface.mainWindow()
 
         # -- Actions ----------------------------------------------------------
-        action_connect = QAction(plugin_icon, tr("menu.connect"), parent)
+        action_connect = QAction(icon_connect, tr("menu.connect"), parent)
         action_connect.triggered.connect(self._on_connect)
         self._actions.append(action_connect)
 
