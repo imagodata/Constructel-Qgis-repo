@@ -12,11 +12,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     "en": {
         # -- Menu / Actions --
-        "menu.connect": "Constructel: Connect to WYRE",
-        "menu.status": "Constructel: Status",
-        "menu.onboarding": "Constructel: Onboarding",
-        "menu.load_project": "Constructel: Load project",
-        "menu.language": "Constructel: Language",
+        "menu.connect": "Connect to WYRE",
+        "menu.status": "Connection status",
+        "menu.onboarding": "Initial setup",
+        "menu.load_project": "Load project",
+        "menu.language": "Language",
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Connection",
@@ -36,11 +36,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Connection failed:\n{error}",
         "conn.established": "Connection established (ftth_editor)",
         "conn.connected_as": "Connected as {user}",
-        "conn.connect_first": "Connect first via 'Constructel: Connect to WYRE'.",
+        "conn.connect_first": "Connect first via Constructel Bridge > Connect to WYRE.",
 
         # -- Status --
         "status.title": "Constructel Bridge - Status",
-        "status.not_connected": "Not connected.\nUse 'Constructel: Connect to WYRE' to connect.",
+        "status.not_connected": "Not connected.\nUse Constructel Bridge > Connect to WYRE.",
         "status.connected_to": "Connected to: {host}:{port}/{dbname}\n"
                                "Role: {user}\n"
                                "User: {bridge_user}\n"
@@ -147,7 +147,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.summary.subtitle": "Summary of actions performed.",
         "onboard.summary.header": "<b>Actions performed:</b><ul>",
         "onboard.summary.footer": "</ul><br><i>You can re-run this wizard at any time via "
-                                  "Database menu > Constructel Bridge > Constructel: Onboarding.</i>",
+                                  "Database menu > Constructel Bridge > Initial setup.</i>",
 
         # -- Onboarding: Actions --
         "onboard.action.profile_updated": "Profile updated: {first_name} {last_name} ({email})",
@@ -173,11 +173,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     "fr": {
         # -- Menu / Actions --
-        "menu.connect": "Constructel: Connexion WYRE",
-        "menu.status": "Constructel: Statut",
-        "menu.onboarding": "Constructel: Onboarding",
-        "menu.load_project": "Constructel: Charger un projet",
-        "menu.language": "Constructel: Langue",
+        "menu.connect": "Connexion WYRE",
+        "menu.status": "Statut connexion",
+        "menu.onboarding": "Configuration initiale",
+        "menu.load_project": "Charger un projet",
+        "menu.language": "Langue",
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Connexion",
@@ -197,11 +197,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Connexion impossible:\n{error}",
         "conn.established": "Connexion etablie (ftth_editor)",
         "conn.connected_as": "Connecte en tant que {user}",
-        "conn.connect_first": "Connectez-vous d'abord via 'Constructel: Connexion WYRE'.",
+        "conn.connect_first": "Connectez-vous d'abord via Constructel Bridge > Connexion WYRE.",
 
         # -- Status --
         "status.title": "Constructel Bridge - Statut",
-        "status.not_connected": "Non connecte.\nUtilisez 'Constructel: Connexion WYRE' pour vous connecter.",
+        "status.not_connected": "Non connecte.\nUtilisez Constructel Bridge > Connexion WYRE.",
         "status.connected_to": "Connecte a: {host}:{port}/{dbname}\n"
                                "Role: {user}\n"
                                "Utilisateur: {bridge_user}\n"
@@ -310,7 +310,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.summary.subtitle": "Resume des actions effectuees.",
         "onboard.summary.header": "<b>Actions effectuees:</b><ul>",
         "onboard.summary.footer": "</ul><br><i>Vous pouvez relancer cet assistant a tout moment via "
-                                  "le menu Base de donnees > Constructel Bridge > Constructel: Onboarding.</i>",
+                                  "le menu Base de donnees > Constructel Bridge > Configuration initiale.</i>",
 
         # -- Onboarding: Actions --
         "onboard.action.profile_updated": "Profil mis a jour: {first_name} {last_name} ({email})",
@@ -336,11 +336,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     "pt": {
         # -- Menu / Actions --
-        "menu.connect": "Constructel: Ligar ao WYRE",
-        "menu.status": "Constructel: Estado",
-        "menu.onboarding": "Constructel: Configuracao inicial",
-        "menu.load_project": "Constructel: Carregar projeto",
-        "menu.language": "Constructel: Idioma",
+        "menu.connect": "Ligar ao WYRE",
+        "menu.status": "Estado da ligacao",
+        "menu.onboarding": "Configuracao inicial",
+        "menu.load_project": "Carregar projeto",
+        "menu.language": "Idioma",
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Ligacao",
@@ -360,11 +360,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Ligacao impossivel:\n{error}",
         "conn.established": "Ligacao estabelecida (ftth_editor)",
         "conn.connected_as": "Ligado como {user}",
-        "conn.connect_first": "Ligue-se primeiro via 'Constructel: Ligar ao WYRE'.",
+        "conn.connect_first": "Ligue-se primeiro via Constructel Bridge > Ligar ao WYRE.",
 
         # -- Status --
         "status.title": "Constructel Bridge - Estado",
-        "status.not_connected": "Nao ligado.\nUse 'Constructel: Ligar ao WYRE' para se ligar.",
+        "status.not_connected": "Nao ligado.\nUse Constructel Bridge > Ligar ao WYRE.",
         "status.connected_to": "Ligado a: {host}:{port}/{dbname}\n"
                                "Papel: {user}\n"
                                "Utilizador: {bridge_user}\n"
@@ -473,7 +473,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.summary.subtitle": "Resumo das acoes realizadas.",
         "onboard.summary.header": "<b>Acoes realizadas:</b><ul>",
         "onboard.summary.footer": "</ul><br><i>Pode voltar a executar este assistente a qualquer momento via "
-                                  "menu Base de dados > Constructel Bridge > Constructel: Configuracao inicial.</i>",
+                                  "menu Base de dados > Constructel Bridge > Configuracao inicial.</i>",
 
         # -- Onboarding: Actions --
         "onboard.action.profile_updated": "Perfil atualizado: {first_name} {last_name} ({email})",
