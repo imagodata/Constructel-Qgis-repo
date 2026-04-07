@@ -222,6 +222,14 @@ class ConstructelBridgePlugin:
         for action in self._actions:
             self.iface.addPluginToDatabaseMenu("Constructel Bridge", action)
 
+        # Appliquer l'icone Constructel sur le sous-menu parent
+        db_menu = self.iface.databaseMenu()
+        if db_menu:
+            for sub in db_menu.findChildren(QMenu):
+                if sub.title() == "Constructel Bridge":
+                    sub.setIcon(plugin_icon)
+                    break
+
         # -- Toolbar dropdown -------------------------------------------------
         self._toolbar_menu = QMenu(parent)
         self._toolbar_menu.addAction(action_connect)
@@ -650,8 +658,14 @@ class ConstructelBridgePlugin:
     # =====================================================================
     # Masquage des couches sans geometrie (listes / ref)
     # =====================================================================
-
-    _HIDDEN_GROUP = "Autres"
+    # Les couches sans geometrie (tables ref, vues docs) sont necessaires
+    # dans le projet pour les widgets ValueRelation et les relations,
+    # mais ne doivent pas encombrer le Layer Tree.
+    #
+    # Strategie: retirer le noeud du Layer Tree (removeChildNode) tout en
+    # gardant la couche dans le projet (addMapLayer(layer, False) ne
+    # re-cree pas de noeud). La couche reste accessible via
+    # QgsProject.mapLayers() et les widgets continuent de fonctionner.
 
     @staticmethod
     def _is_no_geom(layer):
@@ -664,43 +678,29 @@ class ConstructelBridgePlugin:
             or layer.geometryType() == QgsWkbTypes.NullGeometry
         )
 
-    def _get_or_create_hidden_group(self):
-        """Retourne le groupe 'Autres', le cree si absent."""
-        root = QgsProject.instance().layerTreeRoot()
-        grp = root.findGroup(self._HIDDEN_GROUP)
-        if not grp:
-            grp = root.addGroup(self._HIDDEN_GROUP)
-        grp.setExpanded(False)
-        grp.setItemVisibilityChecked(False)
-        return grp
-
-    def _move_to_hidden_group(self, layer, grp):
-        """Deplace un noeud du Layer Tree dans le groupe cache."""
-        root = QgsProject.instance().layerTreeRoot()
-        node = root.findLayer(layer.id())
-        if node and node.parent() != grp:
-            clone = node.clone()
-            grp.insertChildNode(-1, clone)
-            node.parent().removeChildNode(node)
-            return True
-        return False
-
     def _hide_no_geom_layers(self):
-        """Masque toutes les couches sans geometrie dans le groupe 'Autres'."""
-        grp = self._get_or_create_hidden_group()
-        moved = 0
+        """Retire du Layer Tree toutes les couches sans geometrie."""
+        root = QgsProject.instance().layerTreeRoot()
+        removed = 0
         for layer in QgsProject.instance().mapLayers().values():
-            if self._is_no_geom(layer) and self._move_to_hidden_group(layer, grp):
-                moved += 1
-        if moved:
-            self._log(f"{moved} couche(s) sans geometrie -> '{self._HIDDEN_GROUP}'")
+            if not self._is_no_geom(layer):
+                continue
+            node = root.findLayer(layer.id())
+            if node:
+                node.parent().removeChildNode(node)
+                removed += 1
+        if removed:
+            self._log(f"{removed} couche(s) sans geometrie retiree(s) du Layer Tree")
 
     def _hide_layer_if_no_geom(self, layer):
-        """Masque une couche individuelle si sans geometrie."""
-        if self._is_no_geom(layer):
-            grp = self._get_or_create_hidden_group()
-            if self._move_to_hidden_group(layer, grp):
-                self._log(f"couche '{layer.name()}' -> '{self._HIDDEN_GROUP}'")
+        """Retire une couche individuelle du Layer Tree si sans geometrie."""
+        if not self._is_no_geom(layer):
+            return
+        root = QgsProject.instance().layerTreeRoot()
+        node = root.findLayer(layer.id())
+        if node:
+            node.parent().removeChildNode(node)
+            self._log(f"couche '{layer.name()}' retiree du Layer Tree (sans geometrie)")
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL
