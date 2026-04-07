@@ -210,15 +210,6 @@ LAYER_NAME_MAP: dict[str, str] = {
 
 
 # =====================================================================
-# VALUE_RELATION_COLUMNS — bascule label FR/EN dans les dropdowns
-# =====================================================================
-# Clé: nom de la couche de référence (LayerName dans le widget config)
-# Valeur: {lang: colonne à utiliser comme Value}
-#
-# Les tables ref.* ont ``label`` (FR) + ``label_en`` (EN).
-# Pour PT on utilise label_en (anglais comme fallback).
-
-# =====================================================================
 # LABEL_EXPRESSIONS — expressions d'etiquettes multilingues
 # =====================================================================
 # Clé : table PostgreSQL
@@ -260,12 +251,20 @@ LABEL_EXPRESSIONS: dict[str, dict[str, str]] = {
 }
 
 
+# VALUE_RELATION_COLUMNS — bascule colonne Value des dropdowns selon la langue
+# =====================================================================
+# Clé: nom de la couche de référence (LayerName dans le widget config)
+# Valeur: {lang: colonne à utiliser comme Value}
+#
+# Les tables ref.* ont label_fr, label_en, label_pt (v3.4.1+).
+# La vue v_valid_statuses a status_label (FR/EN auto), status_label_en, status_label_pt.
+
 VALUE_RELATION_COLUMNS: dict[str, dict[str, str]] = {
-    "structure_types":   {"fr": "label", "en": "label_en", "pt": "label_en"},
-    "cable_types":       {"fr": "label", "en": "label_en", "pt": "label_en"},
-    "duct_models":       {"fr": "label", "en": "label_en", "pt": "label_en"},
-    "pose_types":        {"fr": "label", "en": "label_en", "pt": "label_en"},
-    "v_valid_statuses":  {"fr": "status_label", "en": "status_value", "pt": "status_value"},
+    "structure_types":   {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
+    "cable_types":       {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
+    "duct_models":       {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
+    "pose_types":        {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
+    "v_valid_statuses":  {"fr": "status_label", "en": "status_label_en", "pt": "status_label_pt"},
 }
 
 
