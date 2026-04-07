@@ -701,94 +701,79 @@ class ConstructelBridgePlugin:
             or layer.geometryType() == QgsWkbTypes.NullGeometry
         )
 
-    def _restore_hidden_layers(self):
-        """Re-cree les couches sans geometrie absentes du projet.
+    _REF_GROUP_NAME = "_ Référence (ne pas modifier)"
 
-        A la sauvegarde QGIS n'ecrit que les couches presentes dans le
-        Layer Tree.  Les couches retirees sont donc perdues au prochain
-        chargement.  On stocke leurs definitions (name|provider|source)
-        dans une entree projet et on les restaure ici si necessaire.
-        """
-        project = QgsProject.instance()
-        raw, _ = project.readEntry("constructel_bridge", "hidden_layers", "")
-        if not raw:
-            return
-        existing_sources = {
-            layer.source() for layer in project.mapLayers().values()
-        }
-        restored = 0
-        for entry in raw.split("\n"):
-            if "|" not in entry:
-                continue
-            parts = entry.split("|", 2)
-            if len(parts) != 3:
-                continue
-            name, provider, source = parts
-            if source in existing_sources:
-                continue
-            layer = QgsVectorLayer(source, name, provider)
-            if layer.isValid():
-                project.addMapLayer(layer, False)
-                restored += 1
-                self._log(f"couche restauree (sans geometrie): {name}")
-        if restored:
-            self._log(f"{restored} couche(s) sans geometrie restauree(s)")
+    def _get_or_create_ref_group(self):
+        """Retourne (ou cree) le groupe de reference pour couches masquees.
 
-    def _hide_no_geom_layers(self):
-        """Retire du Layer Tree les couches sans geometrie.
-
-        Stocke leurs definitions dans le projet pour pouvoir les
-        restaurer a la prochaine ouverture, puis supprime les groupes
-        Listes/Autres devenus vides.
+        Compatible avec le groupe cree par init_project.py.
+        Detecte aussi les anciens groupes Listes/Autres et les fusionne.
         """
         from .i18n.layer_translations import GROUP_NAMES
-        project = QgsProject.instance()
-        root = project.layerTreeRoot()
+        root = QgsProject.instance().layerTreeRoot()
 
-        # D'abord restaurer les couches qui auraient disparu
-        self._restore_hidden_layers()
+        # 1. Chercher le groupe officiel
+        ref_group = root.findGroup(self._REF_GROUP_NAME)
 
-        # Identifier et retirer les couches sans geometrie du tree
-        hidden_entries = []
-        removed = 0
-        for layer in list(project.mapLayers().values()):
+        # 2. Chercher les anciens groupes Listes/Autres
+        tr_dict = GROUP_NAMES.get("Listes", {})
+        legacy_names = set(tr_dict.values()) | {"Listes", "Autres", "Other", "Outros"}
+        legacy_groups = []
+        for child in root.children():
+            if hasattr(child, "name") and child.name() in legacy_names:
+                legacy_groups.append(child)
+
+        # 3. Creer le groupe officiel si absent
+        if not ref_group:
+            ref_group = root.addGroup(self._REF_GROUP_NAME)
+
+        # 4. Migrer les couches des anciens groupes vers le groupe officiel
+        for old_group in legacy_groups:
+            for child_node in list(old_group.children()):
+                clone = child_node.clone()
+                ref_group.addChildNode(clone)
+                old_group.removeChildNode(child_node)
+            root.removeChildNode(old_group)
+
+        return ref_group
+
+    def _hide_no_geom_layers(self):
+        """Deplace les couches sans geometrie dans le groupe de reference.
+
+        Les couches gardent leur layer ID original — les ValueRelation,
+        relations et widgets continuent de fonctionner.  Le groupe est
+        replie et decoche pour ne pas encombrer le panneau Couches.
+        """
+        root = QgsProject.instance().layerTreeRoot()
+        group = self._get_or_create_ref_group()
+        moved = 0
+        for layer in QgsProject.instance().mapLayers().values():
             if not self._is_no_geom(layer):
                 continue
-            hidden_entries.append(
-                f"{layer.name()}|{layer.dataProvider().name()}|{layer.source()}"
-            )
             node = root.findLayer(layer.id())
-            if node:
+            if node and node.parent() != group:
+                clone = node.clone()
+                group.addChildNode(clone)
                 node.parent().removeChildNode(node)
-                removed += 1
-
-        # Sauvegarder les definitions dans le projet
-        if hidden_entries:
-            project.writeEntry(
-                "constructel_bridge", "hidden_layers",
-                "\n".join(hidden_entries),
-            )
-
-        # Supprimer les groupes Listes/Autres devenus vides
-        tr_dict = GROUP_NAMES.get("Listes", {})
-        known_names = set(tr_dict.values()) | {"Listes", "Autres", "Other", "Outros"}
-        for child in list(root.children()):
-            if hasattr(child, "name") and child.name() in known_names:
-                if not child.children():
-                    root.removeChildNode(child)
-
-        if removed:
-            self._log(f"{removed} couche(s) sans geometrie retiree(s) du Layer Tree")
+                moved += 1
+        group.setExpanded(False)
+        group.setItemVisibilityChecked(False)
+        if moved:
+            self._log(f"{moved} couche(s) sans geometrie deplacee(s) dans '{group.name()}'")
 
     def _hide_layer_if_no_geom(self, layer):
-        """Retire une couche individuelle du Layer Tree si sans geometrie."""
+        """Deplace une couche individuelle dans le groupe de reference si sans geometrie."""
         if not self._is_no_geom(layer):
             return
         root = QgsProject.instance().layerTreeRoot()
+        group = self._get_or_create_ref_group()
         node = root.findLayer(layer.id())
-        if node:
+        if node and node.parent() != group:
+            clone = node.clone()
+            group.addChildNode(clone)
             node.parent().removeChildNode(node)
-            self._log(f"couche '{layer.name()}' retiree du Layer Tree (sans geometrie)")
+            self._log(f"couche '{layer.name()}' deplacee dans '{group.name()}'")
+
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL
