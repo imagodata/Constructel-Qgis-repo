@@ -17,9 +17,12 @@ from qgis.core import (
     Qgis,
     QgsApplication,
     QgsAuthMethodConfig,
+    QgsCredentials,
+    QgsDataProvider,
     QgsDataSourceUri,
     QgsMessageLog,
     QgsProject,
+    QgsProjectBadLayerHandler,
     QgsSettings,
     QgsVectorLayer,
     QgsWkbTypes,
@@ -66,6 +69,54 @@ PG_SERVICE_NAME = _CREDS.get("service_name", "constructel_bridge")
 EMAIL_DOMAIN = _CREDS.get("email_domain", "constructel.be")
 
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
+
+
+# ---------------------------------------------------------------------------
+# Intercepteur de credentials — evite le dialogue de saisie pour notre base
+# ---------------------------------------------------------------------------
+
+class _BridgeCredentials(QgsCredentials):
+    """Fournit automatiquement les credentials pour la base WYRE FTTH.
+
+    Quand un projet contient des couches avec un authcfg d'un autre
+    utilisateur, QGIS affiche un dialogue de saisie pour chaque couche.
+    Ce handler intercepte ces demandes et fournit le mot de passe
+    automatiquement si le realm correspond a notre serveur PG.
+    Pour les autres realms, il delegue au handler original (dialogue).
+    """
+
+    def __init__(self, fallback):
+        self._fallback = fallback
+        self._username = DEFAULT_USER
+        self._password = _DEFAULT_PW
+        super().__init__()  # appelle setInstance(self) en interne
+
+    def update_password(self, password: str):
+        self._password = password
+
+    def request(self, realm, username, password, message=""):
+        if DEFAULT_HOST in realm:
+            return True, self._username, self._password
+        # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
+        if self._fallback:
+            return self._fallback.request(realm, username, password, message)
+        return False, username, password
+
+    def requestMasterPassword(self, password, stored=False):
+        if self._fallback:
+            return self._fallback.requestMasterPassword(password, stored)
+        return False, password
+
+
+class _BridgeBadLayerHandler(QgsProjectBadLayerHandler):
+    """Supprime le dialogue 'Traiter les couches inutilisables'.
+
+    Les couches cassees (authcfg inconnu) seront reparees dans
+    _on_project_read via _fix_layer_credentials.
+    """
+
+    def handleBadLayers(self, layers):
+        pass  # Silence — on repare apres le chargement
 
 
 def _ensure_auth_manager_ready() -> bool:
@@ -267,6 +318,23 @@ class ConstructelBridgePlugin:
         except Exception:
             pass
 
+        # Intercepter les demandes de credentials QGIS pour fournir
+        # automatiquement le mot de passe de notre base PG.
+        # Cela evite le dialogue "Saisir les identifiants" quand un
+        # projet contient des authcfg d'un autre utilisateur.
+        self._orig_credentials = QgsCredentials.instance()
+        self._bridge_credentials = _BridgeCredentials(self._orig_credentials)
+
+        # Supprimer le dialogue "Traiter les couches inutilisables" —
+        # les couches avec un authcfg inconnu seront reparees apres
+        # le chargement dans _on_project_read.
+        self._bad_layer_handler = _BridgeBadLayerHandler()
+        QgsProject.instance().setBadLayerHandler(self._bad_layer_handler)
+
+        # Ecouter le signal readProject pour reagir quand un projet est
+        # charge par n'importe quel moyen (explorateur PG, fichier, etc.)
+        QgsProject.instance().readProject.connect(self._on_project_read)
+
         # Auto-connexion silencieuse au demarrage si un mot de passe est
         # disponible (stocke dans Auth Manager ou mot de passe par defaut).
         # Cela evite a l'utilisateur de devoir cliquer manuellement sur
@@ -275,6 +343,10 @@ class ConstructelBridgePlugin:
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
+        try:
+            QgsProject.instance().readProject.disconnect(self._on_project_read)
+        except TypeError:
+            pass
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
@@ -285,6 +357,43 @@ class ConstructelBridgePlugin:
         for action in self._actions:
             self.iface.removePluginDatabaseMenu("Constructel Bridge", action)
         self._actions.clear()
+
+    # =====================================================================
+    # Reaction au chargement d'un projet (explorateur PG, fichier, etc.)
+    # =====================================================================
+
+    def _on_project_read(self, doc):
+        """Appele par QgsProject.readProject apres tout chargement de projet.
+
+        Corrige les credentials, re-hook les couches, masque les no-geom
+        et applique les traductions — quel que soit le moyen de chargement
+        (explorateur PostgreSQL, fichier .qgs/.qgz, menu recent, etc.).
+        """
+        # Toujours corriger les credentials (utilise le mot de passe par
+        # defaut si pas encore connecte — suffit pour reparer les authcfg).
+        try:
+            self._fix_layer_credentials()
+        except Exception as exc:
+            self._log(f"Fix layer credentials failed: {exc}", Qgis.Warning)
+
+        if not self._connected:
+            return
+
+        self._layer_hooks_installed = False
+        try:
+            self._hook_layers()
+        except Exception as exc:
+            self._log(f"Hook install failed: {exc}", Qgis.Warning)
+
+        try:
+            self._hide_no_geom_layers()
+        except Exception as exc:
+            self._log(f"Hide no-geom failed: {exc}", Qgis.Warning)
+
+        try:
+            bridge_sketcher.apply_all_translations()
+        except Exception as exc:
+            self._log(f"i18n apply failed: {exc}", Qgis.Warning)
 
     # =====================================================================
     # Auto-connexion
@@ -368,6 +477,9 @@ class ConstructelBridgePlugin:
         When *silent* is True, no error dialog is shown (used by auto-connect).
         """
         self._password = password
+        # Mettre a jour le handler de credentials avec le mot de passe courant
+        if hasattr(self, "_bridge_credentials"):
+            self._bridge_credentials.update_password(password)
         qgis_user = self._get_qgis_username()
 
         try:
@@ -411,6 +523,11 @@ class ConstructelBridgePlugin:
             self._setup_qgis_pg_connection(password, use_authcfg=True)
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
+
+        try:
+            self._fix_layer_credentials()
+        except Exception as exc:
+            self._log(f"Fix layer credentials failed: {exc}", Qgis.Warning)
 
         try:
             self._check_layer_datasources()
@@ -530,6 +647,71 @@ class ConstructelBridgePlugin:
     # =====================================================================
     # Configuration connexion QGIS
     # =====================================================================
+
+    def _fix_layer_credentials(self):
+        """Reecrit les datasources PG pour utiliser les credentials courants.
+
+        Quand un projet est charge depuis la base, les URIs des couches
+        contiennent l'authcfg de l'utilisateur qui a sauvegarde le projet.
+        Cet authcfg n'existe pas dans l'Auth Manager d'un autre utilisateur,
+        ce qui rend toutes les couches invalides.
+
+        Cette methode remplace l'authentification de chaque couche PG
+        par celle de l'utilisateur courant (authcfg local ou mot de passe).
+        Gere aussi les couches invalides (provider=None) en utilisant
+        layer.providerType() et layer.source() directement.
+        """
+        auth_cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+        password = getattr(self, "_password", None) or _DEFAULT_PW
+        project = QgsProject.instance()
+        fixed = 0
+        still_bad = 0
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            # providerType() fonctionne meme si le provider est None
+            if layer.providerType() != "postgres":
+                continue
+
+            # Recuperer l'URI — depuis le provider si valide, sinon source()
+            provider = layer.dataProvider()
+            if provider:
+                uri = QgsDataSourceUri(provider.uri().uri())
+            else:
+                uri = QgsDataSourceUri(layer.source())
+            old_authcfg = uri.authConfigId()
+
+            needs_fix = False
+            if auth_cfg_id:
+                if old_authcfg != auth_cfg_id:
+                    needs_fix = True
+                    uri.setAuthConfigId(auth_cfg_id)
+                    uri.setUsername("")
+                    uri.setPassword("")
+            else:
+                if old_authcfg or uri.username() != DEFAULT_USER:
+                    needs_fix = True
+                    uri.setAuthConfigId("")
+                    uri.setUsername(DEFAULT_USER)
+                    uri.setPassword(password)
+
+            if needs_fix or not layer.isValid():
+                options = QgsDataProvider.ProviderOptions()
+                layer.setDataSource(
+                    uri.uri(False),
+                    layer.name(),
+                    "postgres",
+                    options,
+                )
+                if layer.isValid():
+                    fixed += 1
+                else:
+                    still_bad += 1
+
+        if fixed:
+            self._log(f"{fixed} couche(s) PG: credentials corrigees")
+        if still_bad:
+            self._log(f"{still_bad} couche(s) PG toujours invalides apres correction", Qgis.Warning)
 
     def _check_layer_datasources(self):
         """Verifie que les couches PostgreSQL ne pointent pas vers localhost."""
@@ -847,16 +1029,13 @@ class ConstructelBridgePlugin:
         proj_name = selected["name"]
         project = QgsProject.instance()
         if project.read(uri):
+            # _on_project_read est declenche automatiquement par le signal
+            # readProject et gere: fix credentials, hooks, masquage, i18n.
             self._log(tr("project.loaded", name=proj_name))
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
                 tr("project.loaded", name=proj_name),
             )
-            # Re-hook les couches du projet charge + masquage + i18n
-            self._layer_hooks_installed = False
-            self._hook_layers()
-            self._hide_no_geom_layers()
-            bridge_sketcher.apply_all_translations()
         else:
             raw_error = project.error()
             if hasattr(raw_error, "summary"):
