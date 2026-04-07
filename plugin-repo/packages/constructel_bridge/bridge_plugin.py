@@ -267,6 +267,12 @@ class ConstructelBridgePlugin:
         except Exception:
             pass
 
+        # Auto-connexion silencieuse au demarrage si un mot de passe est
+        # disponible (stocke dans Auth Manager ou mot de passe par defaut).
+        # Cela evite a l'utilisateur de devoir cliquer manuellement sur
+        # "Connexion base de donnees" a chaque ouverture de projet.
+        self._auto_connect()
+
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
         self._unhook_layers()
@@ -678,29 +684,56 @@ class ConstructelBridgePlugin:
             or layer.geometryType() == QgsWkbTypes.NullGeometry
         )
 
-    def _hide_no_geom_layers(self):
-        """Retire du Layer Tree toutes les couches sans geometrie."""
+    def _get_or_create_lists_group(self):
+        """Retourne (ou cree) le groupe 'Listes' en bas du Layer Tree."""
+        from .i18n import get_language
+        from .i18n.layer_translations import GROUP_NAMES
+        lang = get_language()
+        tr_dict = GROUP_NAMES.get("Listes", {})
+        group_name = tr_dict.get(lang) or tr_dict.get("fr", "Listes")
+
         root = QgsProject.instance().layerTreeRoot()
-        removed = 0
+        # Chercher un groupe existant (n'importe quel nom traduit)
+        known_names = set(tr_dict.values()) | {"Listes", "Autres", "Other", "Outros"}
+        for child in root.children():
+            if hasattr(child, "name") and child.name() in known_names:
+                if child.name() != group_name:
+                    child.setName(group_name)
+                return child
+        # Creer le groupe en bas
+        return root.addGroup(group_name)
+
+    def _hide_no_geom_layers(self):
+        """Deplace les couches sans geometrie dans le groupe 'Listes'."""
+        root = QgsProject.instance().layerTreeRoot()
+        group = self._get_or_create_lists_group()
+        moved = 0
         for layer in QgsProject.instance().mapLayers().values():
             if not self._is_no_geom(layer):
                 continue
             node = root.findLayer(layer.id())
-            if node:
+            if node and node.parent() != group:
+                clone = node.clone()
+                group.addChildNode(clone)
                 node.parent().removeChildNode(node)
-                removed += 1
-        if removed:
-            self._log(f"{removed} couche(s) sans geometrie retiree(s) du Layer Tree")
+                moved += 1
+        # Replier le groupe par defaut
+        group.setExpanded(False)
+        if moved:
+            self._log(f"{moved} couche(s) sans geometrie deplacee(s) dans '{group.name()}'")
 
     def _hide_layer_if_no_geom(self, layer):
-        """Retire une couche individuelle du Layer Tree si sans geometrie."""
+        """Deplace une couche individuelle dans le groupe 'Listes' si sans geometrie."""
         if not self._is_no_geom(layer):
             return
         root = QgsProject.instance().layerTreeRoot()
+        group = self._get_or_create_lists_group()
         node = root.findLayer(layer.id())
-        if node:
+        if node and node.parent() != group:
+            clone = node.clone()
+            group.addChildNode(clone)
             node.parent().removeChildNode(node)
-            self._log(f"couche '{layer.name()}' retiree du Layer Tree (sans geometrie)")
+            self._log(f"couche '{layer.name()}' deplacee dans '{group.name()}'")
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL
