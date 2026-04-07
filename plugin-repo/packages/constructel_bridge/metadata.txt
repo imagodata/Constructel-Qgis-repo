@@ -2,8 +2,8 @@
 name=Constructel Bridge
 qgisMinimumVersion=3.28
 description=Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.
-version=1.1.0
-changelog=v1.1.0 - i18n live: traductions formulaires/alias/listes sans redemarrage, bridge_sketcher, macros auto activees
+version=1.2.0
+changelog=v1.2.0 - Fix multi-utilisateur: correction auto des credentials couches PG au chargement de projet (explorateur PG, fichier, menu plugin)
 author=Equipe WYRE / Constructel
 email=dev@wyre.be
 about=Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS avec le role ftth_editor, identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user.
