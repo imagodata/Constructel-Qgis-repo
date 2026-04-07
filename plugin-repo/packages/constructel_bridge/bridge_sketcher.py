@@ -14,6 +14,7 @@ Compatible avec les projets stockes en base PostgreSQL.
 
 from qgis.core import (
     Qgis,
+    QgsAttributeEditorContainer,
     QgsDataSourceUri,
     QgsEditorWidgetSetup,
     QgsMessageLog,
@@ -24,10 +25,13 @@ from qgis.core import (
 from .i18n import get_language
 from .i18n.layer_translations import (
     FIELD_ALIASES,
+    FORM_CONTAINERS_PER_LAYER,
     GROUP_NAMES,
+    LABEL_EXPRESSIONS,
     LAYER_DISPLAY_NAMES,
     LAYER_NAME_MAP,
     VALUE_RELATION_COLUMNS,
+    _FORM_COMMON,
 )
 
 TAG = "Constructel Bridge"
@@ -182,6 +186,118 @@ def apply_group_names(lang: str | None = None):
 
 
 # =====================================================================
+# 5. Etiquettes (labels sur la carte)
+# =====================================================================
+
+def apply_label_expressions(layer: QgsVectorLayer, lang: str | None = None):
+    """Bascule l'expression d'etiquette selon la langue.
+
+    Seules les couches listees dans LABEL_EXPRESSIONS sont modifiees.
+    Les autres affichent des donnees brutes (nomenclature, code, etc.)
+    qui ne necessitent pas de traduction.
+    """
+    from qgis.core import QgsPalLayerSettings, QgsVectorLayerSimpleLabeling
+
+    lang = lang or get_language()
+    table_key = _resolve_table_key(layer)
+    if not table_key or table_key not in LABEL_EXPRESSIONS:
+        return False
+
+    expr_map = LABEL_EXPRESSIONS[table_key]
+    new_expr = expr_map.get(lang) or expr_map.get("en", "")
+    if not new_expr:
+        return False
+
+    labeling = layer.labeling()
+    if not labeling:
+        return False
+
+    # Simple labeling (type le plus courant)
+    if not isinstance(labeling, QgsVectorLayerSimpleLabeling):
+        return False
+
+    settings = labeling.settings()
+    if settings.fieldName == new_expr:
+        return False
+
+    settings.fieldName = new_expr
+    settings.isExpression = True
+    labeling.setSettings(settings)
+    layer.setLabeling(labeling)
+    layer.triggerRepaint()
+    return True
+
+
+# =====================================================================
+# 6. Containers de formulaires (onglets + groupes)
+# =====================================================================
+
+def _rename_containers_recursive(element, lookup, lang):
+    """Parcourt recursivement les containers et renomme ceux trouves dans lookup."""
+    renamed = 0
+    if not isinstance(element, QgsAttributeEditorContainer):
+        return 0
+
+    current_name = element.name()
+    tr_dict = lookup.get(current_name)
+    if tr_dict:
+        new_name = tr_dict.get(lang) or tr_dict.get("en", current_name)
+        if new_name != current_name:
+            element.setName(new_name)
+            renamed += 1
+
+    for child in element.children():
+        renamed += _rename_containers_recursive(child, lookup, lang)
+
+    return renamed
+
+
+def apply_form_containers(layer: QgsVectorLayer, lang: str | None = None):
+    """Renomme les onglets et groupes du formulaire d'attributs.
+
+    Combine le dict commun (_FORM_COMMON) avec le dict specifique
+    a la couche (FORM_CONTAINERS_PER_LAYER[table_key]).
+    """
+    lang = lang or get_language()
+    table_key = _resolve_table_key(layer)
+
+    # Construire le lookup : commun + specifique à la couche
+    lookup = dict(_FORM_COMMON)
+    if table_key and table_key in FORM_CONTAINERS_PER_LAYER:
+        lookup.update(FORM_CONTAINERS_PER_LAYER[table_key])
+
+    # Aussi ajouter le lookup pour "infra_structure_cable_splices" via le nom PG
+    provider = layer.dataProvider()
+    if provider and provider.name() == "postgres":
+        uri = QgsDataSourceUri(layer.source())
+        pg_table = uri.table()
+        if pg_table and pg_table in FORM_CONTAINERS_PER_LAYER:
+            lookup.update(FORM_CONTAINERS_PER_LAYER[pg_table])
+
+    if not lookup:
+        return False
+
+    # Construire un reverse lookup: n'importe quelle traduction existante -> dict
+    reverse = {}
+    for canonical_name, tr_dict in lookup.items():
+        reverse[canonical_name] = tr_dict
+        for l, translated in tr_dict.items():
+            reverse[translated] = tr_dict
+
+    edit_form_config = layer.editFormConfig()
+    root_container = edit_form_config.invisibleRootContainer()
+    if not root_container:
+        return False
+
+    renamed = _rename_containers_recursive(root_container, reverse, lang)
+
+    if renamed:
+        layer.setEditFormConfig(edit_form_config)
+
+    return renamed > 0
+
+
+# =====================================================================
 # API publique — applique tout
 # =====================================================================
 
@@ -195,6 +311,8 @@ def apply_all_translations(lang: str | None = None):
 
     layers_translated = 0
     vr_switched = 0
+    forms_translated = 0
+    labels_switched = 0
 
     for layer in project.mapLayers().values():
         if not isinstance(layer, QgsVectorLayer):
@@ -203,6 +321,10 @@ def apply_all_translations(lang: str | None = None):
             layers_translated += 1
         if apply_value_relation_columns(layer, lang):
             vr_switched += 1
+        if apply_form_containers(layer, lang):
+            forms_translated += 1
+        if apply_label_expressions(layer, lang):
+            labels_switched += 1
         apply_layer_name(layer, lang)
 
     groups_renamed = apply_group_names(lang)
@@ -213,6 +335,8 @@ def apply_all_translations(lang: str | None = None):
     _log(
         f"i18n [{lang}]: {layers_translated} couche(s) traduites, "
         f"{vr_switched} ValueRelation basculee(s), "
+        f"{forms_translated} formulaire(s) traduit(s), "
+        f"{labels_switched} etiquette(s) basculee(s), "
         f"{groups_renamed} groupe(s) renomme(s)"
     )
     return layers_translated
@@ -225,4 +349,6 @@ def apply_to_layer(layer: QgsVectorLayer, lang: str | None = None):
         return
     apply_field_aliases(layer, lang)
     apply_value_relation_columns(layer, lang)
+    apply_form_containers(layer, lang)
+    apply_label_expressions(layer, lang)
     apply_layer_name(layer, lang)
