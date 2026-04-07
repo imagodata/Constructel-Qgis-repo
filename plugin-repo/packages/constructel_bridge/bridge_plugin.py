@@ -701,7 +701,7 @@ class ConstructelBridgePlugin:
             or layer.geometryType() == QgsWkbTypes.NullGeometry
         )
 
-    _REF_GROUP_NAME = "_ Référence (ne pas modifier)"
+    _REF_GROUP_NAME = "Référence"
 
     def _get_or_create_ref_group(self):
         """Retourne (ou cree) le groupe de reference pour couches masquees.
@@ -717,7 +717,10 @@ class ConstructelBridgePlugin:
 
         # 2. Chercher les anciens groupes Listes/Autres
         tr_dict = GROUP_NAMES.get("Listes", {})
-        legacy_names = set(tr_dict.values()) | {"Listes", "Autres", "Other", "Outros"}
+        legacy_names = set(tr_dict.values()) | {
+            "Listes", "Autres", "Other", "Outros",
+            "_ Référence (ne pas modifier)",
+        }
         legacy_groups = []
         for child in root.children():
             if hasattr(child, "name") and child.name() in legacy_names:
