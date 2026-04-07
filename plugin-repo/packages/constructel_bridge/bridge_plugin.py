@@ -335,11 +335,10 @@ class ConstructelBridgePlugin:
         # charge par n'importe quel moyen (explorateur PG, fichier, etc.)
         QgsProject.instance().readProject.connect(self._on_project_read)
 
-        # Auto-connexion silencieuse au demarrage si un mot de passe est
-        # disponible (stocke dans Auth Manager ou mot de passe par defaut).
-        # Cela evite a l'utilisateur de devoir cliquer manuellement sur
-        # "Connexion base de donnees" a chaque ouverture de projet.
-        self._auto_connect()
+        # L'auto-connexion n'est plus lancee au demarrage de QGIS pour eviter
+        # de modifier le projet vide (marqueur "*" dirty) et le dialogue
+        # "Enregistrer le projet" intempestif. L'utilisateur se connecte
+        # manuellement via le menu ou le bouton toolbar.
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
