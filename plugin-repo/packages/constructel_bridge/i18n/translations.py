@@ -70,6 +70,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "lang.title": "Constructel Bridge - Language",
         "lang.prompt": "Select language:",
         "lang.restart": "Language changed to {lang}. Restart QGIS or reconnect for full effect.",
+        "lang.applied": "Language switched to {lang}. Forms, aliases and dropdowns updated.",
 
         # -- Load project from DB --
         "project.title": "Constructel Bridge - Load project",
@@ -230,6 +231,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "lang.title": "Constructel Bridge - Langue",
         "lang.prompt": "Choisissez la langue:",
         "lang.restart": "Langue changee en {lang}. Redemarrez QGIS ou reconnectez-vous pour un effet complet.",
+        "lang.applied": "Langue basculee en {lang}. Formulaires, alias et listes deroulantes mis a jour.",
 
         # -- Load project from DB --
         "project.title": "Constructel Bridge - Charger un projet",
@@ -392,6 +394,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "lang.title": "Constructel Bridge - Idioma",
         "lang.prompt": "Selecione o idioma:",
         "lang.restart": "Idioma alterado para {lang}. Reinicie o QGIS ou volte a ligar para efeito completo.",
+        "lang.applied": "Idioma alterado para {lang}. Formularios, alias e listas atualizados.",
 
         # -- Load project from DB --
         "project.title": "Constructel Bridge - Carregar projeto",
