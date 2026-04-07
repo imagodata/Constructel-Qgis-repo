@@ -277,7 +277,7 @@ GROUP_NAMES: dict[str, dict[str, str]] = {
     "Zones":           {"fr": "Zones",               "en": "Zones",               "pt": "Zonas"},
     "Infrastructure":  {"fr": "Infrastructure",      "en": "Infrastructure",      "pt": "Infraestrutura"},
     "Demand Points":   {"fr": "Points de demande",   "en": "Demand Points",       "pt": "Pontos de procura"},
-    "Autres":          {"fr": "Autres",              "en": "Other",               "pt": "Outros"},
+    "Listes":          {"fr": "Listes",              "en": "Lists",               "pt": "Listas"},
 }
 
 
