@@ -263,7 +263,7 @@ VALUE_RELATION_COLUMNS: dict[str, dict[str, str]] = {
     "cable_types":       {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
     "duct_models":       {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
     "pose_types":        {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
-    "statuses":          {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
+    "v_valid_statuses":  {"fr": "status_label", "en": "status_label_en", "pt": "status_label_pt"},
 }
 
 
