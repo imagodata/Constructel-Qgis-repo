@@ -218,6 +218,48 @@ LAYER_NAME_MAP: dict[str, str] = {
 # Les tables ref.* ont ``label`` (FR) + ``label_en`` (EN).
 # Pour PT on utilise label_en (anglais comme fallback).
 
+# =====================================================================
+# LABEL_EXPRESSIONS — expressions d'etiquettes multilingues
+# =====================================================================
+# Clé : table PostgreSQL
+# Valeur : {lang: expression QGIS}
+#
+# Seules les couches dont les etiquettes contiennent du texte
+# hardcode a traduire sont listees ici. Les autres (nomenclature,
+# code, homecount…) affichent des donnees brutes sans traduction.
+
+LABEL_EXPRESSIONS: dict[str, dict[str, str]] = {
+    "zone_distribution": {
+        "fr": (
+            "COALESCE(\"nomenclature\", \"breakout_letter\") || '\\n' || "
+            "ROUND(COALESCE(\"dp_progress_percentage\", 0), 1) || '% avancement'"
+        ),
+        "en": (
+            "COALESCE(\"nomenclature\", \"breakout_letter\") || '\\n' || "
+            "ROUND(COALESCE(\"dp_progress_percentage\", 0), 1) || '% progress'"
+        ),
+        "pt": (
+            "COALESCE(\"nomenclature\", \"breakout_letter\") || '\\n' || "
+            "ROUND(COALESCE(\"dp_progress_percentage\", 0), 1) || '% progresso'"
+        ),
+    },
+    "zone_drop": {
+        "fr": (
+            "COALESCE(\"nomenclature\", 'ZD' || \"id\") || '\\n' || "
+            "ROUND(COALESCE(\"dp_progress_percentage\", 0), 1) || '% avancement'"
+        ),
+        "en": (
+            "COALESCE(\"nomenclature\", 'ZD' || \"id\") || '\\n' || "
+            "ROUND(COALESCE(\"dp_progress_percentage\", 0), 1) || '% progress'"
+        ),
+        "pt": (
+            "COALESCE(\"nomenclature\", 'ZD' || \"id\") || '\\n' || "
+            "ROUND(COALESCE(\"dp_progress_percentage\", 0), 1) || '% progresso'"
+        ),
+    },
+}
+
+
 VALUE_RELATION_COLUMNS: dict[str, dict[str, str]] = {
     "structure_types":   {"fr": "label", "en": "label_en", "pt": "label_en"},
     "cable_types":       {"fr": "label", "en": "label_en", "pt": "label_en"},
@@ -242,6 +284,127 @@ GROUP_NAMES: dict[str, dict[str, str]] = {
 # =====================================================================
 # LAYER DISPLAY NAMES — traductions des noms de couches
 # =====================================================================
+
+# =====================================================================
+# FORM_CONTAINERS — traductions des onglets (Tab) et groupes (GroupBox)
+# =====================================================================
+# Clé : nom FR actuel dans le QML (avec emojis).
+# Les noms sont partagés entre couches — un même nom traduit partout.
+#
+# Pour les containers qui apparaissent dans plusieurs couches avec le
+# même sens, on utilise un dict commun. Les noms spécifiques à une
+# couche sont ajoutés dans le dict de la couche dans FORM_CONTAINERS_PER_LAYER.
+
+_FORM_COMMON: dict[str, dict[str, str]] = {
+    # --- Tabs communs ---
+    "🎯 Principal":          {"fr": "🎯 Principal",          "en": "🎯 Main",                "pt": "🎯 Principal"},
+    "🔧 Technique":          {"fr": "🔧 Technique",          "en": "🔧 Technical",           "pt": "🔧 Tecnico"},
+    "🔗 Liens":              {"fr": "🔗 Liens",              "en": "🔗 Links",               "pt": "🔗 Ligacoes"},
+    "🏷️ Identification":    {"fr": "🏷️ Identification",    "en": "🏷️ Identification",     "pt": "🏷️ Identificacao"},
+    "ℹ️ Info":               {"fr": "ℹ️ Info",               "en": "ℹ️ Info",                "pt": "ℹ️ Info"},
+    "Documents":              {"fr": "Documents",              "en": "Documents",               "pt": "Documentos"},
+    "📍 Localisation":       {"fr": "📍 Localisation",       "en": "📍 Location",            "pt": "📍 Localizacao"},
+    "📅 Planning":           {"fr": "📅 Planning",           "en": "📅 Planning",            "pt": "📅 Planeamento"},
+    "📊 Métriques":          {"fr": "📊 Métriques",          "en": "📊 Metrics",             "pt": "📊 Metricas"},
+    "📐 Surface":            {"fr": "📐 Surface",            "en": "📐 Area",                "pt": "📐 Area"},
+    "🏠 Adresse":            {"fr": "🏠 Adresse",            "en": "🏠 Address",             "pt": "🏠 Morada"},
+
+    # --- GroupBoxes communs ---
+    "⚡ Actions Terrain":    {"fr": "⚡ Actions Terrain",    "en": "⚡ Field Actions",        "pt": "⚡ Acoes Terreno"},
+    "📅 Dates":              {"fr": "📅 Dates",              "en": "📅 Dates",               "pt": "📅 Datas"},
+    "📅 Dates clés":         {"fr": "📅 Dates clés",         "en": "📅 Key Dates",           "pt": "📅 Datas chave"},
+    "📅 Dates Workflow":     {"fr": "📅 Dates Workflow",     "en": "📅 Workflow Dates",      "pt": "📅 Datas Workflow"},
+    "🏷️ Nommage":           {"fr": "🏷️ Nommage",           "en": "🏷️ Naming",             "pt": "🏷️ Nomenclatura"},
+    "🔑 Identifiant":       {"fr": "🔑 Identifiant",       "en": "🔑 Identifier",          "pt": "🔑 Identificador"},
+    "💾 Source":             {"fr": "💾 Source",             "en": "💾 Source",               "pt": "💾 Fonte"},
+    "💾 Sources":            {"fr": "💾 Sources",            "en": "💾 Sources",              "pt": "💾 Fontes"},
+    "📊 Audit":              {"fr": "📊 Audit",              "en": "📊 Audit",               "pt": "📊 Auditoria"},
+    "📊 Metrics":            {"fr": "📊 Metrics",            "en": "📊 Metrics",             "pt": "📊 Metricas"},
+    "🗺️ Zones":             {"fr": "🗺️ Zones",             "en": "🗺️ Zones",              "pt": "🗺️ Zonas"},
+    "📍 Zones":              {"fr": "📍 Zones",              "en": "📍 Zones",               "pt": "📍 Zonas"},
+    "📍 Résumé":             {"fr": "📍 Résumé",             "en": "📍 Summary",             "pt": "📍 Resumo"},
+    "📍 Connexions":         {"fr": "📍 Connexions",         "en": "📍 Connections",         "pt": "📍 Conexoes"},
+    "🎯 IDs Externes":      {"fr": "🎯 IDs Externes",      "en": "🎯 External IDs",        "pt": "🎯 IDs Externos"},
+    "🎯 Identifiants Externes": {"fr": "🎯 Identifiants Externes", "en": "🎯 External Identifiers", "pt": "🎯 Identificadores Externos"},
+    "🔗 ID Externe":        {"fr": "🔗 ID Externe",        "en": "🔗 External ID",         "pt": "🔗 ID Externo"},
+    "Resume documentaire":    {"fr": "Resume documentaire",    "en": "Document summary",       "pt": "Resumo documental"},
+    "Lien dossier SharePoint":{"fr": "Lien dossier SharePoint","en": "SharePoint folder link",  "pt": "Link pasta SharePoint"},
+    "Liens documents (clic pour ouvrir)": {
+        "fr": "Liens documents (clic pour ouvrir)",
+        "en": "Document links (click to open)",
+        "pt": "Links documentos (clicar para abrir)",
+    },
+    "📏 Dimensions":         {"fr": "📏 Dimensions",         "en": "📏 Dimensions",          "pt": "📏 Dimensoes"},
+    "📦 Modèle":             {"fr": "📦 Modèle",             "en": "📦 Model",               "pt": "📦 Modelo"},
+    "📦 Classification":     {"fr": "📦 Classification",     "en": "📦 Classification",      "pt": "📦 Classificacao"},
+    "📅 Planning":           {"fr": "📅 Planning",           "en": "📅 Planning",            "pt": "📅 Planeamento"},
+}
+
+# Containers specifiques à certaines couches
+FORM_CONTAINERS_PER_LAYER: dict[str, dict[str, dict[str, str]]] = {
+
+    "structures": {
+        "🔧 Technique":              {"fr": "🔧 Technique",              "en": "🔧 Technical",            "pt": "🔧 Tecnico"},
+        "🏠 Adresse Proche":         {"fr": "🏠 Adresse Proche",         "en": "🏠 Nearest Address",      "pt": "🏠 Morada Proxima"},
+        "Soudures":                    {"fr": "Soudures",                    "en": "Splices",                  "pt": "Emendas"},
+        "Progression soudure":         {"fr": "Progression soudure",         "en": "Splice progress",          "pt": "Progresso emenda"},
+        "Câbles départ (Start)":      {"fr": "Câbles départ (Start)",      "en": "Outgoing cables (Start)",  "pt": "Cabos saida (Start)"},
+        "Câbles arrivée (End)":       {"fr": "Câbles arrivée (End)",       "en": "Incoming cables (End)",    "pt": "Cabos entrada (End)"},
+    },
+
+    "cables": {
+        "📊 Mesures OTDR":           {"fr": "📊 Mesures OTDR",           "en": "📊 OTDR Measurements",    "pt": "📊 Medicoes OTDR"},
+    },
+
+    "ducts": {
+        "🔀 Extrémités":            {"fr": "🔀 Extrémités",            "en": "🔀 Endpoints",            "pt": "🔀 Extremidades"},
+        "🏷️ Type &amp; Modèle":    {"fr": "🏷️ Type & Modèle",        "en": "🏷️ Type & Model",        "pt": "🏷️ Tipo & Modelo"},
+        "🔤 Nomenclature":           {"fr": "🔤 Nomenclature",           "en": "🔤 Nomenclature",         "pt": "🔤 Nomenclatura"},
+    },
+
+    "subducts": {
+        "🚧 Conduite":              {"fr": "🚧 Conduite",              "en": "🚧 Duct",                 "pt": "🚧 Ducto"},
+    },
+
+    "demand_points": {
+        "📍 Adresse Complète":       {"fr": "📍 Adresse Complète",       "en": "📍 Full Address",         "pt": "📍 Morada Completa"},
+        "🏷️ Composants":            {"fr": "🏷️ Composants",            "en": "🏷️ Components",          "pt": "🏷️ Componentes"},
+        "🏢 Identifiant":            {"fr": "🏢 Identifiant",            "en": "🏢 Identifier",           "pt": "🏢 Identificador"},
+        "📊 Données DP":             {"fr": "📊 Données DP",             "en": "📊 DP Data",              "pt": "📊 Dados DP"},
+        "📶 Fibres":                  {"fr": "📶 Fibres",                  "en": "📶 Fibres",               "pt": "📶 Fibras"},
+        "📊 Budget Optique":          {"fr": "📊 Budget Optique",          "en": "📊 Optical Budget",       "pt": "📊 Orcamento Optico"},
+        "🗺️ Zones Principales":     {"fr": "🗺️ Zones Principales",     "en": "🗺️ Main Zones",          "pt": "🗺️ Zonas Principais"},
+        "📦 Zones Distribution":      {"fr": "📦 Zones Distribution",      "en": "📦 Distribution Zones",   "pt": "📦 Zonas Distribuicao"},
+        "🏠 Compteurs":               {"fr": "🏠 Compteurs",               "en": "🏠 Counters",             "pt": "🏠 Contadores"},
+    },
+
+    "zone_mro": {
+        "📍 Zone MRO":               {"fr": "📍 Zone MRO",               "en": "📍 MRO Zone",             "pt": "📍 Zona MRO"},
+    },
+
+    "zone_pop": {
+        "🏷️ POP":                   {"fr": "🏷️ POP",                   "en": "🏷️ POP",                 "pt": "🏷️ POP"},
+        "🏢 Organisation":           {"fr": "🏢 Organisation",           "en": "🏢 Organization",         "pt": "🏢 Organizacao"},
+        "📊 Infrastructure":          {"fr": "📊 Infrastructure",          "en": "📊 Infrastructure",       "pt": "📊 Infraestrutura"},
+        "🗺️ Zone":                   {"fr": "🗺️ Zone",                   "en": "🗺️ Zone",                "pt": "🗺️ Zona"},
+        "📍 Adresse":                 {"fr": "📍 Adresse",                 "en": "📍 Address",              "pt": "📍 Morada"},
+    },
+
+    "zone_distribution": {
+        "📶 Capacité":                {"fr": "📶 Capacité",                "en": "📶 Capacity",             "pt": "📶 Capacidade"},
+    },
+
+    "zone_drop": {
+        "📐 Surface":                 {"fr": "📐 Surface",                 "en": "📐 Area",                 "pt": "📐 Area"},
+    },
+
+    "structure_cable_splices": {
+        "Soudure":                     {"fr": "Soudure",                     "en": "Splice",                   "pt": "Emenda"},
+        "Cable":                        {"fr": "Cable",                        "en": "Cable",                    "pt": "Cabo"},
+        "Etat soudure":                {"fr": "Etat soudure",                "en": "Splice status",            "pt": "Estado emenda"},
+    },
+}
+
 
 LAYER_DISPLAY_NAMES: dict[str, dict[str, str]] = {
     "structures":         {"fr": "Structures",           "en": "Structures",           "pt": "Estruturas"},

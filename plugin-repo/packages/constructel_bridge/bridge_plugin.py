@@ -22,6 +22,7 @@ from qgis.core import (
     QgsProject,
     QgsSettings,
     QgsVectorLayer,
+    QgsWkbTypes,
 )
 from qgis.gui import QgisInterface
 from qgis.PyQt.QtGui import QIcon
@@ -215,6 +216,13 @@ class ConstructelBridgePlugin:
                 f"{stored_version or '(none)'} -> {PLUGIN_VERSION}"
             )
 
+        # Masquer les couches sans geometrie deja presentes dans le projet
+        # (couvre le cas ou le projet est deja ouvert au chargement du plugin)
+        try:
+            self._hide_no_geom_layers()
+        except Exception:
+            pass
+
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
         self._unhook_layers()
@@ -343,6 +351,12 @@ class ConstructelBridgePlugin:
             self._hook_layers()
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
+
+        # Masquer les couches sans geometrie (listes, ref)
+        try:
+            self._hide_no_geom_layers()
+        except Exception as exc:
+            self._log(f"Hide no-geom failed: {exc}", Qgis.Warning)
 
         # Appliquer les traductions i18n sur les couches
         try:
@@ -559,6 +573,7 @@ class ConstructelBridgePlugin:
         for layer in layers:
             if isinstance(layer, QgsVectorLayer):
                 self._hook_single_layer(layer)
+                self._hide_layer_if_no_geom(layer)
                 bridge_sketcher.apply_to_layer(layer)
 
     def _hook_single_layer(self, layer: QgsVectorLayer):
@@ -592,6 +607,61 @@ class ConstructelBridgePlugin:
             self._log(tr("hook.commit_tagged", user=self._bridge_user, layer=layer.name()))
         except Exception as exc:
             self._log(tr("hook.exec_error", error=exc), Qgis.Warning)
+
+    # =====================================================================
+    # Masquage des couches sans geometrie (listes / ref)
+    # =====================================================================
+
+    _HIDDEN_GROUP = "Autres"
+
+    @staticmethod
+    def _is_no_geom(layer):
+        """True si la couche vectorielle n'a pas de geometrie."""
+        if not isinstance(layer, QgsVectorLayer):
+            return False
+        return (
+            not layer.isSpatial()
+            or layer.wkbType() == QgsWkbTypes.NoGeometry
+            or layer.geometryType() == QgsWkbTypes.NullGeometry
+        )
+
+    def _get_or_create_hidden_group(self):
+        """Retourne le groupe 'Autres', le cree si absent."""
+        root = QgsProject.instance().layerTreeRoot()
+        grp = root.findGroup(self._HIDDEN_GROUP)
+        if not grp:
+            grp = root.addGroup(self._HIDDEN_GROUP)
+        grp.setExpanded(False)
+        grp.setItemVisibilityChecked(False)
+        return grp
+
+    def _move_to_hidden_group(self, layer, grp):
+        """Deplace un noeud du Layer Tree dans le groupe cache."""
+        root = QgsProject.instance().layerTreeRoot()
+        node = root.findLayer(layer.id())
+        if node and node.parent() != grp:
+            clone = node.clone()
+            grp.insertChildNode(-1, clone)
+            node.parent().removeChildNode(node)
+            return True
+        return False
+
+    def _hide_no_geom_layers(self):
+        """Masque toutes les couches sans geometrie dans le groupe 'Autres'."""
+        grp = self._get_or_create_hidden_group()
+        moved = 0
+        for layer in QgsProject.instance().mapLayers().values():
+            if self._is_no_geom(layer) and self._move_to_hidden_group(layer, grp):
+                moved += 1
+        if moved:
+            self._log(f"{moved} couche(s) sans geometrie -> '{self._HIDDEN_GROUP}'")
+
+    def _hide_layer_if_no_geom(self, layer):
+        """Masque une couche individuelle si sans geometrie."""
+        if self._is_no_geom(layer):
+            grp = self._get_or_create_hidden_group()
+            if self._move_to_hidden_group(layer, grp):
+                self._log(f"couche '{layer.name()}' -> '{self._HIDDEN_GROUP}'")
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL
@@ -667,9 +737,10 @@ class ConstructelBridgePlugin:
                 "Constructel Bridge",
                 tr("project.loaded", name=proj_name),
             )
-            # Re-hook les couches du projet charge + i18n
+            # Re-hook les couches du projet charge + masquage + i18n
             self._layer_hooks_installed = False
             self._hook_layers()
+            self._hide_no_geom_layers()
             bridge_sketcher.apply_all_translations()
         else:
             raw_error = project.error()
