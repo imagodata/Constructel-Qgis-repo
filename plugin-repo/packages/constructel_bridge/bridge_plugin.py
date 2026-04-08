@@ -827,56 +827,51 @@ class ConstructelBridgePlugin:
                     "lyrs%3Dsvv%26x%3D{x}%26y%3D{y}%26z%3D{z}"
                     "%26w%3D256%26h%3D256%26hl%3Den&style%3D40,18"
                 ),
-                "zmin": "0",
-                "zmax": "21",
-                "tilePixelRatio": "0",
+                "zmin": 0,
+                "zmax": 21,
+                "tilePixelRatio": 0,
             },
         ),
         # --- WMTS (enregistre comme connexion WMS dans QGIS) ---
         (
             "qgis/connections-wms",
-            "WMTS UrbIS (Bruxelles)",
+            "WMTS UrbIS Bruxelles",
             {
-                "url": (
-                    "https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
-                    "?service=WMTS&request=GetCapabilities&version=1.0.0"
-                ),
-                "ignoreGetMapURI": "false",
-                "ignoreGetFeatureInfoURI": "false",
-                "ignoreAxisOrientation": "false",
-                "invertAxisOrientation": "false",
-                "smoothPixmapTransform": "false",
-                "dpiMode": "7",
+                "url": "https://geoservices-urbis.irisnet.be/geowebcache/service/wmts",
+                "ignoreGetMapURI": False,
+                "ignoreGetFeatureInfoURI": False,
+                "ignoreAxisOrientation": False,
+                "invertAxisOrientation": False,
+                "smoothPixmapTransform": False,
+                "dpiMode": 7,
             },
         ),
         (
             "qgis/connections-wms",
-            "WMTS NGI CartoWeb (Belgique)",
+            "WMTS NGI CartoWeb Belgique",
             {
                 "url": "https://cartoweb.wmts.ngi.be/1.0.0/WMTSCapabilities.xml",
-                "ignoreGetMapURI": "false",
-                "ignoreGetFeatureInfoURI": "false",
-                "ignoreAxisOrientation": "false",
-                "invertAxisOrientation": "false",
-                "smoothPixmapTransform": "false",
-                "dpiMode": "7",
+                "ignoreGetMapURI": False,
+                "ignoreGetFeatureInfoURI": False,
+                "ignoreAxisOrientation": False,
+                "invertAxisOrientation": False,
+                "smoothPixmapTransform": False,
+                "dpiMode": 7,
             },
         ),
         # --- WFS ---
         (
             "qgis/connections-wfs",
-            "WFS Cadastre UrbIS (Bruxelles)",
+            "WFS Cadastre UrbIS Bruxelles",
             {
-                "url": (
-                    "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs"
-                ),
+                "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
                 "version": "2.0.0",
                 "maxnumfeatures": "",
                 "pagesize": "",
-                "pagingenabled": "true",
-                "ignoreAxisOrientation": "false",
-                "invertAxisOrientation": "false",
-                "preferCoordinatesForWfsT11": "false",
+                "pagingenabled": True,
+                "ignoreAxisOrientation": False,
+                "invertAxisOrientation": False,
+                "preferCoordinatesForWfsT11": False,
             },
         ),
     ]
@@ -888,22 +883,26 @@ class ConstructelBridgePlugin:
         (l'utilisateur a peut-etre modifie d'autres parametres).
         """
         settings = QgsSettings()
-        added = 0
+        added = []
         for base, name, params in self._EXTERNAL_SERVICES:
             key_prefix = f"{base}/{name}"
             existing_url = settings.value(f"{key_prefix}/url", "")
             if existing_url == params.get("url", ""):
-                continue  # deja configure avec la meme URL
+                self._log(f"Service '{name}' already configured — skipped")
+                continue
             for k, v in params.items():
                 settings.setValue(f"{key_prefix}/{k}", v)
-            added += 1
+            added.append(name)
+            self._log(f"Service '{name}' registered ({key_prefix})")
         if added:
-            self._log(f"{added} external service connection(s) registered")
+            settings.sync()
             self.iface.browserModel().reload()
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
-                tr("services.registered", count=added),
+                tr("services.registered", count=len(added)),
             )
+        else:
+            self._log("All external services already configured")
 
     # =====================================================================
     # Hook sur les couches — tagging des commits
