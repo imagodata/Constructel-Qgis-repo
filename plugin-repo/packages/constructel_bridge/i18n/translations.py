@@ -62,6 +62,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pg.configured": "QGIS connection 'constructel_bridge' configured",
         "pg.already_configured": "QGIS connection 'constructel_bridge' already set up — skipped",
 
+        # -- External services --
+        "services.registered": "{count} external service(s) added (WMTS / XYZ / WFS). "
+                               "Check the Browser panel.",
+
         # -- Layer datasource check --
         "layers.bad_host": "{count} layer(s) still point to localhost ({names}). "
                            "Re-save the project with the correct server ({host}).",
@@ -222,6 +226,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- QGIS PG connection --
         "pg.configured": "Connexion QGIS 'constructel_bridge' configuree",
         "pg.already_configured": "Connexion QGIS 'constructel_bridge' deja en place — ignoree",
+
+        # -- External services --
+        "services.registered": "{count} service(s) externe(s) ajoute(s) (WMTS / XYZ / WFS). "
+                               "Consultez le panneau Sketcher.",
 
         # -- Layer datasource check --
         "layers.bad_host": "{count} couche(s) pointent encore vers localhost ({names}). "
@@ -385,6 +393,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- QGIS PG connection --
         "pg.configured": "Ligacao QGIS 'constructel_bridge' configurada",
         "pg.already_configured": "Ligacao QGIS 'constructel_bridge' ja configurada — ignorada",
+
+        # -- External services --
+        "services.registered": "{count} servico(s) externo(s) adicionado(s) (WMTS / XYZ / WFS). "
+                               "Consulte o painel do navegador.",
 
         # -- Layer datasource check --
         "layers.bad_host": "{count} camada(s) ainda apontam para localhost ({names}). "

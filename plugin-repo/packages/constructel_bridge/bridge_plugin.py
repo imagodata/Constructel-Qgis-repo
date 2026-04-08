@@ -318,6 +318,14 @@ class ConstructelBridgePlugin:
         except Exception:
             pass
 
+        # Enregistrer les connexions WMTS / XYZ / WFS externes
+        try:
+            self._setup_external_services()
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                f"External services setup failed: {exc}", TAG, level=Qgis.Warning,
+            )
+
         # Intercepter les demandes de credentials QGIS pour fournir
         # automatiquement le mot de passe de notre base PG.
         # Cela evite le dialogue "Saisir les identifiants" quand un
@@ -799,6 +807,101 @@ class ConstructelBridgePlugin:
 
         self._log(tr("pg.configured"))
         self.iface.browserModel().reload()
+
+    # =====================================================================
+    # Connexions externes — WMTS / XYZ / WFS
+    # =====================================================================
+
+    # Definitions des services externes a enregistrer dans QGIS.
+    # Chaque entree: (settings_base, nom, dict de cles/valeurs).
+    _EXTERNAL_SERVICES = [
+        # --- XYZ Tiles ---
+        (
+            "qgis/connections-xyz",
+            "Google Streetview Coverage",
+            {
+                "url": (
+                    "https://mts2.google.com/mapslt?"
+                    "lyrs%3Dsvv%26x%3D{x}%26y%3D{y}%26z%3D{z}"
+                    "%26w%3D256%26h%3D256%26hl%3Den&style%3D40,18"
+                ),
+                "zmin": "0",
+                "zmax": "21",
+                "tilePixelRatio": "0",
+            },
+        ),
+        # --- WMTS (enregistre comme connexion WMS dans QGIS) ---
+        (
+            "qgis/connections-wms",
+            "WMTS UrbIS (Bruxelles)",
+            {
+                "url": (
+                    "https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
+                    "?service=WMTS&request=GetCapabilities&version=1.0.0"
+                ),
+                "ignoreGetMapURI": "false",
+                "ignoreGetFeatureInfoURI": "false",
+                "ignoreAxisOrientation": "false",
+                "invertAxisOrientation": "false",
+                "smoothPixmapTransform": "false",
+                "dpiMode": "7",
+            },
+        ),
+        (
+            "qgis/connections-wms",
+            "WMTS NGI CartoWeb (Belgique)",
+            {
+                "url": "https://cartoweb.wmts.ngi.be/1.0.0/WMTSCapabilities.xml",
+                "ignoreGetMapURI": "false",
+                "ignoreGetFeatureInfoURI": "false",
+                "ignoreAxisOrientation": "false",
+                "invertAxisOrientation": "false",
+                "smoothPixmapTransform": "false",
+                "dpiMode": "7",
+            },
+        ),
+        # --- WFS ---
+        (
+            "qgis/connections-wfs",
+            "WFS Cadastre UrbIS (Bruxelles)",
+            {
+                "url": (
+                    "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs"
+                ),
+                "version": "2.0.0",
+                "maxnumfeatures": "",
+                "pagesize": "",
+                "pagingenabled": "true",
+                "ignoreAxisOrientation": "false",
+                "invertAxisOrientation": "false",
+                "preferCoordinatesForWfsT11": "false",
+            },
+        ),
+    ]
+
+    def _setup_external_services(self):
+        """Enregistre les connexions WMTS / XYZ / WFS dans les settings QGIS.
+
+        N'ecrase pas une connexion existante si l'URL est identique
+        (l'utilisateur a peut-etre modifie d'autres parametres).
+        """
+        settings = QgsSettings()
+        added = 0
+        for base, name, params in self._EXTERNAL_SERVICES:
+            key_prefix = f"{base}/{name}"
+            existing_url = settings.value(f"{key_prefix}/url", "")
+            if existing_url == params.get("url", ""):
+                continue  # deja configure avec la meme URL
+            for k, v in params.items():
+                settings.setValue(f"{key_prefix}/{k}", v)
+            added += 1
+        if added:
+            self._log(f"{added} external service connection(s) registered")
+            self.iface.browserModel().reload()
+            self.iface.messageBar().pushSuccess(
+                "Constructel Bridge",
+                tr("services.registered", count=added),
+            )
 
     # =====================================================================
     # Hook sur les couches — tagging des commits
