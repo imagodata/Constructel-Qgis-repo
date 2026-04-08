@@ -146,7 +146,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "and layout templates specific to the WYRE FTTH project.<br>"
                            "Internal server URL: <code>http://192.168.160.31:9081/</code></small>",
 
-        # -- Onboarding: Page 4 - Summary --
+        # -- Onboarding: Page 4 - External services --
+        "onboard.services.title": "External map services",
+        "onboard.services.subtitle": "WMTS, XYZ and WFS connections added automatically to QGIS.",
+        "onboard.services.note": "<small>These connections are registered in QGIS settings at plugin startup. "
+                                 "They are available in the <b>Browser</b> panel under "
+                                 "<i>WMS/WMTS</i>, <i>XYZ Tiles</i> and <i>WFS/OGC API - Features</i>.</small>",
+
+        # -- Service descriptions --
+        "service.streetview.desc": (
+            "Google Streetview coverage layer. Shows areas where Street View "
+            "imagery is available as a semi-transparent overlay."
+        ),
+        "service.urbis_wmts.desc": (
+            "UrbIS regional base map for the Brussels-Capital Region (WMTS). "
+            "Provides orthophotos, topographic maps and thematic layers from CIRB/CIBG."
+        ),
+        "service.cartoweb.desc": (
+            "NGI/IGN CartoWeb topographic base map covering all of Belgium (WMTS). "
+            "Multi-scale cartographic tiles from the National Geographic Institute."
+        ),
+        "service.urbis_wfs.desc": (
+            "UrbIS cadastral vector data for the Brussels-Capital Region (WFS). "
+            "Parcels, buildings and address points from the regional geoportal."
+        ),
+
+        # -- Onboarding: Page 5 - Summary --
         "onboard.summary.title": "Configuration complete",
         "onboard.summary.subtitle": "Summary of actions performed.",
         "onboard.summary.header": "<b>Actions performed:</b><ul>",
@@ -313,7 +338,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "et les modeles de mise en page specifiques au projet WYRE FTTH.<br>"
                            "URL du serveur interne: <code>http://192.168.160.31:9081/</code></small>",
 
-        # -- Onboarding: Page 4 - Summary --
+        # -- Onboarding: Page 4 - Services externes --
+        "onboard.services.title": "Services cartographiques externes",
+        "onboard.services.subtitle": "Connexions WMTS, XYZ et WFS ajoutees automatiquement a QGIS.",
+        "onboard.services.note": "<small>Ces connexions sont enregistrees dans les parametres QGIS au demarrage du plugin. "
+                                 "Elles sont disponibles dans le panneau <b>Sketcher</b> sous "
+                                 "<i>WMS/WMTS</i>, <i>Tuiles XYZ</i> et <i>WFS/OGC API - Features</i>.</small>",
+
+        # -- Descriptions des services --
+        "service.streetview.desc": (
+            "Couche de couverture Google Streetview. Affiche les zones ou l'imagerie "
+            "Street View est disponible sous forme de surcouche semi-transparente."
+        ),
+        "service.urbis_wmts.desc": (
+            "Fond de plan regional UrbIS pour la Region de Bruxelles-Capitale (WMTS). "
+            "Orthophotos, cartes topographiques et couches thematiques du CIRB/CIBG."
+        ),
+        "service.cartoweb.desc": (
+            "Fond de plan topographique NGI/IGN CartoWeb couvrant toute la Belgique (WMTS). "
+            "Tuiles cartographiques multi-echelles de l'Institut Geographique National."
+        ),
+        "service.urbis_wfs.desc": (
+            "Donnees vectorielles cadastrales UrbIS pour la Region de Bruxelles-Capitale (WFS). "
+            "Parcelles, batiments et points d'adresse du geoportail regional."
+        ),
+
+        # -- Onboarding: Page 5 - Resume --
         "onboard.summary.title": "Configuration terminee",
         "onboard.summary.subtitle": "Resume des actions effectuees.",
         "onboard.summary.header": "<b>Actions effectuees:</b><ul>",
@@ -480,7 +530,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "e modelos de layout especificos do projeto WYRE FTTH.<br>"
                            "URL do servidor interno: <code>http://192.168.160.31:9081/</code></small>",
 
-        # -- Onboarding: Page 4 - Summary --
+        # -- Onboarding: Page 4 - Servicos externos --
+        "onboard.services.title": "Servicos cartograficos externos",
+        "onboard.services.subtitle": "Ligacoes WMTS, XYZ e WFS adicionadas automaticamente ao QGIS.",
+        "onboard.services.note": "<small>Estas ligacoes sao registadas nas definicoes do QGIS no arranque do plugin. "
+                                 "Estao disponiveis no painel <b>Sketcher</b> em "
+                                 "<i>WMS/WMTS</i>, <i>Mosaicos XYZ</i> e <i>WFS/OGC API - Features</i>.</small>",
+
+        # -- Descricoes dos servicos --
+        "service.streetview.desc": (
+            "Camada de cobertura Google Streetview. Mostra as areas onde a imagem "
+            "Street View esta disponivel como sobreposicao semi-transparente."
+        ),
+        "service.urbis_wmts.desc": (
+            "Mapa base regional UrbIS para a Regiao de Bruxelas-Capital (WMTS). "
+            "Ortofotos, mapas topograficos e camadas tematicas do CIRB/CIBG."
+        ),
+        "service.cartoweb.desc": (
+            "Mapa base topografico NGI/IGN CartoWeb cobrindo toda a Belgica (WMTS). "
+            "Mosaicos cartograficos multi-escala do Instituto Geografico Nacional."
+        ),
+        "service.urbis_wfs.desc": (
+            "Dados vetoriais cadastrais UrbIS para a Regiao de Bruxelas-Capital (WFS). "
+            "Parcelas, edificios e pontos de endereco do geoportal regional."
+        ),
+
+        # -- Onboarding: Page 5 - Resumo --
         "onboard.summary.title": "Configuracao concluida",
         "onboard.summary.subtitle": "Resumo das acoes realizadas.",
         "onboard.summary.header": "<b>Acoes realizadas:</b><ul>",

@@ -16,7 +16,9 @@ from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QVBoxLayout,
@@ -261,7 +263,78 @@ class ResourceSharingPage(QWizardPage):
 
 
 # =========================================================================
-# Page 4 — Resume
+# Page 4 — Services externes (WMTS / XYZ / WFS)
+# =========================================================================
+
+# Catalogue des flux externes — type affiché, nom, clé de traduction description
+EXTERNAL_SERVICES_CATALOG = [
+    {
+        "type": "XYZ",
+        "name": "Google Streetview Coverage",
+        "desc_key": "service.streetview.desc",
+    },
+    {
+        "type": "WMTS",
+        "name": "WMTS UrbIS Bruxelles",
+        "desc_key": "service.urbis_wmts.desc",
+    },
+    {
+        "type": "WMTS",
+        "name": "WMTS NGI CartoWeb Belgique",
+        "desc_key": "service.cartoweb.desc",
+    },
+    {
+        "type": "WFS",
+        "name": "WFS Cadastre UrbIS Bruxelles",
+        "desc_key": "service.urbis_wfs.desc",
+    },
+]
+
+
+class ExternalServicesPage(QWizardPage):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle(tr("onboard.services.title"))
+        self.setSubTitle(tr("onboard.services.subtitle"))
+
+        layout = QVBoxLayout(self)
+
+        for svc in EXTERNAL_SERVICES_CATALOG:
+            group = QGroupBox()
+            group_layout = QVBoxLayout(group)
+
+            # En-tête : badge type + nom
+            header = QHBoxLayout()
+            badge = QLabel(f"<b>{svc['type']}</b>")
+            badge.setStyleSheet(
+                "background-color: #3574b0; color: white; padding: 2px 8px;"
+                "border-radius: 3px; font-size: 11px;"
+            )
+            badge.setFixedWidth(50)
+            badge.setAlignment(Qt.AlignCenter)
+            name_label = QLabel(f"<b>{svc['name']}</b>")
+            header.addWidget(badge)
+            header.addWidget(name_label)
+            header.addStretch()
+            group_layout.addLayout(header)
+
+            desc = QLabel(tr(svc["desc_key"]))
+            desc.setWordWrap(True)
+            desc.setStyleSheet("color: #555; margin-left: 20px;")
+            group_layout.addWidget(desc)
+
+            layout.addWidget(group)
+
+        layout.addStretch()
+
+        note = QLabel(tr("onboard.services.note"))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+
+# =========================================================================
+# Page 5 — Resume
 # =========================================================================
 class SummaryPage(QWizardPage):
 
@@ -287,7 +360,8 @@ class OnboardingWizard(QWizard):
     PAGE_USER = 0
     PAGE_PLUGINS = 1
     PAGE_RESOURCE_SHARING = 2
-    PAGE_SUMMARY = 3
+    PAGE_SERVICES = 3
+    PAGE_SUMMARY = 4
 
     def __init__(
         self,
@@ -312,11 +386,13 @@ class OnboardingWizard(QWizard):
         self._page_user = UserProfilePage(username, user_id, is_new_user, email_domain=email_domain)
         self._page_plugins = PluginBundlePage()
         self._page_rs = ResourceSharingPage()
+        self._page_services = ExternalServicesPage()
         self._page_summary = SummaryPage()
 
         self.setPage(self.PAGE_USER, self._page_user)
         self.setPage(self.PAGE_PLUGINS, self._page_plugins)
         self.setPage(self.PAGE_RESOURCE_SHARING, self._page_rs)
+        self.setPage(self.PAGE_SERVICES, self._page_services)
         self.setPage(self.PAGE_SUMMARY, self._page_summary)
 
         self.currentIdChanged.connect(self._on_page_changed)
