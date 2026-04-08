@@ -512,6 +512,13 @@ class ConstructelBridgePlugin:
                 f"Connection failed to {DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DBNAME}: {exc}",
                 Qgis.Critical,
             )
+            # Even on connection failure, configure the QGIS PG browser
+            # entry with password so that the explorer can still open
+            # projects without prompting for credentials.
+            try:
+                self._setup_qgis_pg_connection(password, use_authcfg=False)
+            except Exception:
+                pass
             if not silent:
                 QMessageBox.critical(
                     self.iface.mainWindow(),
@@ -678,6 +685,10 @@ class ConstructelBridgePlugin:
         layer.providerType() et layer.source() directement.
         """
         auth_cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+        # Only use authcfg if it actually exists in Auth Manager
+        auth_mgr = QgsApplication.authManager()
+        if auth_cfg_id and auth_cfg_id not in auth_mgr.configIds():
+            auth_cfg_id = ""
         password = getattr(self, "_password", None) or _DEFAULT_PW
         project = QgsProject.instance()
         fixed = 0
@@ -792,20 +803,27 @@ class ConstructelBridgePlugin:
 
         if use_authcfg:
             # Store credentials in Auth Manager (encrypted)
-            _store_password_encrypted(password)
+            store_ok = _store_password_encrypted(password)
             auth_cfg_id = settings.value("constructel_bridge/auth_cfg_id", "")
-            settings.setValue(f"{base}/authcfg", auth_cfg_id)
-            # Clear plaintext credentials from connection
-            settings.setValue(f"{base}/password", "")
-            settings.setValue(f"{base}/savePassword", False)
-            settings.setValue(f"{base}/saveUsername", False)
-            self._log("PG connection configured with authcfg (encrypted).")
+            if store_ok and auth_cfg_id:
+                settings.setValue(f"{base}/authcfg", auth_cfg_id)
+                self._log("PG connection configured with authcfg (encrypted).")
+            else:
+                # Auth Manager not ready — clear any stale authcfg
+                settings.remove(f"{base}/authcfg")
+                self._log(
+                    "Auth Manager unavailable, PG connection uses saved password.",
+                    Qgis.Warning,
+                )
         else:
-            # Plaintext password (initial setup before dialog validation)
             settings.remove(f"{base}/authcfg")
-            settings.setValue(f"{base}/password", password)
-            settings.setValue(f"{base}/saveUsername", True)
-            settings.setValue(f"{base}/savePassword", True)
+
+        # Always store password in connection so that the browser /
+        # explorer can open projects even when authcfg resolution fails
+        # (e.g. master-password not yet entered, stale config id).
+        settings.setValue(f"{base}/password", password)
+        settings.setValue(f"{base}/saveUsername", True)
+        settings.setValue(f"{base}/savePassword", True)
 
         self._log(tr("pg.configured"))
         self.iface.browserModel().reload()
@@ -1114,10 +1132,11 @@ class ConstructelBridgePlugin:
         selected = projects[idx]
 
         # Construire l'URI PostgreSQL du projet
-        # Utilise authcfg si disponible, sinon password en clair
+        # Utilise authcfg si disponible ET valide, sinon password en clair
         from urllib.parse import quote
         auth_cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
-        if auth_cfg_id:
+        auth_mgr = QgsApplication.authManager()
+        if auth_cfg_id and auth_cfg_id in auth_mgr.configIds():
             uri = (
                 f"postgresql://@{DEFAULT_HOST}:{DEFAULT_PORT}"
                 f"/?dbname={quote(DEFAULT_DBNAME, safe='')}"
