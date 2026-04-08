@@ -95,7 +95,17 @@ class _BridgeCredentials(QgsCredentials):
         self._password = password
 
     def request(self, realm, username, password, message=""):
+        QgsMessageLog.logMessage(
+            f"Credentials request intercepted — realm={realm!r}",
+            TAG, level=Qgis.Info,
+        )
         if DEFAULT_HOST in realm:
+            QgsMessageLog.logMessage(
+                "Auto-providing credentials for WYRE FTTH",
+                TAG, level=Qgis.Info,
+            )
+            # Also cache via put() so subsequent get() calls skip request()
+            self.put(realm, self._username, self._password)
             return True, self._username, self._password
         # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
         if self._fallback:
@@ -117,6 +127,25 @@ class _BridgeBadLayerHandler(QgsProjectBadLayerHandler):
 
     def handleBadLayers(self, layers):
         pass  # Silence — on repare apres le chargement
+
+
+def _precache_pg_credentials():
+    """Pre-cache PG credentials pour eviter le dialogue de saisie.
+
+    Insere dans le cache de QgsCredentials les credentials pour les
+    variantes de realm les plus courantes.  Quand QGIS appelle get()
+    pour une de ces realms, il trouve le cache et n'affiche pas de
+    dialogue.  Le cache est consomme (take) par get(), donc on le
+    re-remplit a chaque chargement de projet.
+    """
+    creds = QgsCredentials.instance()
+    for realm in (
+        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT}",
+        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT} sslmode={DEFAULT_SSLMODE}",
+        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST}",
+        DEFAULT_HOST,
+    ):
+        creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
 
 
 def _ensure_auth_manager_ready() -> bool:
@@ -335,6 +364,12 @@ class ConstructelBridgePlugin:
         self._orig_credentials = QgsCredentials.instance()
         self._bridge_credentials = _BridgeCredentials(self._orig_credentials)
 
+        # Pre-cacher les credentials PG pour que QgsCredentials.get()
+        # les trouve dans le cache AVANT d'appeler request().
+        # Cela couvre le cas ou un projet avec authcfg inconnu est charge
+        # au demarrage (projets recents, browser, etc.).
+        _precache_pg_credentials()
+
         # Supprimer le dialogue "Traiter les couches inutilisables" —
         # les couches avec un authcfg inconnu seront reparees apres
         # le chargement dans _on_project_read.
@@ -344,6 +379,10 @@ class ConstructelBridgePlugin:
         # Ecouter le signal readProject pour reagir quand un projet est
         # charge par n'importe quel moyen (explorateur PG, fichier, etc.)
         QgsProject.instance().readProject.connect(self._on_project_read)
+
+        # Nettoyer les authcfg des datasources AVANT la sauvegarde du projet
+        # pour que le projet ecrit soit portable (pas d'authcfg user-specific).
+        QgsProject.instance().writeProject.connect(self._on_write_project)
 
         # Auto-connexion silencieuse au demarrage: etablit uniquement la
         # connexion DB et l'enregistrement utilisateur, sans toucher au
@@ -355,6 +394,10 @@ class ConstructelBridgePlugin:
         """Appele par QGIS a la desactivation du plugin."""
         try:
             QgsProject.instance().readProject.disconnect(self._on_project_read)
+        except TypeError:
+            pass
+        try:
+            QgsProject.instance().writeProject.disconnect(self._on_write_project)
         except TypeError:
             pass
         self._unhook_layers()
@@ -404,6 +447,57 @@ class ConstructelBridgePlugin:
             bridge_sketcher.apply_all_translations()
         except Exception as exc:
             self._log(f"i18n apply failed: {exc}", Qgis.Warning)
+
+    # =====================================================================
+    # Nettoyage avant sauvegarde du projet
+    # =====================================================================
+
+    def _on_write_project(self, doc):
+        """Appele par QgsProject.writeProject pendant la sauvegarde.
+
+        Nettoie les datasources PG dans le DOM XML pour retirer les authcfg
+        user-specific et les remplacer par des credentials en clair.
+        Cela garantit qu'un projet sauvegarde par User A pourra etre
+        ouvert par User B sans dialogue de credentials.
+        """
+        try:
+            self._strip_authcfg_from_dom(doc)
+        except Exception as exc:
+            self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.Warning)
+
+    def _strip_authcfg_from_dom(self, doc):
+        """Parcourt le DOM du projet et retire les authcfg des datasources PG."""
+        import re
+        password = getattr(self, "_password", None) or _DEFAULT_PW
+        layers = doc.elementsByTagName("maplayer")
+        cleaned = 0
+        for i in range(layers.count()):
+            node = layers.at(i)
+            elem = node.toElement()
+            provider_node = elem.firstChildElement("provider")
+            if provider_node.isNull() or provider_node.text() != "postgres":
+                continue
+            ds_node = elem.firstChildElement("datasource")
+            if ds_node.isNull():
+                continue
+            ds = ds_node.text()
+            if "authcfg=" not in ds:
+                continue
+            # Retirer authcfg=xxx et injecter user/password en clair
+            ds = re.sub(r"\bauthcfg=\w+", "", ds)
+            # Ajouter user/password s'ils ne sont pas deja presents
+            if f"user='{DEFAULT_USER}'" not in ds:
+                ds += f" user='{DEFAULT_USER}'"
+            if "password=" not in ds:
+                ds += f" password='{password}'"
+            ds = re.sub(r"\s{2,}", " ", ds).strip()
+            # Remplacer le contenu du noeud
+            while ds_node.hasChildNodes():
+                ds_node.removeChild(ds_node.firstChild())
+            ds_node.appendChild(doc.createTextNode(ds))
+            cleaned += 1
+        if cleaned:
+            self._log(f"{cleaned} datasource(s) PG nettoyee(s) avant sauvegarde (authcfg retire)")
 
     # =====================================================================
     # Auto-connexion
@@ -680,15 +774,12 @@ class ConstructelBridgePlugin:
         ce qui rend toutes les couches invalides.
 
         Cette methode remplace l'authentification de chaque couche PG
-        par celle de l'utilisateur courant (authcfg local ou mot de passe).
+        par des credentials en clair (user/password) SANS authcfg.
+        Cela garantit que tout projet sauvegarde sera portable — un autre
+        utilisateur pourra l'ouvrir sans rencontrer un authcfg inconnu.
         Gere aussi les couches invalides (provider=None) en utilisant
         layer.providerType() et layer.source() directement.
         """
-        auth_cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
-        # Only use authcfg if it actually exists in Auth Manager
-        auth_mgr = QgsApplication.authManager()
-        if auth_cfg_id and auth_cfg_id not in auth_mgr.configIds():
-            auth_cfg_id = ""
         password = getattr(self, "_password", None) or _DEFAULT_PW
         project = QgsProject.instance()
         fixed = 0
@@ -706,21 +797,14 @@ class ConstructelBridgePlugin:
                 uri = QgsDataSourceUri(provider.uri().uri())
             else:
                 uri = QgsDataSourceUri(layer.source())
-            old_authcfg = uri.authConfigId()
 
-            needs_fix = False
-            if auth_cfg_id:
-                if old_authcfg != auth_cfg_id:
-                    needs_fix = True
-                    uri.setAuthConfigId(auth_cfg_id)
-                    uri.setUsername("")
-                    uri.setPassword("")
-            else:
-                if old_authcfg or uri.username() != DEFAULT_USER:
-                    needs_fix = True
-                    uri.setAuthConfigId("")
-                    uri.setUsername(DEFAULT_USER)
-                    uri.setPassword(password)
+            # Toujours utiliser des credentials en clair pour la portabilite
+            old_authcfg = uri.authConfigId()
+            needs_fix = bool(old_authcfg) or uri.username() != DEFAULT_USER
+            if needs_fix:
+                uri.setAuthConfigId("")
+                uri.setUsername(DEFAULT_USER)
+                uri.setPassword(password)
 
             if needs_fix or not layer.isValid():
                 options = QgsDataProvider.ProviderOptions()
@@ -1131,35 +1215,16 @@ class ConstructelBridgePlugin:
         idx = items.index(choice)
         selected = projects[idx]
 
-        # Construire l'URI PostgreSQL du projet
-        # Utilise authcfg si disponible ET valide, sinon password en clair
-        from urllib.parse import quote
-        auth_cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
-        auth_mgr = QgsApplication.authManager()
-        if auth_cfg_id and auth_cfg_id in auth_mgr.configIds():
-            uri = (
-                f"postgresql://@{DEFAULT_HOST}:{DEFAULT_PORT}"
-                f"/?dbname={quote(DEFAULT_DBNAME, safe='')}"
-                f"&sslmode={DEFAULT_SSLMODE}"
-                f"&schema={selected['schema']}"
-                f"&project={quote(selected['name'], safe='')}"
-                f"&authcfg={auth_cfg_id}"
-            )
-        else:
-            uri = (
-                f"postgresql://{quote(DEFAULT_USER, safe='')}:{quote(self._password, safe='')}"
-                f"@{DEFAULT_HOST}:{DEFAULT_PORT}"
-                f"/?dbname={quote(DEFAULT_DBNAME, safe='')}"
-                f"&sslmode={DEFAULT_SSLMODE}"
-                f"&schema={selected['schema']}"
-                f"&project={quote(selected['name'], safe='')}"
-            )
-
         proj_name = selected["name"]
+        schema = selected["schema"]
         project = QgsProject.instance()
-        if project.read(uri):
-            # _on_project_read est declenche automatiquement par le signal
-            # readProject et gere: fix credentials, hooks, masquage, i18n.
+
+        # Charger le projet en passant par _read_and_clean_project()
+        # qui lit le XML depuis PG, nettoie les authcfg, et charge
+        # depuis un fichier temporaire.  Cela evite le dialogue
+        # "Saisir les identifiants" quand le projet contient des
+        # authcfg d'un autre utilisateur.
+        if self._read_and_clean_project(project, schema, proj_name):
             self._log(tr("project.loaded", name=proj_name))
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
@@ -1179,6 +1244,116 @@ class ConstructelBridgePlugin:
             )
 
     _PROJECT_SCHEMAS = ("infra",)
+
+    def _read_and_clean_project(self, project, schema: str, name: str) -> bool:
+        """Lit le XML du projet depuis PG, nettoie les authcfg, et charge.
+
+        Au lieu de ``project.read(postgresql://…)`` qui laisse QGIS
+        resoudre les authcfg (et afficher un dialogue pour chaque
+        authcfg inconnu), on:
+          1. Lit le XML brut depuis ``{schema}.qgis_projects``
+          2. Retire tous les ``authcfg=xxx`` et injecte user/password
+          3. Ecrit dans un fichier temporaire
+          4. Charge avec ``project.read(temp_path)``
+
+        Retourne True si le chargement a reussi.
+        """
+        import re
+        import tempfile
+
+        password = getattr(self, "_password", None) or _DEFAULT_PW
+        cur = self._conn.cursor()
+        try:
+            cur.execute(
+                f"SELECT content FROM {schema}.qgis_projects WHERE name = %s",
+                (name,),
+            )
+            row = cur.fetchone()
+        except Exception as exc:
+            self._log(f"Failed to read project XML from PG: {exc}", Qgis.Warning)
+            return False
+        if not row:
+            self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.Warning)
+            return False
+
+        raw = row[0]
+        if isinstance(raw, memoryview):
+            raw = bytes(raw)
+        elif isinstance(raw, str):
+            # Deja du texte
+            xml = raw
+            raw = None
+
+        if raw is not None:
+            import io
+            import zipfile
+            # QGIS stocke le projet comme .qgz (archive ZIP) dans PG
+            if raw[:2] == b"PK":
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    # Le .qgs est le premier (et souvent unique) fichier
+                    qgs_names = [n for n in zf.namelist() if n.endswith(".qgs")]
+                    entry = qgs_names[0] if qgs_names else zf.namelist()[0]
+                    xml = zf.read(entry).decode("utf-8")
+            else:
+                # Tenter decode direct (texte brut ou autre encodage)
+                for enc in ("utf-8", "latin-1"):
+                    try:
+                        xml = raw.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    self._log("Cannot decode project content from PG", Qgis.Warning)
+                    return False
+
+        # Nettoyer les authcfg des datasources et injecter user/password
+        original_xml = xml
+        xml = re.sub(r"\bauthcfg=\w+", "", xml)
+
+        def _fix_datasource(m):
+            """Callback pour re.sub: nettoie une balise <datasource>."""
+            prefix, ds, suffix = m.group(1), m.group(2), m.group(3)
+            if DEFAULT_HOST not in ds:
+                return m.group(0)
+            if f"user='{DEFAULT_USER}'" not in ds:
+                ds += f" user='{DEFAULT_USER}'"
+            if "password=" not in ds:
+                ds += f" password='{password}'"
+            ds = re.sub(r"\s{2,}", " ", ds).strip()
+            return prefix + ds + suffix
+
+        xml = re.sub(
+            r"(<datasource>)(.*?)(</datasource>)",
+            _fix_datasource,
+            xml,
+            flags=re.DOTALL,
+        )
+
+        if xml != original_xml:
+            self._log("Project XML cleaned: authcfg references removed")
+
+        # Ecrire dans un fichier temporaire et charger
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".qgs", delete=False, mode="w", encoding="utf-8",
+        )
+        try:
+            tmp.write(xml)
+            tmp.close()
+            result = project.read(tmp.name)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        if result:
+            # Restaurer le titre et vider le chemin fichier pour que
+            # QGIS affiche le nom du projet (pas le fichier temporaire).
+            project.setTitle(name)
+            project.setFileName("")
+            project.setDirty(False)
+
+        return result
 
     def _list_db_projects(self) -> list[dict] | None:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.

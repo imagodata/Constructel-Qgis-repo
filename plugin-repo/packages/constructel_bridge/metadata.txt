@@ -2,7 +2,7 @@
 name=Constructel Bridge
 qgisMinimumVersion=3.28
 description=Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.
-version=1.2.2
+version=1.2.7
 changelog=v1.2.2 - Ajout page services externes dans l'onboarding wizard (WMTS/XYZ/WFS avec descriptions)
     v1.2.1 - Ajout connexions externes WMTS (UrbIS, NGI CartoWeb), XYZ (Streetview Coverage) et WFS (Cadastre UrbIS) au demarrage du plugin
     v1.2.0 - Fix multi-utilisateur: correction auto des credentials couches PG au chargement de projet (explorateur PG, fichier, menu plugin)
