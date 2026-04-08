@@ -273,12 +273,14 @@ class ConstructelBridgePlugin:
         for action in self._actions:
             self.iface.addPluginToDatabaseMenu("Constructel Bridge", action)
 
-        # Appliquer l'icone Constructel sur le sous-menu parent
+        # Appliquer l'icone Constructel sur l'entree du sous-menu
+        # dans le menu Database parent (c'est le menuAction() qui porte
+        # l'icone visible, pas le QMenu lui-meme).
         db_menu = self.iface.databaseMenu()
         if db_menu:
-            for sub in db_menu.findChildren(QMenu):
-                if sub.title() == "Constructel Bridge":
-                    sub.setIcon(plugin_icon)
+            for action in db_menu.actions():
+                if action.menu() and action.menu().title() == "Constructel Bridge":
+                    action.setIcon(plugin_icon)
                     break
 
         # -- Toolbar dropdown -------------------------------------------------
