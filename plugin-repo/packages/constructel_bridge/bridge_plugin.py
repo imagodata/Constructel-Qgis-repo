@@ -342,13 +342,6 @@ class ConstructelBridgePlugin:
                 f"{stored_version or '(none)'} -> {PLUGIN_VERSION}"
             )
 
-        # Masquer les couches sans geometrie deja presentes dans le projet
-        # (couvre le cas ou le projet est deja ouvert au chargement du plugin)
-        try:
-            self._hide_no_geom_layers()
-        except Exception:
-            pass
-
         # Enregistrer les connexions WMTS / XYZ / WFS externes
         try:
             self._setup_external_services()
@@ -418,9 +411,8 @@ class ConstructelBridgePlugin:
     def _on_project_read(self, doc):
         """Appele par QgsProject.readProject apres tout chargement de projet.
 
-        Corrige les credentials, re-hook les couches, masque les no-geom
-        et applique les traductions — quel que soit le moyen de chargement
-        (explorateur PostgreSQL, fichier .qgs/.qgz, menu recent, etc.).
+        Corrige les credentials, re-hook les couches et applique les
+        traductions i18n — sans toucher a la structure du layer tree.
         """
         # Toujours corriger les credentials (utilise le mot de passe par
         # defaut si pas encore connecte — suffit pour reparer les authcfg).
@@ -437,11 +429,6 @@ class ConstructelBridgePlugin:
             self._hook_layers()
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
-
-        try:
-            self._hide_no_geom_layers()
-        except Exception as exc:
-            self._log(f"Hide no-geom failed: {exc}", Qgis.Warning)
 
         try:
             bridge_sketcher.apply_all_translations()
@@ -671,11 +658,6 @@ class ConstructelBridgePlugin:
             self._hook_layers()
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
-
-        try:
-            self._hide_no_geom_layers()
-        except Exception as exc:
-            self._log(f"Hide no-geom failed: {exc}", Qgis.Warning)
 
         try:
             bridge_sketcher.apply_all_translations()
@@ -1035,7 +1017,6 @@ class ConstructelBridgePlugin:
         for layer in layers:
             if isinstance(layer, QgsVectorLayer):
                 self._hook_single_layer(layer)
-                self._hide_layer_if_no_geom(layer)
                 bridge_sketcher.apply_to_layer(layer)
 
     def _hook_single_layer(self, layer: QgsVectorLayer):
