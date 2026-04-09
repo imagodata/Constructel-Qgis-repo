@@ -635,8 +635,6 @@ class ConstructelBridgePlugin:
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
-        self.iface.browserModel().reload()
-
         # En mode silent (auto-connect au demarrage), ne pas toucher au
         # projet pour eviter de le rendre "dirty" et declencher le
         # dialogue "Enregistrer le projet".
