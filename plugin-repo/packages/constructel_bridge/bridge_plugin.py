@@ -357,6 +357,12 @@ class ConstructelBridgePlugin:
                 f"External services setup failed: {exc}", TAG, level=Qgis.Warning,
             )
 
+        # Un seul reload de l'explorateur apres toutes les modifications settings
+        try:
+            self.iface.browserModel().reload()
+        except Exception:
+            pass
+
         # Intercepter les demandes de credentials QGIS pour fournir
         # automatiquement le mot de passe de notre base PG.
         # Cela evite le dialogue "Saisir les identifiants" quand un
@@ -635,6 +641,8 @@ class ConstructelBridgePlugin:
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
+        self.iface.browserModel().reload()
+
         # En mode silent (auto-connect au demarrage), ne pas toucher au
         # projet pour eviter de le rendre "dirty" et declencher le
         # dialogue "Enregistrer le projet".
@@ -910,7 +918,6 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/savePassword", True)
 
         self._log(tr("pg.configured"))
-        self.iface.browserModel().reload()
 
     # =====================================================================
     # Connexions externes — WMTS / XYZ / WFS
@@ -998,7 +1005,6 @@ class ConstructelBridgePlugin:
             self._log(f"Service '{name}' registered ({key_prefix})")
         if added:
             settings.sync()
-            self.iface.browserModel().reload()
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
                 tr("services.registered", count=len(added)),
