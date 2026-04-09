@@ -890,7 +890,7 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/publicOnly", False)
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
-        settings.setValue(f"{base}/schemas", "infra")
+        settings.setValue(f"{base}/schemas", "infra,osiris")
         settings.setValue(f"{base}/schema", "infra")
 
         if use_authcfg:
