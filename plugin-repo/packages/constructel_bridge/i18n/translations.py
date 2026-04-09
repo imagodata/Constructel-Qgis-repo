@@ -130,6 +130,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Download Constructel resources (FTTH layer styles) from the internal server. "
             "Essential for up-to-date styles."
         ),
+        "plugin.streetview.desc": (
+            "Google Street View integration in QGIS. "
+            "Click on the map to open a Street View panorama at that location."
+        ),
+        "plugin.reloader.desc": (
+            "Reloads a chosen plugin in one click. "
+            "Useful for developers to quickly test changes without restarting QGIS."
+        ),
 
         # -- Onboarding: Page 3 - Resource Sharing --
         "onboard.rs.title": "QGIS Resource Sharing",
@@ -322,6 +330,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Permet de telecharger les ressources Constructel (styles de couches FTTH) "
             "depuis le serveur interne. Indispensable pour avoir les styles a jour."
         ),
+        "plugin.streetview.desc": (
+            "Integration Google Street View dans QGIS. "
+            "Cliquez sur la carte pour ouvrir un panorama Street View a cet emplacement."
+        ),
+        "plugin.reloader.desc": (
+            "Recharge un plugin choisi en un clic. "
+            "Utile pour les developpeurs afin de tester rapidement les modifications sans redemarrer QGIS."
+        ),
 
         # -- Onboarding: Page 3 - Resource Sharing --
         "onboard.rs.title": "QGIS Resource Sharing",
@@ -513,6 +529,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Partilha de recursos (estilos QML, simbolos SVG, modelos de layout). "
             "Permite descarregar os recursos Constructel (estilos de camadas FTTH) "
             "a partir do servidor interno. Indispensavel para ter os estilos atualizados."
+        ),
+        "plugin.streetview.desc": (
+            "Integracao do Google Street View no QGIS. "
+            "Clique no mapa para abrir um panorama Street View nesse local."
+        ),
+        "plugin.reloader.desc": (
+            "Recarrega um plugin escolhido com um clique. "
+            "Util para desenvolvedores testarem rapidamente alteracoes sem reiniciar o QGIS."
         ),
 
         # -- Onboarding: Page 3 - Resource Sharing --

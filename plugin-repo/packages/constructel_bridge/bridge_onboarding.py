@@ -57,6 +57,16 @@ RECOMMENDED_PLUGINS = [
         "name": "QGIS Resource Sharing",
         "desc_key": "plugin.resource_sharing.desc",
     },
+    {
+        "id": "streetviewplugin",
+        "name": "Street View",
+        "desc_key": "plugin.streetview.desc",
+    },
+    {
+        "id": "plugin_reloader",
+        "name": "Plugin Reloader",
+        "desc_key": "plugin.reloader.desc",
+    },
 ]
 
 RESOURCE_SHARING_REPO_NAME = "Constructel"
