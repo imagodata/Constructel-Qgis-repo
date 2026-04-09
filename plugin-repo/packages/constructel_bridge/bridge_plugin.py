@@ -357,12 +357,6 @@ class ConstructelBridgePlugin:
                 f"External services setup failed: {exc}", TAG, level=Qgis.Warning,
             )
 
-        # Un seul reload de l'explorateur apres toutes les modifications settings
-        try:
-            self.iface.browserModel().reload()
-        except Exception:
-            pass
-
         # Intercepter les demandes de credentials QGIS pour fournir
         # automatiquement le mot de passe de notre base PG.
         # Cela evite le dialogue "Saisir les identifiants" quand un
