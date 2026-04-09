@@ -21,7 +21,9 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
     QWizard,
     QWizardPage,
 )
@@ -180,8 +182,17 @@ class PluginBundlePage(QWizardPage):
         self.setTitle(tr("onboard.plugins.title"))
         self.setSubTitle(tr("onboard.plugins.subtitle"))
 
-        layout = QVBoxLayout(self)
+        page_layout = QVBoxLayout(self)
         self._checkboxes: dict[str, QCheckBox] = {}
+
+        # Scrollable container for the plugin list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         installed = set(available_plugins)
 
@@ -192,6 +203,8 @@ class PluginBundlePage(QWizardPage):
 
             group = QGroupBox()
             group_layout = QVBoxLayout(group)
+            group_layout.setContentsMargins(6, 4, 6, 4)
+            group_layout.setSpacing(2)
 
             cb = QCheckBox(plugin["name"])
             cb.setFont(QFont(cb.font().family(), cb.font().pointSize(), QFont.Bold))
@@ -215,10 +228,12 @@ class PluginBundlePage(QWizardPage):
             layout.addWidget(group)
 
         layout.addStretch()
+        scroll.setWidget(container)
+        page_layout.addWidget(scroll)
 
         note = QLabel(tr("onboard.plugins.note"))
         note.setWordWrap(True)
-        layout.addWidget(note)
+        page_layout.addWidget(note)
 
     def get_selected_plugins(self) -> list[str]:
         return [pid for pid, cb in self._checkboxes.items() if cb.isChecked()]
