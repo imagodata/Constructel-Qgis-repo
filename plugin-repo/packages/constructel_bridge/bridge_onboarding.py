@@ -60,8 +60,8 @@ RECOMMENDED_PLUGINS = [
         "desc_key": "plugin.resource_sharing.desc",
     },
     {
-        "id": "streetviewplugin",
-        "name": "Street View",
+        "id": "StreetViewPro",
+        "name": "StreetView Pro",
         "desc_key": "plugin.streetview.desc",
     },
     {
