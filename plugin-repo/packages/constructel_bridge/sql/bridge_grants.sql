@@ -10,11 +10,6 @@
 -- ftth_editor doit pouvoir s'enregistrer dans ref.users
 GRANT SELECT, INSERT, UPDATE ON ref.users TO ftth_editor;
 
--- Schema osiris : lecture pour les couches du projet QGIS
-GRANT USAGE ON SCHEMA osiris TO ftth_editor;
-GRANT SELECT ON ALL TABLES IN SCHEMA osiris TO ftth_editor;
-ALTER DEFAULT PRIVILEGES IN SCHEMA osiris GRANT SELECT ON TABLES TO ftth_editor;
-
 -- Sequences pour les colonnes serial (ref.users utilise UUID, pas de sequence)
 -- Rien a ajouter.
 
