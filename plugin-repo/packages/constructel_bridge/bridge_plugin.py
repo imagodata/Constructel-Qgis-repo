@@ -1086,13 +1086,23 @@ class ConstructelBridgePlugin:
 
     @staticmethod
     def _is_no_geom(layer):
-        """True si la couche vectorielle n'a pas de geometrie."""
+        """True si la couche vectorielle n'a pas de geometrie.
+
+        Utilise l'URI (wkbType declare) en priorite pour eviter les faux
+        positifs quand le provider PG n'a pas encore resolu la geometrie
+        (race condition dans le signal layersAdded).
+        """
         if not isinstance(layer, QgsVectorLayer):
             return False
+        # Verifier d'abord l'URI : si un type geometrie est declare,
+        # la couche est spatiale meme si isSpatial() est temporairement False
+        uri = QgsDataSourceUri(layer.source())
+        if uri.geometryColumn():
+            return False
         return (
-            not layer.isSpatial()
-            or layer.wkbType() == QgsWkbTypes.NoGeometry
+            layer.wkbType() == QgsWkbTypes.NoGeometry
             or layer.geometryType() == QgsWkbTypes.NullGeometry
+            or not layer.isSpatial()
         )
 
     _REF_GROUP_NAME = "Référence"
