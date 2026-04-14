@@ -842,11 +842,14 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     _log(f"{count} couche(s) chargee(s)")
 
     # -- Styles -----------------------------------------------------------
-    # 1. Styles embarques dans le plugin (toutes les couches)
-    _apply_embedded_styles(loaded)
-    # 2. Styles depuis la base (ecrasent les embarques si presents)
+    # 1. Styles par defaut depuis la BDD (prioritaires)
+    db_styled: set[str] = set()
     if apply_styles:
-        _apply_styles_from_db(conn_params, password, loaded)
+        db_styled = _apply_styles_from_db(conn_params, password, loaded)
+    # 2. Styles embarques uniquement pour les couches sans style BDD
+    fallback = {k: v for k, v in loaded.items() if k not in db_styled}
+    if fallback:
+        _apply_embedded_styles(fallback)
 
     # -- Relations --------------------------------------------------------
     ensure_relations(loaded)
@@ -1004,13 +1007,20 @@ def _add_basemaps(root, selected_keys: set[str]):
 
 
 
-def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict):
-    """Charge les styles QML par defaut depuis public.layer_styles."""
+def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set[str]:
+    """Charge les styles QML par defaut depuis public.layer_styles.
+
+    Returns
+    -------
+    set[str]
+        Cles des couches pour lesquelles un style DB a ete applique.
+    """
+    styled_keys: set[str] = set()
     try:
         import psycopg2
     except ImportError:
         _log("psycopg2 indisponible — styles non appliques", Qgis.Warning)
-        return
+        return styled_keys
 
     try:
         conn = psycopg2.connect(
@@ -1023,9 +1033,8 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict):
         cur = conn.cursor()
     except Exception as exc:
         _log(f"Connexion styles impossible: {exc}", Qgis.Warning)
-        return
+        return styled_keys
 
-    styled = 0
     for key, layer in loaded.items():
         provider = layer.dataProvider()
         if not provider:
@@ -1057,12 +1066,13 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict):
             msg, ok = layer.loadNamedStyle(tmp_path)
             if ok:
                 layer.triggerRepaint()
-                styled += 1
+                styled_keys.add(key)
             os.unlink(tmp_path)
         except Exception:
             pass
 
     conn.close()
 
-    if styled:
-        _log(f"{styled} style(s) applique(s) depuis public.layer_styles")
+    if styled_keys:
+        _log(f"{len(styled_keys)} style(s) applique(s) depuis public.layer_styles")
+    return styled_keys

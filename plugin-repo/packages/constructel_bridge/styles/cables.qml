@@ -891,14 +891,14 @@
     <alias index="11" field="length_m" name="Comprimento (m)"/>
     <alias index="12" field="pose_type" name="Tipo instalacao"/>
     <alias index="13" field="status" name="Estado"/>
-    <alias index="14" field="transition_source" name="Fonte transicao"/>
+    <alias index="14" field="transition_source" name="Transition Source"/>
     <alias index="15" field="blowing_date" name="Data sopragem"/>
     <alias index="16" field="measurement_date" name="Data medicao"/>
     <alias index="17" field="validation_date" name="Data validacao"/>
     <alias index="18" field="otdr_measurements" name="Medicoes OTDR"/>
-    <alias index="19" field="source_data" name="Fonte dados"/>
-    <alias index="20" field="doc_count" name="Nr documentos"/>
-    <alias index="21" field="doc_folder_url" name="Pasta SharePoint"/>
+    <alias index="19" field="source_data" name="Data Source"/>
+    <alias index="20" field="doc_count" name="Doc Count"/>
+    <alias index="21" field="doc_folder_url" name="SharePoint Folder"/>
     <alias index="22" field="created_at" name="Criado em"/>
     <alias index="23" field="updated_at" name="Atualizado em"/>
   </aliases>
@@ -1045,7 +1045,7 @@ def my_form_open(dialog, layer, feature):
     <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
       <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
     </labelStyle>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🎯 Principal">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🎯 General">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
@@ -1064,7 +1064,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🏷️ Identificacao">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🏷️ Identification">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1100,7 +1100,7 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔧 Tecnico">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔧 Technical">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
@@ -1140,7 +1140,7 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔗 Ligacoes">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔗 Connections">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
@@ -1174,13 +1174,13 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="💾 Fontes">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="💾 Sources">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🏷️ Identificacao">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🏷️ Identification">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
@@ -1204,7 +1204,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🎯 IDs Externos">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🎯 External IDs">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1219,7 +1219,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔑 Identificador">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔑 Identifier">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1229,7 +1229,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="💾 Fonte">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="💾 Source">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1239,7 +1239,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📊 Auditoria">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📊 Audit">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1264,29 +1264,17 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorHtmlElement verticalStretch="0" horizontalStretch="0" showLabel="0" name="docs_summary">
+      <attributeEditorField index="20" verticalStretch="0" horizontalStretch="0" showLabel="1" name="doc_count">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
-&lt;div style="font-family:Arial,sans-serif;padding:10px;background:#FAFAFA;border:1px solid #E0E0E0;border-radius:6px;margin:4px 0;">
-  &lt;div style="display:flex;align-items:center;margin-bottom:8px;">
-    &lt;span style="font-size:14px;font-weight:600;color:#333;">Documents&lt;/span>
-    &lt;span style="margin-left:8px;background:#1565C0;color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">
-      [% coalesce("doc_count", 0) %]
-    &lt;/span>
-  &lt;/div>
-  [% IF coalesce("doc_count", 0) = 0 %]
-  &lt;p style="color:#999;font-size:11px;margin:4px 0;">Aucun document lie a cet element.&lt;/p>
-  [% END %]
-  [% IF "doc_folder_url" IS NOT NULL AND "doc_folder_url" != '' %]
-  &lt;div style="margin-top:8px;padding:6px 8px;background:#E3F2FD;border:1px solid #90CAF9;border-radius:4px;">
-    &lt;a href="[% "doc_folder_url" %]" style="color:#1565C0;font-size:11px;text-decoration:none;">
-      Ouvrir le dossier SharePoint&lt;/a>
-  &lt;/div>
-  [% END %]
-&lt;/div>
-      </attributeEditorHtmlElement>
-      <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Liste des documents" horizontalStretch="0" relation="docs_element_cable" nmRelationId="" showLabel="1" name="docs_element_cable">
+      </attributeEditorField>
+      <attributeEditorField index="21" verticalStretch="0" horizontalStretch="0" showLabel="1" name="doc_folder_url">
+        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+        </labelStyle>
+      </attributeEditorField>
+      <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Document List" horizontalStretch="0" relation="docs_element_cable" nmRelationId="" showLabel="1" name="docs_element_cable">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
