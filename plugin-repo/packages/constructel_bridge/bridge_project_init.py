@@ -105,6 +105,7 @@ LAYER_CATALOG = [
     ("cables",             "Infrastructure",  "infra", "cables",             "geom", "id",  "Cables"),
     ("subducts",           "Infrastructure",  "infra", "subducts",           "geom", "id",  "Sous-fourreaux"),
     ("ducts",              "Infrastructure",  "infra", "ducts",              "geom", "id",  "Conduites"),
+    ("splices",            "Infrastructure",  "infra", "structure_cable_splices", None, "id", "Soudures"),
 
     # -- Zones ------------------------------------------------------------
     ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
@@ -1048,7 +1049,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             cur.execute(
                 'SELECT styleqml::text FROM public.layer_styles '
                 "WHERE f_table_schema = %s AND f_table_name = %s "
-                "AND f_geometry_column = %s AND useasdefault = true "
+                "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
                 "AND \"styleName\" = 'default' LIMIT 1",
                 (schema, table, geom_col),
             )
