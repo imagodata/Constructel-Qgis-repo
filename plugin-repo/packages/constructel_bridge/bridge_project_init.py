@@ -83,10 +83,10 @@ LAYER_CATALOG = [
     ("osiris_events",      "OSIRIS",          "osiris", "events",                  "geom", "ogc_fid", "Evenements"),
 
     # -- Cadastre UrbIS (WFS) ------------------------------------------------
-    ("wfs_municipalities", "Cadastre UrbIS",  "wfs",  "urbisvector:Municipalities",   "geom", None, "Municipalites"),
-    ("wfs_blocks",         "Cadastre UrbIS",  "wfs",  "urbisvector:Blocks",           "geom", None, "Ilots"),
-    ("wfs_parcels",        "Cadastre UrbIS",  "wfs",  "urbisvector:CadastralParcels", "geom", None, "Parcelles cadastrales"),
     ("wfs_buildings",      "Cadastre UrbIS",  "wfs",  "urbisvector:Buildings",        "geom", None, "Batiments"),
+    ("wfs_parcels",        "Cadastre UrbIS",  "wfs",  "urbisvector:CadastralParcels", "geom", None, "Parcelles cadastrales"),
+    ("wfs_blocks",         "Cadastre UrbIS",  "wfs",  "urbisvector:Blocks",           "geom", None, "Ilots"),
+    ("wfs_municipalities", "Cadastre UrbIS",  "wfs",  "urbisvector:Municipalities",   "geom", None, "Municipalites"),
 
     # -- Urbanisme Brussels (WFS) --------------------------------------------
     ("wfs_protection",     "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Protection_area", "geom", None, "Zones protegees"),
