@@ -57,8 +57,8 @@ LAYER_CATALOG = [
 
     # -- Zones ------------------------------------------------------------
     ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
-    ("zone_distribution",  "Zones",           "infra", "zone_distribution",  "geom", "id",  "Zones Distribution"),
     ("zone_pop",           "Zones",           "infra", "zone_pop",           "geom", "id",  "Zones POP"),
+    ("zone_distribution",  "Zones",           "infra", "zone_distribution",  "geom", "id",  "Zones Distribution"),
     ("zone_mro",           "Zones",           "infra", "zone_mro",           "geom", "id",  "Zones MRO"),
 
     # -- Topologie --------------------------------------------------------
