@@ -391,12 +391,43 @@ def _log(msg, level=Qgis.Info):
 # DIALOG — selection des couches avec templates
 # =====================================================================
 
+def _detect_existing_layers():
+    """Detecte les couches deja presentes dans le projet."""
+    existing = set()
+    project = QgsProject.instance()
+    for ly in project.mapLayers().values():
+        if not isinstance(ly, QgsVectorLayer):
+            continue
+        prov = ly.dataProvider()
+        if not prov:
+            continue
+        if prov.name() == "postgres":
+            uri = prov.uri()
+            existing.add(f"{uri.schema()}.{uri.table()}")
+        elif prov.name() == "WFS":
+            src = prov.uri().uri()
+            for entry in LAYER_CATALOG:
+                if entry[2] == "wfs" and entry[3] in src:
+                    existing.add(entry[3])
+    # Map catalog keys to existing
+    result = set()
+    for key, _grp, schema, table, *_ in LAYER_CATALOG:
+        table_id = table if key in WFS_KEYS else f"{schema}.{table}"
+        if table_id in existing:
+            result.add(key)
+    return result
+
+
 class InitProjectDialog(QDialog):
     """Dialog de selection des couches avec templates pre-configures."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr("init.title"))
+        self._existing = _detect_existing_layers()
+        has_layers = bool(self._existing - {"v_form_lists", "docs_elements"})
+        self.setWindowTitle(
+            tr("init.title_add") if has_layers else tr("init.title")
+        )
         self.setMinimumWidth(560)
         self.setMinimumHeight(620)
         self._build_ui()
@@ -446,9 +477,16 @@ class InitProjectDialog(QDialog):
                 gi.setExpanded(True)
                 self._group_items[group] = gi
 
-            item = QTreeWidgetItem(self._group_items[group], [f"{label}  ({schema}.{table})"])
+            already = key in self._existing
+            suffix = "  ✔" if already else ""
+            item = QTreeWidgetItem(
+                self._group_items[group],
+                [f"{label}  ({schema}.{table}){suffix}"],
+            )
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.Checked if already else Qt.Unchecked)
+            if already:
+                item.setToolTip(0, tr("init.already_loaded"))
             item.setData(0, Qt.UserRole, key)
             self._items[key] = item
 
@@ -507,7 +545,10 @@ class InitProjectDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.Ok).setText(tr("init.btn_init"))
+        has_layers = bool(self._existing - {"v_form_lists", "docs_elements"})
+        buttons.button(QDialogButtonBox.Ok).setText(
+            tr("init.btn_add") if has_layers else tr("init.btn_init")
+        )
         layout.addWidget(buttons)
 
         # Pre-select first template
@@ -682,6 +723,9 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         _apply_styles_from_db(conn_params, password, loaded)
 
     # -- Relations --------------------------------------------------------
+    # Force-recreate: les QML chargent des relations avec des layer IDs
+    # hardcodes qui ne correspondent pas aux couches reelles du projet.
+    # On supprime puis recree systematiquement avec les bons IDs.
     relation_manager = project.relationManager()
     rel_count = 0
     for parent_key, child_key, fk_field, rel_name in RELATION_DEFS:
@@ -689,8 +733,11 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         child = loaded.get(child_key)
         if not parent or not child:
             continue
-        if relation_manager.relation(rel_name).isValid():
-            continue
+
+        # Supprimer toute relation existante avec cet ID (possiblement cassee)
+        existing = relation_manager.relation(rel_name)
+        if existing.isValid():
+            relation_manager.removeRelation(rel_name)
 
         rel = QgsRelation()
         rel.setId(rel_name)

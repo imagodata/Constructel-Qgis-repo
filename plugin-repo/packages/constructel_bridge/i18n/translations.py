@@ -89,6 +89,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Init project --
         "init.title": "Constructel Bridge - Initialize project",
+        "init.title_add": "Constructel Bridge - Add layers",
         "init.group_template": "Template",
         "init.group_layers": "Layers",
         "init.group_basemaps": "Basemaps",
@@ -98,6 +99,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.select_none": "Deselect all",
         "init.apply_styles": "Apply styles from database",
         "init.btn_init": "Initialize",
+        "init.btn_add": "Add layers",
+        "init.already_loaded": "Already loaded in project",
         "init.confirm_title": "Constructel Bridge - Initialize project",
         "init.confirm": "Initialize the current project with all WYRE FTTH layers?\n\n"
                         "This will add layers, styles, relations and set CRS to EPSG:31370.",
@@ -305,6 +308,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Init projet --
         "init.title": "Constructel Bridge - Initialiser projet",
+        "init.title_add": "Constructel Bridge - Ajouter des couches",
         "init.group_template": "Template",
         "init.group_layers": "Couches",
         "init.group_basemaps": "Fonds de carte",
@@ -314,6 +318,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.select_none": "Tout deselectionner",
         "init.apply_styles": "Appliquer les styles depuis la base de donnees",
         "init.btn_init": "Initialiser",
+        "init.btn_add": "Ajouter les couches",
+        "init.already_loaded": "Deja charge dans le projet",
         "init.confirm_title": "Constructel Bridge - Initialiser projet",
         "init.confirm": "Initialiser le projet courant avec toutes les couches WYRE FTTH ?\n\n"
                         "Cela ajoutera les couches, styles, relations et definira le CRS a EPSG:31370.",
@@ -523,6 +529,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Init projeto --
         "init.title": "Constructel Bridge - Inicializar projeto",
+        "init.title_add": "Constructel Bridge - Adicionar camadas",
         "init.group_template": "Template",
         "init.group_layers": "Camadas",
         "init.group_basemaps": "Mapas base",
@@ -532,6 +539,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.select_none": "Desselecionar tudo",
         "init.apply_styles": "Aplicar estilos da base de dados",
         "init.btn_init": "Inicializar",
+        "init.btn_add": "Adicionar camadas",
+        "init.already_loaded": "Ja carregado no projeto",
         "init.confirm_title": "Constructel Bridge - Inicializar projeto",
         "init.confirm": "Inicializar o projeto atual com todas as camadas WYRE FTTH?\n\n"
                         "Isto ira adicionar camadas, estilos, relacoes e definir o CRS para EPSG:31370.",
