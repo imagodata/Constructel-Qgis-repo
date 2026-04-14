@@ -353,27 +353,39 @@ BASEMAPS = [
         "provider": "wms",
         "default": True,
     },
-    # -- Stadia Maps (Stamen) --
+    # -- Google --
     {
-        "key": "stamen_toner",
-        "name": "Stamen Toner",
-        "group": "Stadia Maps",
+        "key": "google_satellite",
+        "name": "Google Satellite",
+        "group": "Google",
         "source": (
             "type=xyz"
-            "&url=https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}.png"
-            "&zmax=19&zmin=0"
+            "&url=https://mt1.google.com/vt/lyrs%3Ds%26x%3D{x}%26y%3D{y}%26z%3D{z}"
+            "&zmax=20&zmin=0"
         ),
         "provider": "wms",
         "default": False,
     },
     {
-        "key": "stamen_toner_lite",
-        "name": "Stamen Toner Lite",
-        "group": "Stadia Maps",
+        "key": "google_hybrid",
+        "name": "Google Hybrid",
+        "group": "Google",
         "source": (
             "type=xyz"
-            "&url=https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}.png"
-            "&zmax=19&zmin=0"
+            "&url=https://mt1.google.com/vt/lyrs%3Dy%26x%3D{x}%26y%3D{y}%26z%3D{z}"
+            "&zmax=20&zmin=0"
+        ),
+        "provider": "wms",
+        "default": False,
+    },
+    {
+        "key": "google_roads",
+        "name": "Google Roads",
+        "group": "Google",
+        "source": (
+            "type=xyz"
+            "&url=https://mt1.google.com/vt/lyrs%3Dm%26x%3D{x}%26y%3D{y}%26z%3D{z}"
+            "&zmax=20&zmin=0"
         ),
         "provider": "wms",
         "default": False,
