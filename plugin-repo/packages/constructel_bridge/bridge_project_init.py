@@ -141,46 +141,58 @@ EMBEDDED_STYLES = {
 # TEMPLATES — presets de selection
 # =====================================================================
 
+# Couches infra de base (reutilise dans les templates)
+_INFRA_BASE = {
+    "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
+    "structures", "ducts", "subducts", "cables", "splices",
+    "demand_points", "topo_violations", "v_form_lists",
+}
+
 TEMPLATES = {
     "infra": {
-        "label": "Infrastructure + Listes",
-        "description": "Couches infra de base : zones, structures, cables, conduites, DP + listes ref",
-        "layers": {
-            "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-            "structures", "ducts", "subducts", "cables", "splices",
-            "demand_points", "topo_violations", "v_form_lists",
+        "label": "Infrastructure",
+        "description": "Couches infra : zones, structures, cables, conduites, DP, topologie",
+        "layers": _INFRA_BASE,
+        "basemap": True,
+    },
+    "infra_cadastre": {
+        "label": "Infrastructure + Cadastre",
+        "description": "Infra complet + parcelles cadastrales, batiments, municipalites et ilots UrbIS",
+        "layers": _INFRA_BASE | {
+            "wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings",
+        },
+        "basemap": True,
+    },
+    "infra_urbanisme": {
+        "label": "Infrastructure + Urbanisme",
+        "description": "Infra complet + cadastre + zones protegees et patrimoine Brussels",
+        "layers": _INFRA_BASE | {
+            "wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings",
+            "wfs_protection", "wfs_heritage",
         },
         "basemap": True,
     },
     "infra_chantier": {
         "label": "Infrastructure + Chantier",
-        "description": "Infra complet + couches chantier (interventions, permis, incidents)",
-        "layers": {
-            "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-            "structures", "ducts", "subducts", "cables", "splices",
-            "demand_points", "topo_violations",
+        "description": "Infra complet + couches chantier (interventions, permis, incidents, synergies)",
+        "layers": _INFRA_BASE | {
             "interventions", "incidents", "permis_voirie", "plaintes",
-            "interventions_chantier", "synergies",
-            "v_form_lists",
+            "interventions_chantier", "synergies", "planning_facades",
         },
         "basemap": True,
     },
     "infra_osiris": {
         "label": "Infrastructure + OSIRIS",
         "description": "Infra complet + couches OSIRIS Brussels (zones gelees, chantiers, coordination)",
-        "layers": {
-            "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-            "structures", "ducts", "subducts", "cables", "splices",
-            "demand_points", "topo_violations",
+        "layers": _INFRA_BASE | {
             "osiris_frozen", "osiris_worksites", "osiris_autorises",
             "osiris_phases", "osiris_hypercoord", "osiris_deviations", "osiris_events",
-            "v_form_lists",
         },
         "basemap": True,
     },
     "complet": {
         "label": "Projet complet",
-        "description": "Toutes les couches : infra + chantier + OSIRIS",
+        "description": "Toutes les couches : infra + chantier + OSIRIS + cadastre + urbanisme",
         "layers": {k for k, *_ in LAYER_CATALOG},
         "basemap": True,
     },
