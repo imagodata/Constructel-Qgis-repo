@@ -419,6 +419,7 @@ class ConstructelBridgePlugin:
 
         Corrige les credentials, re-hook les couches et applique les
         traductions i18n — sans toucher a la structure du layer tree.
+        Ne s'active que sur les projets inities par le plugin (bridge_operator).
         """
         # Toujours corriger les credentials (utilise le mot de passe par
         # defaut si pas encore connecte — suffit pour reparer les authcfg).
@@ -430,11 +431,24 @@ class ConstructelBridgePlugin:
         if not self._connected:
             return
 
+        # Ne traiter que les projets Bridge (eviter d'interferer avec
+        # des projets QGIS generiques qui ne sont pas geres par le plugin)
+        from .bridge_project_init import is_bridge_project
+        if not is_bridge_project():
+            self._log("Projet non-Bridge detecte — hooks/relations/i18n ignores")
+            return
+
         self._layer_hooks_installed = False
         try:
             self._hook_layers()
         except Exception as exc:
             self._log(f"Hook install failed: {exc}", Qgis.Warning)
+
+        try:
+            from .bridge_project_init import ensure_relations
+            ensure_relations()
+        except Exception as exc:
+            self._log(f"Relations recreate failed: {exc}", Qgis.Warning)
 
         try:
             bridge_sketcher.apply_all_translations()

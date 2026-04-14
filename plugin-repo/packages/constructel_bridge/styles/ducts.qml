@@ -1280,31 +1280,33 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Documentos">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Documents">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Resumo documental">
+      <attributeEditorHtmlElement verticalStretch="0" horizontalStretch="0" showLabel="0" name="docs_summary">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
-        <attributeEditorField index="16" verticalStretch="0" horizontalStretch="0" showLabel="1" name="doc_count">
-          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
-            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
-          </labelStyle>
-        </attributeEditorField>
-      </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Links documentos (clicar para abrir)">
-        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
-          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
-        </labelStyle>
-        <attributeEditorField index="17" verticalStretch="0" horizontalStretch="0" showLabel="1" name="doc_folder_url">
-          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
-            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
-          </labelStyle>
-        </attributeEditorField>
-      </attributeEditorContainer>
-      <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Lista documentos" horizontalStretch="0" relation="docs_element_duct" nmRelationId="" showLabel="1" name="docs_element_duct">
+&lt;div style="font-family:Arial,sans-serif;padding:10px;background:#FAFAFA;border:1px solid #E0E0E0;border-radius:6px;margin:4px 0;">
+  &lt;div style="display:flex;align-items:center;margin-bottom:8px;">
+    &lt;span style="font-size:14px;font-weight:600;color:#333;">Documents&lt;/span>
+    &lt;span style="margin-left:8px;background:#1565C0;color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">
+      [% coalesce("doc_count", 0) %]
+    &lt;/span>
+  &lt;/div>
+  [% IF coalesce("doc_count", 0) = 0 %]
+  &lt;p style="color:#999;font-size:11px;margin:4px 0;">Aucun document lie a cet element.&lt;/p>
+  [% END %]
+  [% IF "doc_folder_url" IS NOT NULL AND "doc_folder_url" != '' %]
+  &lt;div style="margin-top:8px;padding:6px 8px;background:#E3F2FD;border:1px solid #90CAF9;border-radius:4px;">
+    &lt;a href="[% "doc_folder_url" %]" style="color:#1565C0;font-size:11px;text-decoration:none;">
+      Ouvrir le dossier SharePoint&lt;/a>
+  &lt;/div>
+  [% END %]
+&lt;/div>
+      </attributeEditorHtmlElement>
+      <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Liste des documents" horizontalStretch="0" relation="docs_element_duct" nmRelationId="" showLabel="1" name="docs_element_duct">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
