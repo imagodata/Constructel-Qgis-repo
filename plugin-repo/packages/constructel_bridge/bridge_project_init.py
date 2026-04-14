@@ -92,9 +92,6 @@ LAYER_CATALOG = [
     ("wfs_protection",     "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Protection_area", "geom", None, "Zones protegees"),
     ("wfs_heritage",       "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Heritage",        "geom", None, "Patrimoine"),
 
-    # -- Documents (vue plate pour onglet Documents des formulaires) -------
-    ("docs_elements",      None,              "docs",  "v_element_documents_list", None, "link_id", "Documents elements"),
-
     # -- Reference (toujours charge, cache dans groupe Ref) ---------------
     ("v_form_lists",       None,              "ref",   "v_form_lists",        None,  "rid", "Listes formulaires"),
 ]
@@ -151,7 +148,7 @@ _INFRA_BASE = {
     "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
     "structures", "ducts", "subducts", "cables", "splices",
     "demand_points", "topo_violations",
-    "docs_elements", "v_form_lists",
+    "v_form_lists",
 }
 
 TEMPLATES = {
@@ -237,13 +234,6 @@ RELATION_DEFS = [
     ("zone_pop",       "permis_voirie",      "zone_pop_id",          "permis_to_pop"),
     ("zone_pop",       "interventions_chantier", "zone_pop_id",      "ic_to_pop"),
 
-    # Documents → Elements (polymorphique via element_id)
-    # Nom de relation = celui reference dans les QML (relation="docs_element_*")
-    ("structures",     "docs_elements",      "element_id",           "docs_element_structure"),
-    ("cables",         "docs_elements",      "element_id",           "docs_element_cable"),
-    ("ducts",          "docs_elements",      "element_id",           "docs_element_duct"),
-    ("demand_points",  "docs_elements",      "element_id",           "docs_element_dp"),
-    ("zone_pop",       "docs_elements",      "element_id",           "docs_element_zone_pop"),
 ]
 
 
