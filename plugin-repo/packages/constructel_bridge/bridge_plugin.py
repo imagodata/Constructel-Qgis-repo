@@ -1307,8 +1307,6 @@ class ConstructelBridgePlugin:
                 add_basemap=dlg.want_basemap(),
                 apply_styles=dlg.want_styles(),
                 selected_basemaps=dlg.selected_basemaps(),
-                add_cadastre=dlg.want_cadastre(),
-                selected_cadastre=dlg.selected_cadastre(),
             )
 
             # Cacher les couches sans geometrie dans le groupe Reference
