@@ -663,18 +663,8 @@
     <checkConfiguration/>
   </geometryOptions>
   <legend type="default-vector" showLabelLegend="0"/>
-  <referencedLayers>
-    <relation layerName="Cabos" providerKey="postgres" id="subducts_f748de70_8e56_4cf1_adf3_31b394cd1877_cable_id_cables_ed4613ba_3a4b_48e5_adf1_59cbbf575864_id" referencedLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" referencingLayer="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="fk_subducts_cable" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
-      <fieldRef referencingField="cable_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Ductos" providerKey="postgres" id="subducts_f748de70_8e56_4cf1_adf3_31b394cd1877_duct_id_ducts_476c63c5_5a1d_4a64_8739_41d5b9ec828a_id" referencedLayer="ducts_4ea1455d_c8a5_4a85_b419_a3507704954d" referencingLayer="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" layerId="ducts_4ea1455d_c8a5_4a85_b419_a3507704954d" name="subducts_duct_id_fkey" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;ducts&quot; (geom)">
-      <fieldRef referencingField="duct_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Estruturas" providerKey="postgres" id="subducts_f748de70_8e56_4cf1_adf3_31b394cd1877_end_structure_id_structures_ab0eaad9_ddb5_4125_99bb_a28529c02dce_id" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" layerId="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" name="subducts_end_structure_id_fkey" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;structures&quot; (geom)">
-      <fieldRef referencingField="end_structure_id" referencedField="id"/>
-      <fieldRef referencingField="start_structure_id" referencedField="id"/>
-    </relation>
-  </referencedLayers>
+  <!-- Relations creees dynamiquement par le plugin Constructel Bridge (RELATION_DEFS) -->
+  <referencedLayers/>
   <referencingLayers/>
   <fieldConfiguration>
     <field configurationFlags="NoFlag" name="id">
