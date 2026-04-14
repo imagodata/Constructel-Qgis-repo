@@ -1706,7 +1706,7 @@
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
             <Option type="bool" value="false" name="UseCompleter"/>
-            <Option type="QString" value="label_pt" name="Value"/>
+            <Option type="QString" value="map_get(map('fr', label_fr, 'en', label_en, 'pt', label_pt), coalesce(@wyre_language, 'fr'))" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -1752,7 +1752,7 @@
             <Option type="bool" value="true" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
             <Option type="bool" value="false" name="UseCompleter"/>
-            <Option type="QString" value="label_pt" name="Value"/>
+            <Option type="QString" value="map_get(map('fr', label_fr, 'en', label_en, 'pt', label_pt), coalesce(@wyre_language, 'fr'))" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -2252,57 +2252,57 @@ def my_form_open(dialog, layer, feature):
       <attributeEditorHtmlElement verticalStretch="0" horizontalStretch="0" showLabel="0" name="docs_summary">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
-        </labelStyle>&#xd;
-&lt;div style="font-family:Arial,sans-serif;padding:10px;background:#FAFAFA;border:1px solid #E0E0E0;border-radius:6px;margin:4px 0;">&#xd;
-  &lt;div style="display:flex;align-items:center;margin-bottom:8px;">&#xd;
-    &lt;span style="font-size:14px;font-weight:600;color:#333;">Documents&lt;/span>&#xd;
-    &lt;span style="margin-left:8px;background:#1565C0;color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">&#xd;
-      [% "doc_count" %]&#xd;
-    &lt;/span>&#xd;
-  &lt;/div>&#xd;
-  [% IF "doc_count" > 0 %]&#xd;
-  &lt;table style="width:100%;border-collapse:collapse;font-size:11px;">&#xd;
-    &lt;tr style="background:#E3F2FD;">&#xd;
-      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;">Type&lt;/td>&#xd;
-      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;text-align:right;">Nb&lt;/td>&#xd;
-      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;">Source&lt;/td>&#xd;
-    &lt;/tr>&#xd;
-    [% WITH cnt AS aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'WELDING') %]&#xd;
-    [% IF cnt > 0 %]&#xd;
-    &lt;tr>&lt;td style="padding:3px 6px;">Welding (soudures)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>&#xd;
-    [% END %]&#xd;
-    [% END %]&#xd;
-    [% WITH cnt AS aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'JETTING') %]&#xd;
-    [% IF cnt > 0 %]&#xd;
-    &lt;tr>&lt;td style="padding:3px 6px;">Jetting (soufflage)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>&#xd;
-    [% END %]&#xd;
-    [% END %]&#xd;
-    [% WITH cnt AS aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'RACK') %]&#xd;
-    [% IF cnt > 0 %]&#xd;
-    &lt;tr>&lt;td style="padding:3px 6px;">Rack (baies)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin&lt;/td>&lt;/tr>&#xd;
-    [% END %]&#xd;
-    [% END %]&#xd;
-    [% WITH cnt AS aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'BREAKOUT') %]&#xd;
-    [% IF cnt > 0 %]&#xd;
-    &lt;tr>&lt;td style="padding:3px 6px;">Breakout (derivations)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>&#xd;
-    [% END %]&#xd;
-    [% END %]&#xd;
-    [% WITH cnt AS aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" IN ('CABLE_PLAN','AS_BUILT','OTDR','PHOTO','RECEPTION','INCIDENT_REPORT','AUTRE')) %]&#xd;
-    [% IF cnt > 0 %]&#xd;
-    &lt;tr>&lt;td style="padding:3px 6px;">Autres&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Divers&lt;/td>&lt;/tr>&#xd;
-    [% END %]&#xd;
-    [% END %]&#xd;
-  &lt;/table>&#xd;
-  [% ELSE %]&#xd;
-  &lt;p style="color:#999;font-size:11px;margin:4px 0;">Aucun document lie a cet element.&lt;/p>&#xd;
-  [% END %]&#xd;
-  [% IF "doc_folder_url" IS NOT NULL AND "doc_folder_url" != '' %]&#xd;
-  &lt;div style="margin-top:8px;padding:6px 8px;background:#E3F2FD;border:1px solid #90CAF9;border-radius:4px;">&#xd;
-    &lt;a href="[% "doc_folder_url" %]" style="color:#1565C0;font-size:11px;text-decoration:none;">&#xd;
-      Ouvrir le dossier SharePoint&lt;/a>&#xd;
-  &lt;/div>&#xd;
-  [% END %]&#xd;
-&lt;/div>&#xd;
+        </labelStyle>
+&lt;div style="font-family:Arial,sans-serif;padding:10px;background:#FAFAFA;border:1px solid #E0E0E0;border-radius:6px;margin:4px 0;">
+  &lt;div style="display:flex;align-items:center;margin-bottom:8px;">
+    &lt;span style="font-size:14px;font-weight:600;color:#333;">Documents&lt;/span>
+    &lt;span style="margin-left:8px;background:#1565C0;color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">
+      [% coalesce("doc_count", 0) %]
+    &lt;/span>
+  &lt;/div>
+  [% IF coalesce("doc_count", 0) > 0 %]
+  &lt;table style="width:100%;border-collapse:collapse;font-size:11px;">
+    &lt;tr style="background:#E3F2FD;">
+      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;">Type&lt;/td>
+      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;text-align:right;">Nb&lt;/td>
+      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;">Source&lt;/td>
+    &lt;/tr>
+    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'WELDING'), 0) %]
+    [% IF cnt > 0 %]
+    &lt;tr>&lt;td style="padding:3px 6px;">Welding (soudures)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>
+    [% END %]
+    [% END %]
+    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'JETTING'), 0) %]
+    [% IF cnt > 0 %]
+    &lt;tr>&lt;td style="padding:3px 6px;">Jetting (soufflage)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>
+    [% END %]
+    [% END %]
+    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'RACK'), 0) %]
+    [% IF cnt > 0 %]
+    &lt;tr>&lt;td style="padding:3px 6px;">Rack (baies)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin&lt;/td>&lt;/tr>
+    [% END %]
+    [% END %]
+    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'BREAKOUT'), 0) %]
+    [% IF cnt > 0 %]
+    &lt;tr>&lt;td style="padding:3px 6px;">Breakout (derivations)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>
+    [% END %]
+    [% END %]
+    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" IN ('CABLE_PLAN','AS_BUILT','OTDR','PHOTO','RECEPTION','INCIDENT_REPORT','AUTRE')), 0) %]
+    [% IF cnt > 0 %]
+    &lt;tr>&lt;td style="padding:3px 6px;">Autres&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Divers&lt;/td>&lt;/tr>
+    [% END %]
+    [% END %]
+  &lt;/table>
+  [% ELSE %]
+  &lt;p style="color:#999;font-size:11px;margin:4px 0;">Aucun document lie a cet element.&lt;/p>
+  [% END %]
+  [% IF "doc_folder_url" IS NOT NULL AND "doc_folder_url" != '' %]
+  &lt;div style="margin-top:8px;padding:6px 8px;background:#E3F2FD;border:1px solid #90CAF9;border-radius:4px;">
+    &lt;a href="[% "doc_folder_url" %]" style="color:#1565C0;font-size:11px;text-decoration:none;">
+      Ouvrir le dossier SharePoint&lt;/a>
+  &lt;/div>
+  [% END %]
+&lt;/div>
       </attributeEditorHtmlElement>
       <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Liste des documents" horizontalStretch="0" relation="docs_element_structure" nmRelationId="" showLabel="1" name="docs_element_structure">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">

@@ -4,7 +4,7 @@ Constructel Bridge — Traductions des alias de champs par couche.
 
 Structure: FIELD_ALIASES[table_name][field_name] = {lang: alias}
 
-Les tables ref.* utilisent ``label`` (FR) et ``label_en`` (EN).
+Les tables ref.* utilisent ``label_fr``, ``label_en``, ``label_pt``.
 Le mapping VALUE_RELATION_COLUMNS indique quelle colonne afficher
 dans les widgets ValueRelation selon la langue.
 """
@@ -277,9 +277,9 @@ LABEL_EXPRESSIONS: dict[str, dict[str, str]] = {
 # Clé: nom de la couche de référence (LayerName dans le widget config)
 # Valeur: {lang: colonne à utiliser comme Value}
 #
-# v3.2.106: Vue unifiée ref.v_form_lists remplace les 5 anciennes couches
-# (structure_types, cable_types, duct_models, pose_types, v_valid_statuses).
-# Colonnes uniformes: label_fr, label_en, label_pt.
+# v4.0: ref.v_form_lists expose label_fr, label_en, label_pt.
+# Le plugin bascule la colonne selon la langue active.
+# Fallback QML: expression map_get(@wyre_language) si plugin absent.
 
 VALUE_RELATION_COLUMNS: dict[str, dict[str, str]] = {
     "v_form_lists":  {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},

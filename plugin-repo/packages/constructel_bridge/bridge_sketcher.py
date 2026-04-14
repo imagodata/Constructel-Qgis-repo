@@ -6,7 +6,7 @@ Applique dynamiquement les traductions multilingues sur les couches QGIS:
   1. Alias de champs (formulaires d'attributs)
   2. Noms de couches dans le Layer Tree
   3. Noms de groupes dans le Layer Tree
-  4. Colonnes Value des widgets ValueRelation (label FR / label_en EN)
+  4. Colonnes Value des widgets ValueRelation (label_fr / label_en / label_pt)
 
 Aucune dependance locale (styles, QML) — tout passe par l'API QGIS.
 Compatible avec les projets stockes en base PostgreSQL.
@@ -17,6 +17,7 @@ from qgis.core import (
     QgsAttributeEditorContainer,
     QgsDataSourceUri,
     QgsEditorWidgetSetup,
+    QgsExpressionContextUtils,
     QgsMessageLog,
     QgsProject,
     QgsVectorLayer,
@@ -101,7 +102,7 @@ def apply_field_aliases(layer: QgsVectorLayer, lang: str | None = None):
 def apply_value_relation_columns(layer: QgsVectorLayer, lang: str | None = None):
     """Bascule la colonne Value des widgets ValueRelation selon la langue.
 
-    Les tables ref.* ont ``label`` (FR) et ``label_en`` (EN).
+    ref.v_form_lists expose ``label_fr``, ``label_en``, ``label_pt``.
     Cette fonction modifie dynamiquement quelle colonne est affichee
     dans les dropdowns.
     """
@@ -120,7 +121,7 @@ def apply_value_relation_columns(layer: QgsVectorLayer, lang: str | None = None)
         if not col_map:
             continue
 
-        new_value_col = col_map.get(lang) or col_map.get("en", "label")
+        new_value_col = col_map.get(lang) or col_map.get("en", "label_en")
         current_value_col = config.get("Value", "")
 
         if new_value_col != current_value_col:
@@ -329,8 +330,9 @@ def apply_all_translations(lang: str | None = None):
 
     groups_renamed = apply_group_names(lang)
 
-    # Stocker la langue dans une variable projet pour les expressions QGIS
-    QgsProject.instance().writeEntry("wyre", "lang", lang)
+    # Variable projet accessible via @wyre_language dans les expressions QGIS
+    # (utilisee par le fallback map_get() dans les styles QML)
+    QgsExpressionContextUtils.setProjectVariable(project, "wyre_language", lang)
 
     _log(
         f"i18n [{lang}]: {layers_translated} couche(s) traduites, "

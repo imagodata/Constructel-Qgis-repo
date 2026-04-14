@@ -859,7 +859,7 @@
             <Option type="bool" value="true" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
             <Option type="bool" value="false" name="UseCompleter"/>
-            <Option type="QString" value="label_pt" name="Value"/>
+            <Option type="QString" value="map_get(map('fr', label_fr, 'en', label_en, 'pt', label_pt), coalesce(@wyre_language, 'fr'))" name="Value"/>
           </Option>
         </config>
       </editWidget>
