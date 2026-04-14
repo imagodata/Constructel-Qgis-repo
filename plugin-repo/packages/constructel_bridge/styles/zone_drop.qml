@@ -672,11 +672,8 @@
     </checkConfiguration>
   </geometryOptions>
   <legend type="default-vector" showLabelLegend="0"/>
-  <referencedLayers>
-    <relation layerName="Zonas Distribuicao" providerKey="postgres" id="zone_drop_dbbb294a_886c_47c6_bf5f_393586560886_zone_distribution_id_zone_distribution_6464e02a_fb70_4eac_8716_1f4d170cece2_id" referencedLayer="zone_distribution_48b32be7_1696_4a79_8c32_c677d10f811b" referencingLayer="zone_drop_60ab71d7_1014_4b06_8dbd_b3e4d4adbe91" layerId="zone_distribution_48b32be7_1696_4a79_8c32_c677d10f811b" name="zone_drop_zone_distribution_id_fkey" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_distribution&quot; (geom)">
-      <fieldRef referencingField="zone_distribution_id" referencedField="id"/>
-    </relation>
-  </referencedLayers>
+  <!-- Relations creees dynamiquement par le plugin Constructel Bridge (RELATION_DEFS) -->
+  <referencedLayers/>
   <referencingLayers/>
   <fieldConfiguration>
     <field configurationFlags="NoFlag" name="id">

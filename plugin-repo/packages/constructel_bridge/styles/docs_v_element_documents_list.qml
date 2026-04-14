@@ -154,23 +154,8 @@
     <checkConfiguration/>
   </geometryOptions>
   <legend type="default-vector" showLabelLegend="0"/>
-  <referencedLayers>
-    <relation layerName="Cabos" providerKey="postgres" id="docs_element_cable" referencedLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Documents (cables)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Pontos de procura" providerKey="postgres" id="docs_element_demand_point" referencedLayer="demand_points_95931ccf_83f9_466d_ad56_f232dc7ba001" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="demand_points_95931ccf_83f9_466d_ad56_f232dc7ba001" name="Documents (demand_points)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;demand_points&quot; (geom)">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Ductos" providerKey="postgres" id="docs_element_duct" referencedLayer="ducts_4ea1455d_c8a5_4a85_b419_a3507704954d" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="ducts_4ea1455d_c8a5_4a85_b419_a3507704954d" name="Documents (ducts)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;ducts&quot; (geom)">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Estruturas" providerKey="postgres" id="docs_element_structure" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" name="Documents (structures)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;structures&quot; (geom)">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Zonas POP" providerKey="postgres" id="docs_element_zone_pop" referencedLayer="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" name="Documents (zone_pop)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-  </referencedLayers>
+  <!-- Relations creees dynamiquement par le plugin Constructel Bridge (RELATION_DEFS) -->
+  <referencedLayers/>
   <referencingLayers/>
   <fieldConfiguration>
     <field configurationFlags="NoFlag" name="link_id">

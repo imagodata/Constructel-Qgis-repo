@@ -1590,21 +1590,8 @@
   </geometryOptions>
   <legend type="default-vector" showLabelLegend="0"/>
   <referencedLayers/>
-  <referencingLayers>
-    <relation layerName="Documents elements" providerKey="postgres" id="docs_element_structure" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" name="Documents (structures)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Cabos" providerKey="postgres" id="rel_cables_from_end" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Cables (arrivee)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
-      <fieldRef referencingField="end_point_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Cabos" providerKey="postgres" id="rel_cables_from_start" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Cables (depart)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
-      <fieldRef referencingField="start_point_id" referencedField="id"/>
-    </relation>
-    <relation layerName="Subductos" providerKey="postgres" id="subducts_f748de70_8e56_4cf1_adf3_31b394cd1877_end_structure_id_structures_ab0eaad9_ddb5_4125_99bb_a28529c02dce_id" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" layerId="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" name="subducts_end_structure_id_fkey" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;subducts&quot; (geom)">
-      <fieldRef referencingField="end_structure_id" referencedField="id"/>
-      <fieldRef referencingField="start_structure_id" referencedField="id"/>
-    </relation>
-  </referencingLayers>
+  <!-- Relations creees dynamiquement par le plugin Constructel Bridge (RELATION_DEFS) -->
+  <referencingLayers/>
   <fieldConfiguration>
     <field configurationFlags="NoFlag" name="id">
       <editWidget type="TextEdit">

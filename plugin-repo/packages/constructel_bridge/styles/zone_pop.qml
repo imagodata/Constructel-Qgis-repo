@@ -656,12 +656,9 @@
     </checkConfiguration>
   </geometryOptions>
   <legend type="default-vector" showLabelLegend="0"/>
+  <!-- Relations creees dynamiquement par le plugin Constructel Bridge (RELATION_DEFS) -->
   <referencedLayers/>
-  <referencingLayers>
-    <relation layerName="Documents elements" providerKey="postgres" id="docs_element_zone_pop" referencedLayer="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" name="Documents (zone_pop)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;">
-      <fieldRef referencingField="element_id" referencedField="id"/>
-    </relation>
-  </referencingLayers>
+  <referencingLayers/>
   <fieldConfiguration>
     <field configurationFlags="NoFlag" name="id">
       <editWidget type="TextEdit">
