@@ -333,7 +333,7 @@ class ConstructelBridgePlugin:
         self._tool_button.setToolTip("Constructel Bridge")
         self._tool_button.setMenu(self._toolbar_menu)
         self._tool_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self._tool_button.clicked.connect(self._on_connect)
+        self._tool_button.clicked.connect(self._on_init_project)
 
         self._toolbar_action = self.iface.addToolBarWidget(self._tool_button)
 
