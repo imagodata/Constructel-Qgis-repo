@@ -137,6 +137,8 @@ EMBEDDED_STYLES = {
     # Urbanisme WFS
     "wfs_protection":   "wfs_protection.qml",
     "wfs_heritage":     "wfs_heritage.qml",
+    # Documents
+    "docs_elements":    "docs_v_element_documents_list.qml",
 }
 
 
@@ -636,10 +638,9 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             layer = _build_wfs_layer(table, label)
         else:
             uri = _build_uri(conn_params, password, schema, table, geom_col, pk)
-            # Nom QGIS = label_fr si pas de groupe (couches ref/docs cachees)
-            # sinon nom de table (requis pour LayerName dans les QML ValueRelation)
-            layer_name = label if not group_name else table
-            layer = QgsVectorLayer(uri.uri(False), layer_name, "postgres")
+            # Toujours utiliser le nom de table comme nom QGIS
+            # (requis pour les ValueRelation qui referencent par LayerName)
+            layer = QgsVectorLayer(uri.uri(False), table, "postgres")
 
         if not layer or not layer.isValid():
             _log(f"Couche invalide: {table}", Qgis.Warning)
