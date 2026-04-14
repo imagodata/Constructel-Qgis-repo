@@ -1591,16 +1591,16 @@
   <legend type="default-vector" showLabelLegend="0"/>
   <referencedLayers/>
   <referencingLayers>
-    <relation layerName="Documents elements" providerKey="postgres" id="docs_element_structure" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" name="Documents (structures)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;">
+    <relation layerName="Documents elements" providerKey="postgres" id="docs_element_structure" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" name="Documents (structures)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;">
       <fieldRef referencingField="element_id" referencedField="id"/>
     </relation>
-    <relation layerName="Cabos" providerKey="postgres" id="rel_cables_from_end" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Cables (arrivee)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
+    <relation layerName="Cabos" providerKey="postgres" id="rel_cables_from_end" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Cables (arrivee)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
       <fieldRef referencingField="end_point_id" referencedField="id"/>
     </relation>
-    <relation layerName="Cabos" providerKey="postgres" id="rel_cables_from_start" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Cables (depart)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
+    <relation layerName="Cabos" providerKey="postgres" id="rel_cables_from_start" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" layerId="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Cables (depart)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)">
       <fieldRef referencingField="start_point_id" referencedField="id"/>
     </relation>
-    <relation layerName="Subductos" providerKey="postgres" id="subducts_f748de70_8e56_4cf1_adf3_31b394cd1877_end_structure_id_structures_ab0eaad9_ddb5_4125_99bb_a28529c02dce_id" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" layerId="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" name="subducts_end_structure_id_fkey" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;subducts&quot; (geom)">
+    <relation layerName="Subductos" providerKey="postgres" id="subducts_f748de70_8e56_4cf1_adf3_31b394cd1877_end_structure_id_structures_ab0eaad9_ddb5_4125_99bb_a28529c02dce_id" referencedLayer="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" referencingLayer="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" layerId="subducts_1e930970_b4b6_4eab_8494_40d4f705c556" name="subducts_end_structure_id_fkey" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiLineString checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;subducts&quot; (geom)">
       <fieldRef referencingField="end_structure_id" referencedField="id"/>
       <fieldRef referencingField="start_structure_id" referencedField="id"/>
     </relation>
@@ -1628,7 +1628,7 @@
             <Option type="QString" value="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" name="Layer"/>
             <Option type="QString" value="zone_pop" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="false" name="OrderByField"/>
@@ -1656,7 +1656,7 @@
             <Option type="QString" value="zone_mro_033ce78e_83b7_4098_bdb3_8bf371107285" name="Layer"/>
             <Option type="QString" value="zone_mro" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='id' estimatedmetadata=true srid=31370 type=MultiPolygonZ checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_mro&quot; (geom)" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygonZ checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_mro&quot; (geom)" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="false" name="OrderByField"/>
@@ -1692,13 +1692,13 @@
             <Option type="int" value="2" name="CompleterMatchFlags"/>
             <Option type="invalid" name="Description"/>
             <Option type="bool" value="false" name="DisplayGroupName"/>
-            <Option type="QString" value="&quot;category&quot; = 'structure_type' AND &quot;active&quot; = true" name="FilterExpression"/>
+            <Option type="QString" value="&quot;category&quot; = 'structure_type'" name="FilterExpression"/>
             <Option type="invalid" name="Group"/>
             <Option type="QString" value="code" name="Key"/>
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="true" name="OrderByField"/>
@@ -1744,7 +1744,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="false" name="OrderByField"/>
@@ -1777,7 +1777,7 @@
             <Option type="QString" value="demand_points_95931ccf_83f9_466d_ad56_f232dc7ba001" name="Layer"/>
             <Option type="QString" value="demand_points" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;demand_points&quot; (geom)" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;demand_points&quot; (geom)" name="LayerSource"/>
             <Option type="bool" value="true" name="OrderByValue"/>
             <Option type="QString" value="identifier" name="Value"/>
           </Option>
