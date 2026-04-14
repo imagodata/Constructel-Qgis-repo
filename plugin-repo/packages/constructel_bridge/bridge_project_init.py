@@ -352,7 +352,7 @@ BASEMAPS = [
 # Sources WFS — URL par workspace
 WFS_SOURCES = {
     "urbisvector": {
-        "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs?Version=2.0.0&Language=eng",
+        "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
         "srs": "EPSG:31370",
         "version": "auto",
     },
