@@ -92,8 +92,9 @@ LAYER_CATALOG = [
     ("wfs_protection",     "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Protection_area", "geom", None, "Zones protegees"),
     ("wfs_heritage",       "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Heritage",        "geom", None, "Patrimoine"),
 
-    # -- Reference (toujours charge, cache dans groupe Ref) ---------------
-    ("v_form_lists",       None,              "ref",   "v_form_lists",        None,  "rid", "Listes formulaires"),
+    # -- Référence (visible dans groupe Référence, en bas après basemaps) --
+    ("docs_elements",      "Référence",       "docs",  "v_element_documents_list", None, "link_id", "Documents elements"),
+    ("v_form_lists",       "Référence",       "ref",   "v_form_lists",        None,  "rid", "Listes formulaires"),
 ]
 
 # Cles des couches WFS (chargees via WFS, pas PostgreSQL)
@@ -148,7 +149,7 @@ _INFRA_BASE = {
     "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
     "structures", "ducts", "subducts", "cables", "splices",
     "demand_points", "topo_violations",
-    "v_form_lists",
+    "docs_elements", "v_form_lists",
 }
 
 TEMPLATES = {
@@ -565,6 +566,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     root = project.layerTreeRoot()
     groups = {}
     needed_groups = {catalog[k][1] for k in selected if k in catalog and catalog[k][1]}
+    # Référence est exclu ici — sera cree apres les basemaps
     for group_name in ("Demand Points", "Infrastructure", "Zones",
                        "Topologie", "Chantier", "OSIRIS",
                        "Cadastre UrbIS", "Urbanisme"):
@@ -690,6 +692,27 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     if add_basemap and selected_basemaps:
         _add_basemaps(root, selected_basemaps)
 
+    # -- Groupe Référence (en bas, apres les basemaps) --------------------
+    if "Référence" in needed_groups:
+        ref_group = root.findGroup("Référence") or root.addGroup("Référence")
+        groups["Référence"] = ref_group
+        # Deplacer les couches ref dans ce groupe
+        for entry in LAYER_CATALOG:
+            key = entry[0]
+            if key not in loaded or entry[1] != "Référence":
+                continue
+            layer = loaded[key]
+            node = root.findLayer(layer.id())
+            if node and node.parent() != ref_group:
+                clone = node.clone()
+                ref_group.addChildNode(clone)
+                node.parent().removeChildNode(node)
+        ref_group.setExpanded(False)
+        ref_group.setItemVisibilityChecked(False)
+
+    # -- Nettoyer les couches fantomes a la racine -------------------------
+    _cleanup_ghost_layers(root, groups)
+
     return count
 
 
@@ -717,6 +740,27 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
     uri.setParam("estimatedmetadata", "true")
     uri.setParam("checkPrimaryKeyUnicity", "0")
     return uri
+
+
+def _cleanup_ghost_layers(root, groups):
+    """Supprime les couches fantomes a la racine du layer tree.
+
+    Les styles QML contiennent des references de relations qui peuvent
+    pousser QGIS a creer des couches fantomes (sans groupe, a la racine).
+    On les detecte et les supprime.
+    """
+    group_set = set(groups.values())
+    removed = 0
+    for child in list(root.children()):
+        # Ne toucher qu'aux couches directement a la racine (pas dans un groupe)
+        if child in group_set:
+            continue
+        if hasattr(child, "layerId"):
+            # C'est un noeud de couche a la racine — c'est un fantome
+            root.removeChildNode(child)
+            removed += 1
+    if removed:
+        _log(f"{removed} couche(s) fantome(s) supprimee(s) de la racine")
 
 
 def _apply_embedded_styles(loaded: dict):
