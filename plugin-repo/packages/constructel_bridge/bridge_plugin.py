@@ -1309,9 +1309,6 @@ class ConstructelBridgePlugin:
                 selected_basemaps=dlg.selected_basemaps(),
             )
 
-            # Cacher les couches sans geometrie dans le groupe Reference
-            self._hide_no_geom_layers()
-
             # Appliquer les traductions i18n
             from . import bridge_sketcher
             bridge_sketcher.apply_all_translations()

@@ -336,7 +336,7 @@ BASEMAPS = [
 # Sources WFS — URL par workspace
 WFS_SOURCES = {
     "urbisvector": {
-        "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
+        "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs?Version=2.0.0&Language=eng",
         "srs": "EPSG:31370",
         "version": "auto",
     },
@@ -618,12 +618,16 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             _log(f"Couche invalide: {table}", Qgis.Warning)
             continue
 
-        project.addMapLayer(layer, False)
-
-        if group_name and group_name in groups:
-            groups[group_name].addLayer(layer)
+        if not group_name:
+            # Couche de reference (sans groupe) — ajouter au projet
+            # sans l'afficher dans le layer tree
+            project.addMapLayer(layer, False)
         else:
-            root.addLayer(layer)
+            project.addMapLayer(layer, False)
+            if group_name in groups:
+                groups[group_name].addLayer(layer)
+            else:
+                root.addLayer(layer)
 
         loaded[key] = layer
         count += 1
