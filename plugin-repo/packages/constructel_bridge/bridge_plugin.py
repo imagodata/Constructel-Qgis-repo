@@ -541,7 +541,7 @@ class ConstructelBridgePlugin:
         """Met a jour les labels des actions apres changement de langue."""
         keys = [
             "menu.connect", "menu.status", "menu.onboarding",
-            "menu.load_project", "menu.language",
+            "menu.load_project", "menu.init_project", "menu.language",
         ]
         for action, key in zip(self._actions, keys):
             action.setText(tr(key))

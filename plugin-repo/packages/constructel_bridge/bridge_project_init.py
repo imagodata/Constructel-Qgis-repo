@@ -34,6 +34,8 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
+from .i18n import tr
+
 TAG = "Constructel Bridge"
 
 
@@ -306,7 +308,7 @@ class InitProjectDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Constructel Bridge - Initialiser projet")
+        self.setWindowTitle(tr("init.title"))
         self.setMinimumWidth(560)
         self.setMinimumHeight(620)
         self._build_ui()
@@ -315,11 +317,11 @@ class InitProjectDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # -- Template selector ------------------------------------------------
-        tmpl_box = QGroupBox("Template")
+        tmpl_box = QGroupBox(tr("init.group_template"))
         tmpl_layout = QVBoxLayout(tmpl_box)
 
         self._combo = QComboBox()
-        self._combo.addItem("-- Selection manuelle --", "custom")
+        self._combo.addItem(tr("init.custom_select"), "custom")
         for key, tmpl in TEMPLATES.items():
             self._combo.addItem(tmpl["label"], key)
         self._combo.currentIndexChanged.connect(self._on_template_changed)
@@ -333,7 +335,7 @@ class InitProjectDialog(QDialog):
         layout.addWidget(tmpl_box)
 
         # -- Layer tree (checkable) -------------------------------------------
-        layers_box = QGroupBox("Couches")
+        layers_box = QGroupBox(tr("init.group_layers"))
         layers_layout = QVBoxLayout(layers_box)
 
         self._tree = QTreeWidget()
@@ -366,9 +368,9 @@ class InitProjectDialog(QDialog):
 
         # Select all / none buttons
         btn_layout = QHBoxLayout()
-        btn_all = QPushButton("Tout selectionner")
+        btn_all = QPushButton(tr("init.select_all"))
         btn_all.clicked.connect(lambda: self._set_all(True))
-        btn_none = QPushButton("Tout deselectionner")
+        btn_none = QPushButton(tr("init.select_none"))
         btn_none.clicked.connect(lambda: self._set_all(False))
         btn_layout.addWidget(btn_all)
         btn_layout.addWidget(btn_none)
@@ -378,7 +380,7 @@ class InitProjectDialog(QDialog):
         layout.addWidget(layers_box)
 
         # -- Fonds de carte ---------------------------------------------------
-        basemap_box = QGroupBox("Fonds de carte")
+        basemap_box = QGroupBox(tr("init.group_basemaps"))
         basemap_layout = QVBoxLayout(basemap_box)
 
         self._basemap_tree = QTreeWidget()
@@ -407,14 +409,14 @@ class InitProjectDialog(QDialog):
         basemap_layout.addWidget(self._basemap_tree)
 
         # Cadastre WFS
-        self._chk_cadastre = QCheckBox("Parcelles cadastrales (UrbIS WFS)")
+        self._chk_cadastre = QCheckBox(tr("init.cadastre"))
         self._chk_cadastre.setChecked(CADASTRAL_WFS.get("default", False))
         basemap_layout.addWidget(self._chk_cadastre)
 
         layout.addWidget(basemap_box)
 
         # -- Options ----------------------------------------------------------
-        self._chk_styles = QCheckBox("Appliquer les styles depuis la base de donnees")
+        self._chk_styles = QCheckBox(tr("init.apply_styles"))
         self._chk_styles.setChecked(True)
         layout.addWidget(self._chk_styles)
 
@@ -422,7 +424,7 @@ class InitProjectDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.Ok).setText("Initialiser")
+        buttons.button(QDialogButtonBox.Ok).setText(tr("init.btn_init"))
         layout.addWidget(buttons)
 
         # Pre-select first template
@@ -431,7 +433,7 @@ class InitProjectDialog(QDialog):
     def _on_template_changed(self, idx):
         key = self._combo.currentData()
         if key == "custom":
-            self._desc_label.setText("Selectionnez manuellement les couches souhaitees.")
+            self._desc_label.setText(tr("init.custom_desc"))
             return
 
         tmpl = TEMPLATES.get(key, {})
