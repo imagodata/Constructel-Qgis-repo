@@ -557,15 +557,56 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         existing = root.findGroup(group_name)
         groups[group_name] = existing or root.addGroup(group_name)
 
-    # -- Charger les couches ----------------------------------------------
+    # -- Detecter les couches deja presentes dans le projet -----------------
+    existing_tables = set()
+    for ly in project.mapLayers().values():
+        if not isinstance(ly, QgsVectorLayer):
+            continue
+        prov = ly.dataProvider()
+        if not prov:
+            continue
+        if prov.name() == "postgres":
+            uri = prov.uri()
+            existing_tables.add(f"{uri.schema()}.{uri.table()}")
+        elif prov.name() == "WFS":
+            # Identifier par le typename dans la source
+            src = prov.uri().uri()
+            for wfs_entry in LAYER_CATALOG:
+                if wfs_entry[2] == "wfs" and wfs_entry[3] in src:
+                    existing_tables.add(wfs_entry[3])
+
+    # -- Charger les couches (dans l'ordre du catalogue) -------------------
     loaded = {}  # key → QgsVectorLayer
     count = 0
+    skipped = 0
 
-    for key in selected:
-        entry = catalog.get(key)
-        if not entry:
+    # Iterer dans l'ordre du catalogue, pas dans l'ordre du set
+    for entry in LAYER_CATALOG:
+        key = entry[0]
+        if key not in selected:
             continue
         _, group_name, schema, table, geom_col, pk, label = entry
+
+        # Eviter les doublons
+        table_id = table if key in WFS_KEYS else f"{schema}.{table}"
+        if table_id in existing_tables:
+            # Retrouver la couche existante pour les relations
+            for ly in project.mapLayers().values():
+                if not isinstance(ly, QgsVectorLayer):
+                    continue
+                prov = ly.dataProvider()
+                if not prov:
+                    continue
+                if prov.name() == "postgres":
+                    uri = prov.uri()
+                    if f"{uri.schema()}.{uri.table()}" == table_id:
+                        loaded[key] = ly
+                        break
+                elif prov.name() == "WFS" and table in prov.uri().uri():
+                    loaded[key] = ly
+                    break
+            skipped += 1
+            continue
 
         if key in WFS_KEYS:
             layer = _build_wfs_layer(table, label)
@@ -586,8 +627,9 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 
         loaded[key] = layer
         count += 1
-        _log(f"  + {table}")
 
+    if skipped:
+        _log(f"{skipped} couche(s) deja presente(s) — ignoree(s)")
     _log(f"{count} couche(s) chargee(s)")
 
     # -- Styles -----------------------------------------------------------
