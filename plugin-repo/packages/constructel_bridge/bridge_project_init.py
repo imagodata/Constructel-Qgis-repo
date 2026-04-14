@@ -338,7 +338,7 @@ WFS_SOURCES = {
     "urbisvector": {
         "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
         "srs": "EPSG:31370",
-        "version": "2.0.0",
+        "version": "auto",
     },
     "URBAN_DCH_IBH": {
         "url": "https://gis.urban.brussels/geoserver/wfs",
@@ -725,7 +725,7 @@ def _build_wfs_layer(typename: str, label: str):
     version = cfg.get("version", "auto")
 
     source = (
-        f"pagingEnabled='true' "
+        f"pagingEnabled='default' "
         f"preferCoordinatesForWfsT11='false' "
         f"restrictToRequestBBOX='1' "
         f"srsname='{srs}' "
