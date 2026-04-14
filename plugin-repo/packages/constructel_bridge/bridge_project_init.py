@@ -102,6 +102,40 @@ WFS_KEYS = {
     "wfs_protection", "wfs_heritage",
 }
 
+# Mapping key → fichier QML embarque dans le plugin (dossier styles/)
+EMBEDDED_STYLES = {
+    # Infra
+    "demand_points":    "demand_points.qml",
+    "structures":       "structures.qml",
+    "cables":           "cables.qml",
+    "subducts":         "subducts.qml",
+    "ducts":            "ducts.qml",
+    "splices":          "infra_structure_cable_splices.qml",
+    # Zones
+    "zone_drop":        "zone_drop.qml",
+    "zone_distribution":"zone_distribution.qml",
+    "zone_pop":         "zone_pop.qml",
+    "zone_mro":         "zone_mro.qml",
+    # Topologie
+    "topo_violations":  "topology_violations.qml",
+    # OSIRIS
+    "osiris_frozen":    "osiris_frozen_zones.qml",
+    "osiris_worksites": "osiris_worksites.qml",
+    "osiris_autorises": "osiris_chantiers_autorises.qml",
+    "osiris_phases":    "osiris_phases_in_progress.qml",
+    "osiris_hypercoord":"osiris_hypercoordination.qml",
+    "osiris_deviations":"osiris_deviations.qml",
+    "osiris_events":    "osiris_events.qml",
+    # Cadastre UrbIS WFS
+    "wfs_municipalities":"wfs_municipalities.qml",
+    "wfs_blocks":       "wfs_blocks.qml",
+    "wfs_parcels":      "wfs_parcels.qml",
+    "wfs_buildings":    "wfs_buildings.qml",
+    # Urbanisme WFS
+    "wfs_protection":   "wfs_protection.qml",
+    "wfs_heritage":     "wfs_heritage.qml",
+}
+
 
 # =====================================================================
 # TEMPLATES — presets de selection
@@ -557,6 +591,9 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     _log(f"{count} couche(s) chargee(s)")
 
     # -- Styles -----------------------------------------------------------
+    # 1. Styles embarques dans le plugin (toutes les couches)
+    _apply_embedded_styles(loaded)
+    # 2. Styles depuis la base (ecrasent les embarques si presents)
     if apply_styles:
         _apply_styles_from_db(conn_params, password, loaded)
 
@@ -616,6 +653,25 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
     uri.setParam("estimatedmetadata", "true")
     uri.setParam("checkPrimaryKeyUnicity", "0")
     return uri
+
+
+def _apply_embedded_styles(loaded: dict):
+    """Applique les styles QML embarques dans le plugin."""
+    styles_dir = os.path.join(os.path.dirname(__file__), "styles")
+    styled = 0
+    for key, layer in loaded.items():
+        qml_file = EMBEDDED_STYLES.get(key)
+        if not qml_file:
+            continue
+        qml_path = os.path.join(styles_dir, qml_file)
+        if not os.path.exists(qml_path):
+            continue
+        msg, ok = layer.loadNamedStyle(qml_path)
+        if ok:
+            layer.triggerRepaint()
+            styled += 1
+    if styled:
+        _log(f"{styled} style(s) embarque(s) applique(s)")
 
 
 def _build_wfs_layer(typename: str, label: str):
