@@ -21,7 +21,7 @@
   </renderer-v2>
   <labeling type="simple">
     <settings calloutType="simple">
-      <text-style fieldName="NAME_FRE" fontFamily="Sans Serif" fontSize="9" fontWeight="75" textColor="50,50,50,255"/>
+      <text-style fieldName="NAMEFRE" fontFamily="Sans Serif" fontSize="9" fontWeight="75" textColor="50,50,50,255"/>
       <placement priority="5" predefinedPositionOrder="TR,TL,BR,BL,R,L,TSR,BSR" placement="0"/>
     </settings>
   </labeling>
