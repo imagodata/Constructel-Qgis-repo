@@ -294,6 +294,11 @@ class ConstructelBridgePlugin:
         action_load_project.triggered.connect(self._on_load_project)
         self._actions.append(action_load_project)
 
+        icon_init = theme("/mActionNewMap.svg")
+        action_init_project = QAction(icon_init, tr("menu.init_project"), parent)
+        action_init_project.triggered.connect(self._on_init_project)
+        self._actions.append(action_init_project)
+
         action_language = QAction(icon_language, tr("menu.language"), parent)
         action_language.triggered.connect(self._on_change_language)
         self._actions.append(action_language)
@@ -806,6 +811,71 @@ class ConstructelBridgePlugin:
         if still_bad:
             self._log(f"{still_bad} couche(s) PG toujours invalides apres correction", Qgis.Warning)
 
+        # Appliquer les styles par defaut depuis public.layer_styles
+        self._apply_db_default_styles()
+
+    def _apply_db_default_styles(self):
+        """Charge les styles QML par defaut depuis public.layer_styles.
+
+        Pour chaque couche PG valide du projet, verifie si un style par
+        defaut existe dans la base et l'applique s'il n'est pas deja charge.
+        """
+        conn = self._conn
+        if not conn:
+            return
+        project = QgsProject.instance()
+        applied = 0
+        try:
+            cur = conn.cursor()
+            for layer in project.mapLayers().values():
+                if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                    continue
+                if layer.providerType() != "postgres":
+                    continue
+                provider = layer.dataProvider()
+                if not provider:
+                    continue
+                uri = provider.uri()
+                schema = uri.schema()
+                table = uri.table()
+                geom_col = uri.geometryColumn() or ""
+                if not schema or not table:
+                    continue
+                try:
+                    cur.execute(
+                        'SELECT styleqml::text FROM public.layer_styles '
+                        "WHERE f_table_schema = %s AND f_table_name = %s "
+                        'AND f_geometry_column = %s AND useasdefault = true '
+                        'AND "styleName" = \'default\' LIMIT 1',
+                        (schema, table, geom_col),
+                    )
+                    row = cur.fetchone()
+                    if not row or not row[0]:
+                        continue
+                except Exception:
+                    continue
+                # Ecrire le QML dans un fichier temporaire et l'appliquer
+                import tempfile
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=".qml", delete=False, mode="w", encoding="utf-8"
+                )
+                tmp.write(row[0])
+                tmp.close()
+                result = layer.loadNamedStyle(tmp.name)
+                os.unlink(tmp.name)
+                if isinstance(result, tuple):
+                    ok = result[1] if isinstance(result[0], str) else result[0]
+                else:
+                    ok = bool(result)
+                if ok:
+                    layer.triggerRepaint()
+                    applied += 1
+            cur.close()
+        except Exception as exc:
+            self._log(f"Style loading error: {exc}", Qgis.Warning)
+        if applied:
+            self._log(f"{applied} couche(s): styles par defaut appliques")
+
     def _check_layer_datasources(self):
         """Verifie que les couches PostgreSQL ne pointent pas vers localhost."""
         bad_hosts = ("localhost", "127.0.0.1", "::1")
@@ -1160,6 +1230,71 @@ class ConstructelBridgePlugin:
             node.parent().removeChildNode(node)
             self._log(f"couche '{layer.name()}' deplacee dans '{group.name()}'")
 
+
+    # =====================================================================
+    # Initialiser un projet vierge avec toutes les couches WYRE
+    # =====================================================================
+
+    def _on_init_project(self):
+        """Ouvre le dialog de selection et initialise le projet WYRE."""
+        if not self._connected:
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                "Constructel Bridge",
+                tr("conn.connect_first"),
+            )
+            return
+
+        from .bridge_project_init import InitProjectDialog, init_project
+
+        dlg = InitProjectDialog(self.iface.mainWindow())
+        if dlg.exec_() != dlg.Accepted:
+            return
+
+        selected = dlg.selected_layers()
+        if not selected - {"v_form_lists"}:
+            return  # rien selectionne
+
+        try:
+            conn_params = {
+                "host": DEFAULT_HOST,
+                "port": DEFAULT_PORT,
+                "dbname": DEFAULT_DBNAME,
+                "user": DEFAULT_USER,
+                "sslmode": DEFAULT_SSLMODE,
+            }
+            password = getattr(self, "_password", None) or _DEFAULT_PW
+
+            count = init_project(
+                conn_params, password, selected,
+                add_basemap=dlg.want_basemap(),
+                apply_styles=dlg.want_styles(),
+            )
+
+            # Cacher les couches sans geometrie dans le groupe Reference
+            self._hide_no_geom_layers()
+
+            # Appliquer les traductions i18n
+            from . import bridge_sketcher
+            bridge_sketcher.apply_all_translations()
+
+            # Installer les hooks d'edition
+            self._hook_layers()
+
+            self.iface.messageBar().pushMessage(
+                "Constructel Bridge",
+                tr("init.success", count=count),
+                level=Qgis.Success,
+                duration=5,
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self.iface.mainWindow(),
+                "Constructel Bridge",
+                tr("init.error", error=str(exc)),
+            )
+            import traceback
+            self._log(traceback.format_exc(), Qgis.Critical)
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL

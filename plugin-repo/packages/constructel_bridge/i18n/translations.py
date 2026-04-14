@@ -16,6 +16,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "menu.status": "Connection status",
         "menu.onboarding": "Initial setup",
         "menu.load_project": "Load project",
+        "menu.init_project": "Initialize project",
         "menu.language": "Language",
 
         # -- Connection dialog --
@@ -85,6 +86,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.loaded": "Project '{name}' loaded successfully.",
         "project.load_error": "Error loading project '{name}':\n{error}",
         "project.list_error": "Error listing projects:\n{error}",
+
+        # -- Init project --
+        "init.confirm_title": "Constructel Bridge - Initialize project",
+        "init.confirm": "Initialize the current project with all WYRE FTTH layers?\n\n"
+                        "This will add layers, styles, relations and set CRS to EPSG:31370.",
+        "init.success": "Project initialized: {count} layers, styles and relations configured.",
+        "init.error": "Initialization error:\n{error}",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "User profile",
@@ -214,6 +222,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "menu.status": "Statut connexion",
         "menu.onboarding": "Configuration initiale",
         "menu.load_project": "Charger un projet",
+        "menu.init_project": "Initialiser projet",
         "menu.language": "Langue",
 
         # -- Connection dialog --
@@ -283,6 +292,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.loaded": "Projet '{name}' charge avec succes.",
         "project.load_error": "Erreur au chargement du projet '{name}':\n{error}",
         "project.list_error": "Erreur lors du listage des projets:\n{error}",
+
+        # -- Init projet --
+        "init.confirm_title": "Constructel Bridge - Initialiser projet",
+        "init.confirm": "Initialiser le projet courant avec toutes les couches WYRE FTTH ?\n\n"
+                        "Cela ajoutera les couches, styles, relations et definira le CRS a EPSG:31370.",
+        "init.success": "Projet initialise : {count} couches, styles et relations configures.",
+        "init.error": "Erreur d'initialisation :\n{error}",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Profil utilisateur",
@@ -414,6 +430,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "menu.status": "Estado da ligacao",
         "menu.onboarding": "Configuracao inicial",
         "menu.load_project": "Carregar projeto",
+        "menu.init_project": "Inicializar projeto",
         "menu.language": "Idioma",
 
         # -- Connection dialog --
@@ -483,6 +500,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.loaded": "Projeto '{name}' carregado com sucesso.",
         "project.load_error": "Erro ao carregar o projeto '{name}':\n{error}",
         "project.list_error": "Erro ao listar os projetos:\n{error}",
+
+        # -- Init projeto --
+        "init.confirm_title": "Constructel Bridge - Inicializar projeto",
+        "init.confirm": "Inicializar o projeto atual com todas as camadas WYRE FTTH?\n\n"
+                        "Isto ira adicionar camadas, estilos, relacoes e definir o CRS para EPSG:31370.",
+        "init.success": "Projeto inicializado: {count} camadas, estilos e relacoes configurados.",
+        "init.error": "Erro de inicializacao:\n{error}",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Perfil do utilizador",
