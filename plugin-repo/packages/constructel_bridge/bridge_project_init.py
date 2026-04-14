@@ -842,6 +842,12 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         _log(f"{skipped} couche(s) deja presente(s) — ignoree(s)")
     _log(f"{count} couche(s) chargee(s)")
 
+    # -- Relations --------------------------------------------------------
+    # Les relations doivent exister AVANT l'application des styles,
+    # sinon les relation editors dans les QML (Documents, Splices)
+    # ne trouvent pas leurs relations et restent vides.
+    ensure_relations(loaded)
+
     # -- Styles -----------------------------------------------------------
     # 1. Styles par defaut depuis la BDD (prioritaires)
     db_styled: set[str] = set()
@@ -851,9 +857,6 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     fallback = {k: v for k, v in loaded.items() if k not in db_styled}
     if fallback:
         _apply_embedded_styles(fallback)
-
-    # -- Relations --------------------------------------------------------
-    ensure_relations(loaded)
 
 
     # -- Basemaps ---------------------------------------------------------
