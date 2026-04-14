@@ -7,9 +7,9 @@ puis chargement des couches, styles, relations et basemaps.
 """
 
 import os
-import tempfile
 
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtXml import QDomDocument
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -843,9 +843,6 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     _log(f"{count} couche(s) chargee(s)")
 
     # -- Relations --------------------------------------------------------
-    # Les relations doivent exister AVANT l'application des styles,
-    # sinon les relation editors dans les QML (Documents, Splices)
-    # ne trouvent pas leurs relations et restent vides.
     ensure_relations(loaded)
 
     # -- Styles -----------------------------------------------------------
@@ -858,6 +855,10 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     if fallback:
         _apply_embedded_styles(fallback)
 
+    # Les styles QML contiennent des relation editors (Documents, Splices).
+    # Apres le chargement des styles, recreer les relations pour que QGIS
+    # les lie correctement aux widgets du formulaire.
+    ensure_relations(loaded)
 
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:
@@ -1064,14 +1065,12 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             continue
 
         try:
-            fd, tmp_path = tempfile.mkstemp(suffix=".qml")
-            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-                tmp.write(row[0])
-            msg, ok = layer.loadNamedStyle(tmp_path)
+            doc = QDomDocument()
+            doc.setContent(row[0])
+            msg, ok = layer.importNamedStyle(doc)
             if ok:
                 layer.triggerRepaint()
                 styled_keys.add(key)
-            os.unlink(tmp_path)
         except Exception:
             pass
 
