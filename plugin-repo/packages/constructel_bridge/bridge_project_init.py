@@ -284,15 +284,26 @@ BASEMAPS = [
 ]
 
 # Donnees cadastrales WFS UrbIS
-CADASTRAL_WFS = {
-    "key": "cadastre_urbis",
-    "name": "Parcelles cadastrales (UrbIS)",
-    "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
-    "typename": "urbisvector:Capa",
-    "srs": "EPSG:31370",
-    "version": "2.0.0",
-    "default": False,
-}
+WFS_URL = "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs"
+WFS_SRS = "EPSG:31370"
+WFS_VERSION = "2.0.0"
+
+CADASTRAL_WFS = [
+    {
+        "key": "wfs_parcels",
+        "name": "Parcelles cadastrales",
+        "typename": "urbisvector:Capa",
+        "tr_key": "init.wfs_parcels",
+        "default": False,
+    },
+    {
+        "key": "wfs_buildings",
+        "name": "Batiments",
+        "typename": "urbisvector:Bu",
+        "tr_key": "init.wfs_buildings",
+        "default": False,
+    },
+]
 
 
 def _log(msg, level=Qgis.Info):
@@ -408,10 +419,17 @@ class InitProjectDialog(QDialog):
 
         basemap_layout.addWidget(self._basemap_tree)
 
-        # Cadastre WFS
-        self._chk_cadastre = QCheckBox(tr("init.cadastre"))
-        self._chk_cadastre.setChecked(CADASTRAL_WFS.get("default", False))
-        basemap_layout.addWidget(self._chk_cadastre)
+        # Cadastre WFS — couches individuelles
+        cadastre_label = QLabel(tr("init.cadastre_header"))
+        cadastre_label.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        basemap_layout.addWidget(cadastre_label)
+
+        self._cadastre_items = {}
+        for wfs in CADASTRAL_WFS:
+            chk = QCheckBox(tr(wfs["tr_key"]))
+            chk.setChecked(wfs.get("default", False))
+            basemap_layout.addWidget(chk)
+            self._cadastre_items[wfs["key"]] = chk
 
         layout.addWidget(basemap_box)
 
@@ -471,8 +489,12 @@ class InitProjectDialog(QDialog):
     def want_basemap(self) -> bool:
         return bool(self.selected_basemaps())
 
+    def selected_cadastre(self) -> set[str]:
+        """Retourne les keys des couches cadastrales selectionnees."""
+        return {k for k, chk in self._cadastre_items.items() if chk.isChecked()}
+
     def want_cadastre(self) -> bool:
-        return self._chk_cadastre.isChecked()
+        return bool(self.selected_cadastre())
 
     def want_styles(self) -> bool:
         return self._chk_styles.isChecked()
@@ -485,7 +507,8 @@ class InitProjectDialog(QDialog):
 def init_project(conn_params: dict, password: str, selected: set[str],
                  add_basemap: bool = True, apply_styles: bool = True,
                  selected_basemaps: set[str] | None = None,
-                 add_cadastre: bool = False) -> int:
+                 add_cadastre: bool = False,
+                 selected_cadastre: set[str] | None = None) -> int:
     """Initialise le projet QGIS avec les couches selectionnees.
 
     Returns
@@ -575,8 +598,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         _add_basemaps(root, selected_basemaps)
 
     # -- Cadastre WFS -----------------------------------------------------
-    if add_cadastre:
-        _add_cadastre(root)
+    if add_cadastre and selected_cadastre:
+        _add_cadastre(root, selected_cadastre)
 
     return count
 
@@ -632,34 +655,37 @@ def _add_basemaps(root, selected_keys: set[str]):
             _log(f"Basemap '{name}' invalide", Qgis.Warning)
 
 
-def _add_cadastre(root):
-    """Ajoute la couche cadastrale WFS UrbIS au projet."""
+def _add_cadastre(root, selected_keys: set[str]):
+    """Ajoute les couches cadastrales WFS UrbIS selectionnees."""
     project = QgsProject.instance()
-    cfg = CADASTRAL_WFS
-    name = cfg["name"]
+    existing_names = {ly.name() for ly in project.mapLayers().values()}
+    wfs_by_key = {wfs["key"]: wfs for wfs in CADASTRAL_WFS}
 
-    # Verifier si deja present
-    for ly in project.mapLayers().values():
-        if ly.name() == name:
+    for key in selected_keys:
+        cfg = wfs_by_key.get(key)
+        if not cfg:
+            continue
+        name = cfg["name"]
+        if name in existing_names:
             _log(f"Cadastre '{name}' deja present")
-            return
+            continue
 
-    source = (
-        f"pagingEnabled='true' "
-        f"preferCoordinatesForWfsT11='false' "
-        f"restrictToRequestBBOX='1' "
-        f"srsname='{cfg['srs']}' "
-        f"typename='{cfg['typename']}' "
-        f"url='{cfg['url']}' "
-        f"version='{cfg['version']}'"
-    )
-    layer = QgsVectorLayer(source, name, "WFS")
-    if layer.isValid():
-        project.addMapLayer(layer, False)
-        root.addLayer(layer)
-        _log(f"Cadastre '{name}' ajoute")
-    else:
-        _log(f"Cadastre '{name}' invalide", Qgis.Warning)
+        source = (
+            f"pagingEnabled='true' "
+            f"preferCoordinatesForWfsT11='false' "
+            f"restrictToRequestBBOX='1' "
+            f"srsname='{WFS_SRS}' "
+            f"typename='{cfg['typename']}' "
+            f"url='{WFS_URL}' "
+            f"version='{WFS_VERSION}'"
+        )
+        layer = QgsVectorLayer(source, name, "WFS")
+        if layer.isValid():
+            project.addMapLayer(layer, False)
+            root.addLayer(layer)
+            _log(f"Cadastre '{name}' ajoute")
+        else:
+            _log(f"Cadastre '{name}' invalide", Qgis.Warning)
 
 
 def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict):
