@@ -88,12 +88,19 @@ LAYER_CATALOG = [
     ("wfs_parcels",        "Cadastre UrbIS",  "wfs",  "urbisvector:Capa",    "geom", None, "Parcelles cadastrales"),
     ("wfs_buildings",      "Cadastre UrbIS",  "wfs",  "urbisvector:Bu",      "geom", None, "Batiments"),
 
+    # -- Urbanisme Brussels (WFS) --------------------------------------------
+    ("wfs_protection",     "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Protection_area", "geom", None, "Zones protegees"),
+    ("wfs_heritage",       "Urbanisme",       "wfs",  "URBAN_DCH_IBH:Heritage",        "geom", None, "Patrimoine"),
+
     # -- Reference (toujours charge, cache dans groupe Ref) ---------------
     ("v_form_lists",       None,              "ref",   "v_form_lists",        None,  "rid", "Listes formulaires"),
 ]
 
 # Cles des couches WFS (chargees via WFS, pas PostgreSQL)
-WFS_KEYS = {"wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings"}
+WFS_KEYS = {
+    "wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings",
+    "wfs_protection", "wfs_heritage",
+}
 
 
 # =====================================================================
@@ -292,10 +299,19 @@ BASEMAPS = [
     },
 ]
 
-# WFS UrbIS — URL et parametres pour les couches cadastrales
-WFS_URL = "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs"
-WFS_SRS = "EPSG:31370"
-WFS_VERSION = "2.0.0"
+# Sources WFS — URL par workspace
+WFS_SOURCES = {
+    "urbisvector": {
+        "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
+        "srs": "EPSG:31370",
+        "version": "2.0.0",
+    },
+    "URBAN_DCH_IBH": {
+        "url": "https://gis.urban.brussels/geoserver/wfs",
+        "srs": "EPSG:31370",
+        "version": "auto",
+    },
+}
 
 
 def _log(msg, level=Qgis.Info):
@@ -500,7 +516,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     groups = {}
     needed_groups = {catalog[k][1] for k in selected if k in catalog and catalog[k][1]}
     for group_name in ("Demand Points", "Infrastructure", "Zones",
-                       "Topologie", "Chantier", "OSIRIS", "Cadastre UrbIS"):
+                       "Topologie", "Chantier", "OSIRIS",
+                       "Cadastre UrbIS", "Urbanisme"):
         if group_name not in needed_groups:
             continue
         existing = root.findGroup(group_name)
@@ -602,15 +619,21 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
 
 
 def _build_wfs_layer(typename: str, label: str):
-    """Cree une couche WFS UrbIS."""
+    """Cree une couche WFS a partir du typename (workspace:layer)."""
+    workspace = typename.split(":")[0] if ":" in typename else typename
+    cfg = WFS_SOURCES.get(workspace, {})
+    url = cfg.get("url", "")
+    srs = cfg.get("srs", "EPSG:31370")
+    version = cfg.get("version", "auto")
+
     source = (
         f"pagingEnabled='true' "
         f"preferCoordinatesForWfsT11='false' "
         f"restrictToRequestBBOX='1' "
-        f"srsname='{WFS_SRS}' "
+        f"srsname='{srs}' "
         f"typename='{typename}' "
-        f"url='{WFS_URL}' "
-        f"version='{WFS_VERSION}'"
+        f"url='{url}' "
+        f"version='{version}'"
     )
     return QgsVectorLayer(source, label, "WFS")
 
