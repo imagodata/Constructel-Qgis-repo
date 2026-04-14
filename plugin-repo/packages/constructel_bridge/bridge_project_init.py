@@ -18,6 +18,7 @@ from qgis.PyQt.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -42,21 +43,21 @@ TAG = "Constructel Bridge"
 # =====================================================================
 
 LAYER_CATALOG = [
-    # -- Zones ------------------------------------------------------------
-    ("zone_mro",           "Zones",           "infra", "zone_mro",           "geom", "id",  "Zones MRO"),
-    ("zone_pop",           "Zones",           "infra", "zone_pop",           "geom", "id",  "Zones POP"),
-    ("zone_distribution",  "Zones",           "infra", "zone_distribution",  "geom", "id",  "Zones Distribution"),
-    ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
+    # -- Demand Points ----------------------------------------------------
+    ("demand_points",      "Demand Points",   "infra", "demand_points",      "geom", "id",  "Points de demande"),
 
     # -- Infrastructure ---------------------------------------------------
     ("structures",         "Infrastructure",  "infra", "structures",         "geom", "id",  "Structures"),
-    ("ducts",              "Infrastructure",  "infra", "ducts",              "geom", "id",  "Conduites"),
-    ("subducts",           "Infrastructure",  "infra", "subducts",           "geom", "id",  "Sous-fourreaux"),
     ("cables",             "Infrastructure",  "infra", "cables",             "geom", "id",  "Cables"),
+    ("subducts",           "Infrastructure",  "infra", "subducts",           "geom", "id",  "Sous-fourreaux"),
+    ("ducts",              "Infrastructure",  "infra", "ducts",              "geom", "id",  "Conduites"),
     ("splices",            "Infrastructure",  "infra", "structure_cable_splices", None, "id", "Soudures"),
 
-    # -- Demand Points ----------------------------------------------------
-    ("demand_points",      "Demand Points",   "infra", "demand_points",      "geom", "id",  "Points de demande"),
+    # -- Zones ------------------------------------------------------------
+    ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
+    ("zone_distribution",  "Zones",           "infra", "zone_distribution",  "geom", "id",  "Zones Distribution"),
+    ("zone_pop",           "Zones",           "infra", "zone_pop",           "geom", "id",  "Zones POP"),
+    ("zone_mro",           "Zones",           "infra", "zone_mro",           "geom", "id",  "Zones MRO"),
 
     # -- Topologie --------------------------------------------------------
     ("topo_violations",    "Topologie",       "infra", "topology_violations","geom", "id",  "Violations topologie"),
@@ -167,13 +168,129 @@ RELATION_DEFS = [
     ("zone_pop",       "interventions_chantier", "zone_pop_id",      "ic_to_pop"),
 ]
 
-# Basemap WMTS par defaut
-BASEMAP_URL = (
-    "crs=EPSG:3857&format=image/png&layers=topo&"
-    "styles=default&tileMatrixSet=GoogleMapsCompatible&"
-    "url=https://cartoweb.wmts.ngi.be/1.0.0/WMTSCapabilities.xml"
-)
-BASEMAP_NAME = "NGI CartoWeb Belgium"
+
+# =====================================================================
+# BASEMAPS & OVERLAYS
+# =====================================================================
+
+BASEMAPS = [
+    # -- UrbIS Brussels WMTS --
+    {
+        "key": "urbis_fr",
+        "name": "UrbIS FR",
+        "group": "UrbIS Brussels",
+        "source": (
+            "crs=EPSG:31370&dpiMode=7&featureCount=10&format=image/png"
+            "&layers=urbisFR&styles=&tileMatrixSet=EPSG:31370&tilePixelRatio=0"
+            "&url=https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
+            "?service%3DWMTS%26request%3DGetCapabilities%26version%3D1.0.0"
+        ),
+        "provider": "wms",
+        "default": True,
+    },
+    {
+        "key": "urbis_fr_gray",
+        "name": "UrbIS FR Gray",
+        "group": "UrbIS Brussels",
+        "source": (
+            "crs=EPSG:31370&dpiMode=7&featureCount=10&format=image/png"
+            "&layers=urbisFRGray&styles=&tileMatrixSet=EPSG:31370&tilePixelRatio=0"
+            "&url=https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
+            "?service%3DWMTS%26request%3DGetCapabilities%26version%3D1.0.0"
+        ),
+        "provider": "wms",
+        "default": True,
+    },
+    # -- OpenStreetMap --
+    {
+        "key": "osm",
+        "name": "OpenStreetMap",
+        "group": "OpenStreetMap",
+        "source": (
+            "type=xyz"
+            "&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            "&zmax=19&zmin=0"
+        ),
+        "provider": "wms",
+        "default": True,
+    },
+    # -- Stadia Maps (Stamen) --
+    {
+        "key": "stamen_toner",
+        "name": "Stamen Toner",
+        "group": "Stadia Maps",
+        "source": (
+            "type=xyz"
+            "&url=https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}.png"
+            "&zmax=19&zmin=0"
+        ),
+        "provider": "wms",
+        "default": False,
+    },
+    {
+        "key": "stamen_toner_lite",
+        "name": "Stamen Toner Lite",
+        "group": "Stadia Maps",
+        "source": (
+            "type=xyz"
+            "&url=https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}.png"
+            "&zmax=19&zmin=0"
+        ),
+        "provider": "wms",
+        "default": False,
+    },
+    # -- CartoDB --
+    {
+        "key": "carto_positron",
+        "name": "CartoDB Positron",
+        "group": "CartoDB",
+        "source": (
+            "type=xyz"
+            "&url=https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+            "&zmax=19&zmin=0"
+        ),
+        "provider": "wms",
+        "default": False,
+    },
+    {
+        "key": "carto_dark",
+        "name": "CartoDB Dark Matter",
+        "group": "CartoDB",
+        "source": (
+            "type=xyz"
+            "&url=https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+            "&zmax=19&zmin=0"
+        ),
+        "provider": "wms",
+        "default": False,
+    },
+    # -- Google Streetview Coverage --
+    {
+        "key": "streetview",
+        "name": "Streetview Coverage",
+        "group": "Google",
+        "source": (
+            "type=xyz"
+            "&url=https://mts2.google.com/mapslt"
+            "?lyrs%3Dsvv%26x%3D{x}%26y%3D{y}%26z%3D{z}"
+            "%26w%3D256%26h%3D256%26hl%3Den%26style%3D40,18"
+            "&zmax=19&zmin=0"
+        ),
+        "provider": "wms",
+        "default": False,
+    },
+]
+
+# Donnees cadastrales WFS UrbIS
+CADASTRAL_WFS = {
+    "key": "cadastre_urbis",
+    "name": "Parcelles cadastrales (UrbIS)",
+    "url": "https://geoservices-vector.irisnet.be/geoserver/urbisvector/wfs",
+    "typename": "urbisvector:Capa",
+    "srs": "EPSG:31370",
+    "version": "2.0.0",
+    "default": False,
+}
 
 
 def _log(msg, level=Qgis.Info):
@@ -190,8 +307,8 @@ class InitProjectDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Constructel Bridge - Initialiser projet")
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(500)
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(620)
         self._build_ui()
 
     def _build_ui(self):
@@ -249,7 +366,6 @@ class InitProjectDialog(QDialog):
 
         # Select all / none buttons
         btn_layout = QHBoxLayout()
-        from qgis.PyQt.QtWidgets import QPushButton
         btn_all = QPushButton("Tout selectionner")
         btn_all.clicked.connect(lambda: self._set_all(True))
         btn_none = QPushButton("Tout deselectionner")
@@ -261,11 +377,43 @@ class InitProjectDialog(QDialog):
 
         layout.addWidget(layers_box)
 
-        # -- Options ----------------------------------------------------------
-        self._chk_basemap = QCheckBox("Ajouter fond de carte (NGI CartoWeb Belgium)")
-        self._chk_basemap.setChecked(True)
-        layout.addWidget(self._chk_basemap)
+        # -- Fonds de carte ---------------------------------------------------
+        basemap_box = QGroupBox("Fonds de carte")
+        basemap_layout = QVBoxLayout(basemap_box)
 
+        self._basemap_tree = QTreeWidget()
+        self._basemap_tree.setHeaderHidden(True)
+        self._basemap_tree.setRootIsDecorated(True)
+        self._basemap_tree.setMaximumHeight(160)
+
+        self._basemap_items = {}  # key → QTreeWidgetItem
+        basemap_groups = {}  # group → QTreeWidgetItem
+
+        for bm in BASEMAPS:
+            grp_name = bm.get("group", "Autres")
+            if grp_name not in basemap_groups:
+                gi = QTreeWidgetItem(self._basemap_tree, [grp_name])
+                gi.setFlags(gi.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
+                gi.setCheckState(0, Qt.Unchecked)
+                gi.setExpanded(True)
+                basemap_groups[grp_name] = gi
+
+            item = QTreeWidgetItem(basemap_groups[grp_name], [bm["name"]])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.Checked if bm.get("default") else Qt.Unchecked)
+            item.setData(0, Qt.UserRole, bm["key"])
+            self._basemap_items[bm["key"]] = item
+
+        basemap_layout.addWidget(self._basemap_tree)
+
+        # Cadastre WFS
+        self._chk_cadastre = QCheckBox("Parcelles cadastrales (UrbIS WFS)")
+        self._chk_cadastre.setChecked(CADASTRAL_WFS.get("default", False))
+        basemap_layout.addWidget(self._chk_cadastre)
+
+        layout.addWidget(basemap_box)
+
+        # -- Options ----------------------------------------------------------
         self._chk_styles = QCheckBox("Appliquer les styles depuis la base de donnees")
         self._chk_styles.setChecked(True)
         layout.addWidget(self._chk_styles)
@@ -288,7 +436,6 @@ class InitProjectDialog(QDialog):
 
         tmpl = TEMPLATES.get(key, {})
         self._desc_label.setText(tmpl.get("description", ""))
-        self._chk_basemap.setChecked(tmpl.get("basemap", True))
 
         # Apply template selection
         for layer_key, item in self._items.items():
@@ -311,8 +458,19 @@ class InitProjectDialog(QDialog):
                 result.add(key)
         return result
 
+    def selected_basemaps(self) -> set[str]:
+        """Retourne les keys des basemaps selectionnees."""
+        result = set()
+        for key, item in self._basemap_items.items():
+            if item.checkState(0) == Qt.Checked:
+                result.add(key)
+        return result
+
     def want_basemap(self) -> bool:
-        return self._chk_basemap.isChecked()
+        return bool(self.selected_basemaps())
+
+    def want_cadastre(self) -> bool:
+        return self._chk_cadastre.isChecked()
 
     def want_styles(self) -> bool:
         return self._chk_styles.isChecked()
@@ -323,7 +481,9 @@ class InitProjectDialog(QDialog):
 # =====================================================================
 
 def init_project(conn_params: dict, password: str, selected: set[str],
-                 add_basemap: bool = True, apply_styles: bool = True) -> int:
+                 add_basemap: bool = True, apply_styles: bool = True,
+                 selected_basemaps: set[str] | None = None,
+                 add_cadastre: bool = False) -> int:
     """Initialise le projet QGIS avec les couches selectionnees.
 
     Returns
@@ -343,7 +503,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     root = project.layerTreeRoot()
     groups = {}
     needed_groups = {catalog[k][1] for k in selected if k in catalog and catalog[k][1]}
-    for group_name in ("Zones", "Infrastructure", "Demand Points",
+    for group_name in ("Demand Points", "Infrastructure", "Zones",
                        "Topologie", "Chantier", "OSIRIS"):
         if group_name not in needed_groups:
             continue
@@ -408,9 +568,13 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     if rel_count:
         _log(f"{rel_count} relation(s) creee(s)")
 
-    # -- Basemap ----------------------------------------------------------
-    if add_basemap:
-        _add_basemap(root)
+    # -- Basemaps ---------------------------------------------------------
+    if add_basemap and selected_basemaps:
+        _add_basemaps(root, selected_basemaps)
+
+    # -- Cadastre WFS -----------------------------------------------------
+    if add_cadastre:
+        _add_cadastre(root)
 
     return count
 
@@ -441,26 +605,59 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
     return uri
 
 
-def _add_basemap(root):
-    """Ajoute le fond de carte NGI CartoWeb en bas du layer tree."""
-    # Verifier si deja present
+def _add_basemaps(root, selected_keys: set[str]):
+    """Ajoute les fonds de carte selectionnes en bas du layer tree."""
     project = QgsProject.instance()
-    for layer in project.mapLayers().values():
-        if layer.name() == BASEMAP_NAME:
-            _log(f"Basemap '{BASEMAP_NAME}' deja present")
+    existing_names = {ly.name() for ly in project.mapLayers().values()}
+
+    basemap_by_key = {bm["key"]: bm for bm in BASEMAPS}
+
+    for key in selected_keys:
+        bm = basemap_by_key.get(key)
+        if not bm:
+            continue
+        name = bm["name"]
+        if name in existing_names:
+            _log(f"Basemap '{name}' deja present")
+            continue
+
+        layer = QgsRasterLayer(bm["source"], name, bm["provider"])
+        if layer.isValid():
+            project.addMapLayer(layer, False)
+            root.addLayer(layer)
+            _log(f"Basemap '{name}' ajoute")
+        else:
+            _log(f"Basemap '{name}' invalide", Qgis.Warning)
+
+
+def _add_cadastre(root):
+    """Ajoute la couche cadastrale WFS UrbIS au projet."""
+    project = QgsProject.instance()
+    cfg = CADASTRAL_WFS
+    name = cfg["name"]
+
+    # Verifier si deja present
+    for ly in project.mapLayers().values():
+        if ly.name() == name:
+            _log(f"Cadastre '{name}' deja present")
             return
 
-    basemap = QgsRasterLayer(
-        f"type=xyz&{BASEMAP_URL}",
-        BASEMAP_NAME,
-        "wms",
+    source = (
+        f"pagingEnabled='true' "
+        f"preferCoordinatesForWfsT11='false' "
+        f"restrictToRequestBBOX='1' "
+        f"srsname='{cfg['srs']}' "
+        f"typename='{cfg['typename']}' "
+        f"url='{cfg['url']}' "
+        f"version='{cfg['version']}'"
     )
-    if basemap.isValid():
-        project.addMapLayer(basemap, False)
-        root.addLayer(basemap)
-        _log(f"Basemap '{BASEMAP_NAME}' ajoute")
+    layer = QgsVectorLayer(source, name, "WFS")
+    if layer.isValid():
+        project.addMapLayer(layer, False)
+        root.addLayer(layer)
+        _log(f"Cadastre '{name}' ajoute")
     else:
-        _log(f"Basemap '{BASEMAP_NAME}' invalide", Qgis.Warning)
+        _log(f"Cadastre '{name}' invalide", Qgis.Warning)
 
 
 def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict):
