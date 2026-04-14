@@ -277,14 +277,12 @@ LABEL_EXPRESSIONS: dict[str, dict[str, str]] = {
 # Clé: nom de la couche de référence (LayerName dans le widget config)
 # Valeur: {lang: colonne à utiliser comme Value}
 #
-# Les tables ref.* ont label_fr, label_en, label_pt (v3.4.1+).
+# v3.2.106: Vue unifiée ref.v_form_lists remplace les 5 anciennes couches
+# (structure_types, cable_types, duct_models, pose_types, v_valid_statuses).
+# Colonnes uniformes: label_fr, label_en, label_pt.
 
 VALUE_RELATION_COLUMNS: dict[str, dict[str, str]] = {
-    "structure_types":   {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
-    "cable_types":       {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
-    "duct_models":       {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
-    "pose_types":        {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
-    "v_valid_statuses":  {"fr": "status_label", "en": "status_label_en", "pt": "status_label_pt"},
+    "v_form_lists":  {"fr": "label_fr", "en": "label_en", "pt": "label_pt"},
 }
 
 
