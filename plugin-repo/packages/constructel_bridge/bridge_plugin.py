@@ -324,6 +324,7 @@ class ConstructelBridgePlugin:
         self._toolbar_menu.addAction(action_status)
         self._toolbar_menu.addAction(action_onboarding)
         self._toolbar_menu.addAction(action_load_project)
+        self._toolbar_menu.addAction(action_init_project)
         self._toolbar_menu.addSeparator()
         self._toolbar_menu.addAction(action_language)
 
@@ -1269,6 +1270,8 @@ class ConstructelBridgePlugin:
                 conn_params, password, selected,
                 add_basemap=dlg.want_basemap(),
                 apply_styles=dlg.want_styles(),
+                selected_basemaps=dlg.selected_basemaps(),
+                add_cadastre=dlg.want_cadastre(),
             )
 
             # Cacher les couches sans geometrie dans le groupe Reference
