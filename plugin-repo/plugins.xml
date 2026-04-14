@@ -20,10 +20,10 @@
     <file_name>consolidate_networks.zip</file_name>
     <download_url>http://192.168.160.31:9080/plugin-repo/packages/consolidate_networks.zip</download_url>
   </pyqgis_plugin>
-  <pyqgis_plugin name="Constructel Bridge" version="1.3.4">
+  <pyqgis_plugin name="Constructel Bridge" version="1.3.5">
     <description><![CDATA[Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.]]></description>
     <about><![CDATA[Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS avec le role ftth_editor, identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user. Traductions i18n live des formulaires et alias de couches. Styles par defaut auto-charges + couche cachee v_form_lists pour formulaires.]]></about>
-    <version>1.3.4</version>
+    <version>1.3.5</version>
     <qgis_minimum_version>3.28</qgis_minimum_version>
     <qgis_maximum_version>3.99</qgis_maximum_version>
     <author_name><![CDATA[Equipe WYRE / Constructel]]></author_name>
