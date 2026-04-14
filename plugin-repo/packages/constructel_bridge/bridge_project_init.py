@@ -690,7 +690,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:
-        _add_basemaps(root, selected_basemaps)
+        basemap_group = _add_basemaps(root, selected_basemaps)
+        groups["Basemaps"] = basemap_group
 
     # -- Groupe Référence (en bas, apres les basemaps) --------------------
     if "Référence" in needed_groups:
@@ -803,11 +804,13 @@ def _build_wfs_layer(typename: str, label: str):
 
 
 def _add_basemaps(root, selected_keys: set[str]):
-    """Ajoute les fonds de carte selectionnes en bas du layer tree."""
+    """Ajoute les fonds de carte dans un groupe Basemaps."""
     project = QgsProject.instance()
     existing_names = {ly.name() for ly in project.mapLayers().values()}
 
+    basemap_group = root.findGroup("Basemaps") or root.addGroup("Basemaps")
     basemap_by_key = {bm["key"]: bm for bm in BASEMAPS}
+    added = 0
 
     for key in selected_keys:
         bm = basemap_by_key.get(key)
@@ -821,10 +824,15 @@ def _add_basemaps(root, selected_keys: set[str]):
         layer = QgsRasterLayer(bm["source"], name, bm["provider"])
         if layer.isValid():
             project.addMapLayer(layer, False)
-            root.addLayer(layer)
-            _log(f"Basemap '{name}' ajoute")
+            basemap_group.addLayer(layer)
+            added += 1
         else:
             _log(f"Basemap '{name}' invalide", Qgis.Warning)
+
+    if added:
+        _log(f"{added} basemap(s) ajoute(s)")
+
+    return basemap_group
 
 
 
