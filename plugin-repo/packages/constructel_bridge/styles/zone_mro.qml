@@ -741,7 +741,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="false" name="OrderByField"/>

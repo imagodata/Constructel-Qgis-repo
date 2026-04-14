@@ -658,7 +658,7 @@
   <legend type="default-vector" showLabelLegend="0"/>
   <referencedLayers/>
   <referencingLayers>
-    <relation layerName="Documents elements" providerKey="postgres" id="docs_element_zone_pop" referencedLayer="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" name="Documents (zone_pop)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;">
+    <relation layerName="Documents elements" providerKey="postgres" id="docs_element_zone_pop" referencedLayer="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" referencingLayer="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" layerId="Documents_elements_2f75bf2c_5f26_4c55_a289_750a85a6d29c" name="Documents (zone_pop)" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;">
       <fieldRef referencingField="element_id" referencedField="id"/>
     </relation>
   </referencingLayers>
@@ -899,7 +899,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5433 user='ftth_editor' sslmode=require authcfg=n9h5ws9 key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="false" name="OrderByField"/>
