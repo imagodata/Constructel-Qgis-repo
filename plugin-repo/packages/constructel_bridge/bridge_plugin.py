@@ -877,6 +877,42 @@ class ConstructelBridgePlugin:
         if applied:
             self._log(f"{applied} couche(s): styles par defaut appliques")
 
+        # Charger les couches de reference cachees requises par les ValueRelation
+        self._ensure_ref_layers()
+
+    def _ensure_ref_layers(self):
+        """Charge ref.v_form_lists comme couche cachee pour les ValueRelation.
+
+        Les formulaires QGIS utilisent des ValueRelation qui referencent
+        ref.v_form_lists. Cette couche doit exister dans le projet pour
+        que les listes deroulantes fonctionnent.
+        """
+        project = QgsProject.instance()
+        # Verifier si v_form_lists est deja chargee
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            provider = layer.dataProvider()
+            if not provider or provider.name() != "postgres":
+                continue
+            uri = provider.uri()
+            if uri.schema() == "ref" and uri.table() == "v_form_lists":
+                return  # Deja chargee
+
+        # Charger la couche cachee
+        password = getattr(self, "_password", None) or _DEFAULT_PW
+        uri = QgsDataSourceUri()
+        uri.setConnection(
+            DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
+            DEFAULT_USER, password, DEFAULT_SSLMODE,
+        )
+        uri.setDataSource("ref", "v_form_lists", None, "", "rid")
+        layer = QgsVectorLayer(uri.uri(False), "v_form_lists", "postgres")
+        if layer.isValid():
+            # addMapLayer(layer, False) = ne pas afficher dans la legende
+            project.addMapLayer(layer, False)
+            self._log("ref.v_form_lists chargee (couche cachee pour formulaires)")
+
     def _check_layer_datasources(self):
         """Verifie que les couches PostgreSQL ne pointent pas vers localhost."""
         bad_hosts = ("localhost", "127.0.0.1", "::1")
