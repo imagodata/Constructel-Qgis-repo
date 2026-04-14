@@ -2242,40 +2242,7 @@ def my_form_open(dialog, layer, feature):
       [% coalesce("doc_count", 0) %]
     &lt;/span>
   &lt;/div>
-  [% IF coalesce("doc_count", 0) > 0 %]
-  &lt;table style="width:100%;border-collapse:collapse;font-size:11px;">
-    &lt;tr style="background:#E3F2FD;">
-      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;">Type&lt;/td>
-      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;text-align:right;">Nb&lt;/td>
-      &lt;td style="padding:3px 6px;color:#1565C0;font-weight:500;">Source&lt;/td>
-    &lt;/tr>
-    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'WELDING'), 0) %]
-    [% IF cnt > 0 %]
-    &lt;tr>&lt;td style="padding:3px 6px;">Welding (soudures)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>
-    [% END %]
-    [% END %]
-    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'JETTING'), 0) %]
-    [% IF cnt > 0 %]
-    &lt;tr>&lt;td style="padding:3px 6px;">Jetting (soufflage)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>
-    [% END %]
-    [% END %]
-    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'RACK'), 0) %]
-    [% IF cnt > 0 %]
-    &lt;tr>&lt;td style="padding:3px 6px;">Rack (baies)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin&lt;/td>&lt;/tr>
-    [% END %]
-    [% END %]
-    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" = 'BREAKOUT'), 0) %]
-    [% IF cnt > 0 %]
-    &lt;tr>&lt;td style="padding:3px 6px;">Breakout (derivations)&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Marlin / SharePoint&lt;/td>&lt;/tr>
-    [% END %]
-    [% END %]
-    [% WITH cnt AS try(aggregate('Documents elements','count',"document_id", "element_id" = attribute(@parent,'id') AND "status" = 'ACTIVE' AND "doc_type" IN ('CABLE_PLAN','AS_BUILT','OTDR','PHOTO','RECEPTION','INCIDENT_REPORT','AUTRE')), 0) %]
-    [% IF cnt > 0 %]
-    &lt;tr>&lt;td style="padding:3px 6px;">Autres&lt;/td>&lt;td style="padding:3px 6px;text-align:right;font-weight:600;">[% cnt %]&lt;/td>&lt;td style="padding:3px 6px;color:#888;">Divers&lt;/td>&lt;/tr>
-    [% END %]
-    [% END %]
-  &lt;/table>
-  [% ELSE %]
+  [% IF coalesce("doc_count", 0) = 0 %]
   &lt;p style="color:#999;font-size:11px;margin:4px 0;">Aucun document lie a cet element.&lt;/p>
   [% END %]
   [% IF "doc_folder_url" IS NOT NULL AND "doc_folder_url" != '' %]
@@ -2292,7 +2259,6 @@ def my_form_open(dialog, layer, feature):
         </labelStyle>
         <editor_configuration type="Map">
           <Option type="bool" value="false" name="allow_add_child_feature_with_no_geometry"/>
-          <Option type="bool" value="false" name="buttons">visible</Option>
           <Option type="QString" value="AllButtons" name="buttons"/>
           <Option type="bool" value="true" name="show_first_feature"/>
         </editor_configuration>

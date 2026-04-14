@@ -38,6 +38,58 @@ from .i18n import tr
 
 TAG = "Constructel Bridge"
 
+# Identifiant operateur et version — stockes comme variables projet QGIS
+# pour detecter qu'un projet a ete initialise par ce plugin.
+WYRE_OPERATOR = "wyre"
+WYRE_PROJECT_VERSION = "4.0.0"
+
+
+def _plugin_version() -> str:
+    """Lit la version du plugin depuis metadata.txt."""
+    meta = os.path.join(os.path.dirname(__file__), "metadata.txt")
+    try:
+        with open(meta) as f:
+            for line in f:
+                if line.startswith("version="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "unknown"
+
+
+def is_bridge_project() -> bool:
+    """Detecte si le projet QGIS courant a ete initialise par le plugin Bridge.
+
+    Retourne True si la variable projet ``bridge_operator`` est renseignee.
+    """
+    val, _ = QgsProject.instance().readEntry("bridge", "operator", "")
+    if val:
+        return True
+    # Fallback: variable projet QGIS (accessible via @bridge_operator)
+    scope = QgsProject.instance().customVariables()
+    return bool(scope.get("bridge_operator", ""))
+
+
+def stamp_project():
+    """Ecrit les variables d'identification dans le projet courant.
+
+    Variables projet QGIS (accessibles dans les expressions via @):
+      - @bridge_operator : identifiant operateur (ex: "wyre")
+      - @bridge_version  : version schema/projet (ex: "4.0.0")
+      - @bridge_plugin   : version du plugin Bridge ayant initialise le projet
+
+    L'operateur identifie le client/deploiement (wyre, orange, proximus, etc.).
+    Le plugin peut ainsi detecter les projets qu'il gere.
+    """
+    project = QgsProject.instance()
+    from qgis.core import QgsExpressionContextUtils
+    QgsExpressionContextUtils.setProjectVariable(project, "bridge_operator", WYRE_OPERATOR)
+    QgsExpressionContextUtils.setProjectVariable(project, "bridge_version", WYRE_PROJECT_VERSION)
+    QgsExpressionContextUtils.setProjectVariable(project, "bridge_plugin", _plugin_version())
+    # Aussi via writeEntry pour lecture rapide sans contexte d'expression
+    project.writeEntry("bridge", "operator", WYRE_OPERATOR)
+    project.writeEntry("bridge", "version", WYRE_PROJECT_VERSION)
+
 
 # =====================================================================
 # CATALOGUE COMPLET DES COUCHES
@@ -605,6 +657,65 @@ class InitProjectDialog(QDialog):
 
 
 # =====================================================================
+# RELATIONS — creation/recreation dynamique
+# =====================================================================
+
+def ensure_relations(loaded: dict[str, QgsVectorLayer] | None = None):
+    """Cree ou recree les relations QGIS definies dans RELATION_DEFS.
+
+    Appelee par init_project() et par _on_project_read() pour garantir
+    que les relations existent toujours avec les bons layer IDs.
+    Si ``loaded`` est None, decouvre les couches depuis le projet courant
+    en matchant par table_name.
+    """
+    project = QgsProject.instance()
+
+    # Auto-decouverte des couches si pas de dict fourni
+    if loaded is None:
+        loaded = {}
+        catalog_tables = {key: f"{schema}.{table}" for key, _grp, schema, table, *_ in LAYER_CATALOG}
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            prov = layer.dataProvider()
+            if prov and prov.name() == "postgres":
+                uri = QgsDataSourceUri(prov.dataSourceUri())
+                table_id = f"{uri.schema()}.{uri.table()}"
+                for key, tid in catalog_tables.items():
+                    if tid == table_id and key not in loaded:
+                        loaded[key] = layer
+                        break
+
+    relation_manager = project.relationManager()
+    rel_count = 0
+    for parent_key, child_key, fk_field, rel_name in RELATION_DEFS:
+        parent = loaded.get(parent_key)
+        child = loaded.get(child_key)
+        if not parent or not child:
+            continue
+
+        # Supprimer toute relation existante (possiblement cassee par QML)
+        existing = relation_manager.relation(rel_name)
+        if existing.id():
+            relation_manager.removeRelation(rel_name)
+
+        rel = QgsRelation()
+        rel.setId(rel_name)
+        rel.setName(rel_name)
+        rel.setReferencingLayer(child.id())
+        rel.setReferencedLayer(parent.id())
+        rel.addFieldPair(fk_field, "id")
+
+        if rel.isValid():
+            relation_manager.addRelation(rel)
+            rel_count += 1
+
+    if rel_count:
+        _log(f"{rel_count} relation(s) creee(s)/recreee(s)")
+    return rel_count
+
+
+# =====================================================================
 # INIT PROJECT — logique principale
 # =====================================================================
 
@@ -728,35 +839,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         _apply_styles_from_db(conn_params, password, loaded)
 
     # -- Relations --------------------------------------------------------
-    # Force-recreate: les QML chargent des relations avec des layer IDs
-    # hardcodes qui ne correspondent pas aux couches reelles du projet.
-    # On supprime puis recree systematiquement avec les bons IDs.
-    relation_manager = project.relationManager()
-    rel_count = 0
-    for parent_key, child_key, fk_field, rel_name in RELATION_DEFS:
-        parent = loaded.get(parent_key)
-        child = loaded.get(child_key)
-        if not parent or not child:
-            continue
+    ensure_relations(loaded)
 
-        # Supprimer toute relation existante avec cet ID (possiblement cassee)
-        existing = relation_manager.relation(rel_name)
-        if existing.isValid():
-            relation_manager.removeRelation(rel_name)
-
-        rel = QgsRelation()
-        rel.setId(rel_name)
-        rel.setName(rel_name)
-        rel.setReferencingLayer(child.id())
-        rel.setReferencedLayer(parent.id())
-        rel.addFieldPair(fk_field, "id")
-
-        if rel.isValid():
-            relation_manager.addRelation(rel)
-            rel_count += 1
-
-    if rel_count:
-        _log(f"{rel_count} relation(s) creee(s)")
 
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:
@@ -783,6 +867,10 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 
     # -- Nettoyer les couches fantomes a la racine -------------------------
     _cleanup_ghost_layers(root, groups)
+
+    # -- Tamponner le projet avec operateur/version ------------------------
+    stamp_project()
+    _log(f"Projet identifie: operator={WYRE_OPERATOR} version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
 
     return count
 
