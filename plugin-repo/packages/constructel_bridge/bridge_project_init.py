@@ -483,10 +483,15 @@ class InitProjectDialog(QDialog):
                 self._group_items[group],
                 [f"{label}  ({schema}.{table}){suffix}"],
             )
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.Checked if already else Qt.Unchecked)
             if already:
+                # Deja charge — cocher et desactiver (non modifiable)
+                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.Checked)
                 item.setToolTip(0, tr("init.already_loaded"))
+                item.setDisabled(True)
+            else:
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.Unchecked)
             item.setData(0, Qt.UserRole, key)
             self._items[key] = item
 
