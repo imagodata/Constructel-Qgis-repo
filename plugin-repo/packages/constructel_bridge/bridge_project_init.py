@@ -227,9 +227,27 @@ RELATION_DEFS = [
     # Ducts → Subducts
     ("ducts",          "subducts",           "duct_id",              "subducts_to_duct"),
 
+    # Cables ↔ Structures (start/end points)
+    ("structures",     "cables",             "start_point_id",       "rel_cables_from_start"),
+    ("structures",     "cables",             "end_point_id",         "rel_cables_from_end"),
+
+    # Subducts → Structures
+    ("structures",     "subducts",           "start_structure_id",   "rel_subducts_from_start"),
+    ("structures",     "subducts",           "end_structure_id",     "rel_subducts_from_end"),
+
+    # Subducts → Cables
+    ("cables",         "subducts",           "cable_id",             "rel_subducts_to_cable"),
+
     # Splices
     ("structures",     "splices",            "structure_id",         "splices_to_structure"),
     ("cables",         "splices",            "cable_id",             "splices_to_cable"),
+
+    # Documents → Infrastructure (relation editors dans onglet Documentos)
+    ("structures",     "docs_elements",      "element_id",           "docs_element_structure"),
+    ("cables",         "docs_elements",      "element_id",           "docs_element_cable"),
+    ("ducts",          "docs_elements",      "element_id",           "docs_element_duct"),
+    ("demand_points",  "docs_elements",      "element_id",           "docs_element_demand_point"),
+    ("zone_pop",       "docs_elements",      "element_id",           "docs_element_zone_pop"),
 
     # Chantier → Zones
     ("zone_pop",       "permis_voirie",      "zone_pop_id",          "permis_to_pop"),
