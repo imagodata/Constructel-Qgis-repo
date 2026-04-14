@@ -763,16 +763,38 @@
       </editWidget>
     </field>
     <field configurationFlags="NoFlag" name="start_point_id">
-      <editWidget type="TextEdit">
+      <editWidget type="ValueRelation">
         <config>
-          <Option/>
+          <Option type="Map">
+            <Option type="bool" value="false" name="AllowMulti"/>
+            <Option type="bool" value="true" name="AllowNull"/>
+            <Option type="QString" value="id" name="Key"/>
+            <Option type="QString" value="" name="Layer"/>
+            <Option type="QString" value="structures" name="LayerName"/>
+            <Option type="QString" value="postgres" name="LayerProviderName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
+            <Option type="bool" value="true" name="OrderByValue"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
+            <Option type="QString" value="coalesce(nomenclature, label)" name="Value"/>
+          </Option>
         </config>
       </editWidget>
     </field>
     <field configurationFlags="NoFlag" name="end_point_id">
-      <editWidget type="TextEdit">
+      <editWidget type="ValueRelation">
         <config>
-          <Option/>
+          <Option type="Map">
+            <Option type="bool" value="false" name="AllowMulti"/>
+            <Option type="bool" value="true" name="AllowNull"/>
+            <Option type="QString" value="id" name="Key"/>
+            <Option type="QString" value="" name="Layer"/>
+            <Option type="QString" value="structures" name="LayerName"/>
+            <Option type="QString" value="postgres" name="LayerProviderName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
+            <Option type="bool" value="true" name="OrderByValue"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
+            <Option type="QString" value="coalesce(nomenclature, label)" name="Value"/>
+          </Option>
         </config>
       </editWidget>
     </field>
@@ -1288,6 +1310,16 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
+      <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Lista documentos" horizontalStretch="0" relation="docs_element_duct" nmRelationId="" showLabel="1" name="docs_element_duct">
+        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+        </labelStyle>
+        <editor_configuration type="Map">
+          <Option type="bool" value="false" name="allow_add_child_feature_with_no_geometry"/>
+          <Option type="QString" value="AllButtons" name="buttons"/>
+          <Option type="bool" value="true" name="show_first_feature"/>
+        </editor_configuration>
+      </attributeEditorRelation>
     </attributeEditorContainer>
   </attributeEditorForm>
   <editable>

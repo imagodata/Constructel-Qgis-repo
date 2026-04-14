@@ -1377,6 +1377,16 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
+      <attributeEditorRelation relationWidgetTypeId="relation_editor" forceSuppressFormPopup="0" verticalStretch="1" label="Lista documentos" horizontalStretch="0" relation="docs_element_demand_point" nmRelationId="" showLabel="1" name="docs_element_demand_point">
+        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+        </labelStyle>
+        <editor_configuration type="Map">
+          <Option type="bool" value="false" name="allow_add_child_feature_with_no_geometry"/>
+          <Option type="QString" value="AllButtons" name="buttons"/>
+          <Option type="bool" value="true" name="show_first_feature"/>
+        </editor_configuration>
+      </attributeEditorRelation>
     </attributeEditorContainer>
   </attributeEditorForm>
   <editable>

@@ -2118,11 +2118,6 @@ def my_form_open(dialog, layer, feature):
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
-        <attributeEditorField index="7" verticalStretch="0" horizontalStretch="0" showLabel="1" name="is_splice_closure">
-          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
-            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
-          </labelStyle>
-        </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
     <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🏷️ Identificacao">
@@ -2316,7 +2311,7 @@ def my_form_open(dialog, layer, feature):
         </editor_configuration>
       </attributeEditorRelation>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="1" groupBox="0" horizontalStretch="0" visibilityExpression="&quot;structure_type&quot; IN ('Manhole', 'Cabinet')" showLabel="1" name="Emendas">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="1" groupBox="0" horizontalStretch="0" visibilityExpression="&quot;structure_type&quot; IN ('Manhole', 'Cabinet', 'POC facade', 'POC underground', 'Access Point')" showLabel="1" name="Emendas">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
@@ -2324,6 +2319,11 @@ def my_form_open(dialog, layer, feature):
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
+        <attributeEditorField index="7" verticalStretch="0" horizontalStretch="0" showLabel="1" name="is_splice_closure">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
         <attributeEditorField index="8" verticalStretch="0" horizontalStretch="0" showLabel="1" name="status">
           <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
             <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
