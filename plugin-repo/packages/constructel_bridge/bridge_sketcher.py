@@ -267,7 +267,7 @@ def apply_form_containers(layer: QgsVectorLayer, lang: str | None = None):
     if table_key and table_key in FORM_CONTAINERS_PER_LAYER:
         lookup.update(FORM_CONTAINERS_PER_LAYER[table_key])
 
-    # Aussi ajouter le lookup pour "infra_structure_cable_splices" via le nom PG
+    # Aussi ajouter le lookup via le nom PG de la table
     provider = layer.dataProvider()
     if provider and provider.name() == "postgres":
         uri = QgsDataSourceUri(layer.source())

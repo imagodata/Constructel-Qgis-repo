@@ -416,11 +416,6 @@ FORM_CONTAINERS_PER_LAYER: dict[str, dict[str, dict[str, str]]] = {
         "📐 Surface":                 {"fr": "📐 Surface",                 "en": "📐 Area",                 "pt": "📐 Area"},
     },
 
-    "structure_cable_splices": {
-        "Soudure":                     {"fr": "Soudure",                     "en": "Splice",                   "pt": "Emenda"},
-        "Cable":                        {"fr": "Cable",                        "en": "Cable",                    "pt": "Cabo"},
-        "Etat soudure":                {"fr": "Etat soudure",                "en": "Splice status",            "pt": "Estado emenda"},
-    },
 }
 
 

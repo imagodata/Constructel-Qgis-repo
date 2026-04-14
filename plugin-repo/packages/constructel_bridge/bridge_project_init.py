@@ -105,7 +105,6 @@ LAYER_CATALOG = [
     ("cables",             "Infrastructure",  "infra", "cables",             "geom", "id",  "Cables"),
     ("subducts",           "Infrastructure",  "infra", "subducts",           "geom", "id",  "Sous-fourreaux"),
     ("ducts",              "Infrastructure",  "infra", "ducts",              "geom", "id",  "Conduites"),
-    ("splices",            "Infrastructure",  "infra", "structure_cable_splices", None, "id", "Soudures"),
 
     # -- Zones ------------------------------------------------------------
     ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
@@ -163,7 +162,6 @@ EMBEDDED_STYLES = {
     "cables":           "cables.qml",
     "subducts":         "subducts.qml",
     "ducts":            "ducts.qml",
-    "splices":          "infra_structure_cable_splices.qml",
     # Zones
     "zone_drop":        "zone_drop.qml",
     "zone_distribution":"zone_distribution.qml",
