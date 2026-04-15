@@ -88,7 +88,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="166,81,101,255,rgb:0.6498512,0.3165179,0.3949645,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.2" name="outline_width"/>
+            <Option type="QString" value="0.6" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -124,7 +124,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="166,81,101,255,rgb:0.6498512,0.3165179,0.3949645,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.2" name="outline_width"/>
+            <Option type="QString" value="0.6" name="outline_width"/>
             <Option type="QString" value="3x:0,0,0,0,0,0" name="outline_width_map_unit_scale"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="diameter" name="scale_method"/>
@@ -173,7 +173,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="99,99,99,255,rgb:0.3900053,0.3900053,0.3900053,1" name="outline_color"/>
             <Option type="QString" value="dash" name="outline_style"/>
-            <Option type="QString" value="0.4" name="outline_width"/>
+            <Option type="QString" value="0.8" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -204,7 +204,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="199,99,0,255,rgb:0.7799954,0.3900053,0,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.5" name="outline_width"/>
+            <Option type="QString" value="0.9" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -235,7 +235,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="22,120,60,255,rgb:0.0862745,0.4705882,0.2352941,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.5" name="outline_width"/>
+            <Option type="QString" value="0.9" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -266,7 +266,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="0,105,92,255,rgb:0,0.4117647,0.3607843,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.5" name="outline_width"/>
+            <Option type="QString" value="0.9" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -297,7 +297,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="106,27,154,255,rgb:0.4156863,0.1058824,0.6039216,1" name="outline_color"/>
             <Option type="QString" value="dash" name="outline_style"/>
-            <Option type="QString" value="0.4" name="outline_width"/>
+            <Option type="QString" value="0.8" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -328,7 +328,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="106,27,154,255,rgb:0.4156863,0.1058824,0.6039216,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.5" name="outline_width"/>
+            <Option type="QString" value="0.9" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -359,7 +359,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="56,142,60,255,rgb:0.2196078,0.5568627,0.2352941,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.5" name="outline_width"/>
+            <Option type="QString" value="0.9" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -392,7 +392,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="36,36,36,255,rgb:0.1400015,0.1400015,0.1400015,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.3" name="outline_width"/>
+            <Option type="QString" value="0.6" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>

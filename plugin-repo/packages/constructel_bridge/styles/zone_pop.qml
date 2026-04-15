@@ -88,7 +88,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="95,130,79,255,rgb:0.372549,0.5098039,0.3109178,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.2" name="outline_width"/>
+            <Option type="QString" value="1.0" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -124,7 +124,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="95,130,79,255,rgb:0.372549,0.5098039,0.3109178,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.2" name="outline_width"/>
+            <Option type="QString" value="1.0" name="outline_width"/>
             <Option type="QString" value="3x:0,0,0,0,0,0" name="outline_width_map_unit_scale"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="diameter" name="scale_method"/>
@@ -170,7 +170,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="99,99,99,255,rgb:0.3900053,0.3900053,0.3900053,1" name="outline_color"/>
             <Option type="QString" value="dash" name="outline_style"/>
-            <Option type="QString" value="0.6" name="outline_width"/>
+            <Option type="QString" value="1.0" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -201,7 +201,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="199,99,0,255,rgb:0.7799954,0.3900053,0,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.8" name="outline_width"/>
+            <Option type="QString" value="1.2" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -232,7 +232,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="199,179,0,255,rgb:0.7799954,0.7000076,0,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.6" name="outline_width"/>
+            <Option type="QString" value="1.0" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -263,7 +263,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="22,120,60,255,rgb:0.0862745,0.4705882,0.2352941,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.8" name="outline_width"/>
+            <Option type="QString" value="1.2" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
@@ -296,7 +296,7 @@
             <Option type="QString" value="MM" name="offset_unit"/>
             <Option type="QString" value="79,79,79,255,rgb:0.3100023,0.3100023,0.3100023,1" name="outline_color"/>
             <Option type="QString" value="solid" name="outline_style"/>
-            <Option type="QString" value="0.6" name="outline_width"/>
+            <Option type="QString" value="1.0" name="outline_width"/>
             <Option type="QString" value="MM" name="outline_width_unit"/>
             <Option type="QString" value="solid" name="style"/>
           </Option>
