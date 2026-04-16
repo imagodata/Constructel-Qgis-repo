@@ -904,8 +904,8 @@
     <alias index="6" field="model" name="Model"/>
     <alias index="7" field="cable_type" name="Cable Type"/>
     <alias index="8" field="breakout_letter" name="Breakout"/>
-    <alias index="9" field="start_point_id" name="Start Point UUID"/>
-    <alias index="10" field="end_point_id" name="End Point UUID"/>
+    <alias index="9" field="start_point_id" name="Start Point"/>
+    <alias index="10" field="end_point_id" name="End Point"/>
     <alias index="11" field="length_m" name="Length (m)"/>
     <alias index="12" field="pose_type" name="Pose Type"/>
     <alias index="13" field="status" name="Status"/>
