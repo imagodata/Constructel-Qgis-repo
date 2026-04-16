@@ -11,5 +11,24 @@ ExecStart=/usr/bin/python3 /home/sdadmin/projects/qgis_repo/serve.py --port 8080
 Restart=on-failure
 RestartSec=5
 
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/sdadmin/projects/qgis_repo
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=50%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qgis-repo
+
 [Install]
 WantedBy=multi-user.target

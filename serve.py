@@ -12,10 +12,17 @@ Usage:
 
 import argparse
 import functools
+import logging
 import os
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -37,7 +44,7 @@ def main():
     parser = argparse.ArgumentParser(description="Serve QGIS repositories - Constructel")
     parser.add_argument("--port", type=int, default=9080, help="Port plugin repo (default: 9080)")
     parser.add_argument("--resource-port", type=int, default=9081, help="Port resource repo (default: 9081)")
-    parser.add_argument("--bind", default="192.168.160.31", help="Bind address (default: 192.168.160.31)")
+    parser.add_argument("--bind", default=os.environ.get("QGIS_REPO_BIND", "0.0.0.0"), help="Bind address (default: $QGIS_REPO_BIND or 0.0.0.0)")
     args = parser.parse_args()
 
     os.chdir(REPO_ROOT)
@@ -51,10 +58,11 @@ def main():
     resource_handler = functools.partial(QGISRepoHandler, directory=resource_dir)
     resource_server = HTTPServer((args.bind, args.resource_port), resource_handler)
 
-    print(f"Depot QGIS Constructel")
-    print(f"  Plugin repo:   http://{args.bind}:{args.port}/plugin-repo/plugins.xml")
-    print(f"  Resource repo (git): http://{args.bind}:{args.resource_port}/")
-    print("Ctrl+C pour arreter.")
+    log = logging.getLogger("qgis-repo")
+    log.info("Depot QGIS Constructel")
+    log.info("  Plugin repo:   http://%s:%d/plugin-repo/plugins.xml", args.bind, args.port)
+    log.info("  Resource repo (git): http://%s:%d/", args.bind, args.resource_port)
+    log.info("Ctrl+C pour arreter.")
 
     # Run resource server in a background thread
     resource_thread = threading.Thread(target=resource_server.serve_forever, daemon=True)
@@ -63,7 +71,7 @@ def main():
     try:
         plugin_server.serve_forever()
     except KeyboardInterrupt:
-        print("\nArrete.")
+        log.info("Arrete.")
         resource_server.shutdown()
         plugin_server.server_close()
         resource_server.server_close()

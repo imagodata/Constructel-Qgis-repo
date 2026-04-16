@@ -60,14 +60,34 @@ def _plugin_version() -> str:
 def is_bridge_project() -> bool:
     """Detecte si le projet QGIS courant a ete initialise par le plugin Bridge.
 
-    Retourne True si la variable projet ``bridge_operator`` est renseignee.
+    Retourne True si ``bridge_operator`` ou ``bridge_version`` est renseignee
+    (via writeEntry ou customVariables).
     """
-    val, _ = QgsProject.instance().readEntry("bridge", "operator", "")
-    if val:
+    project = QgsProject.instance()
+    # Lecture rapide via writeEntry
+    op, _ = project.readEntry("bridge", "operator", "")
+    ver, _ = project.readEntry("bridge", "version", "")
+    if op or ver:
         return True
-    # Fallback: variable projet QGIS (accessible via @bridge_operator)
-    scope = QgsProject.instance().customVariables()
-    return bool(scope.get("bridge_operator", ""))
+    # Fallback: variables projet QGIS (accessibles via @bridge_operator / @bridge_version)
+    scope = project.customVariables()
+    return bool(scope.get("bridge_operator", "") or scope.get("bridge_version", ""))
+
+
+def get_bridge_info() -> dict:
+    """Retourne les metadonnees Bridge du projet courant.
+
+    Cles: operator, version, plugin.  Valeurs vides si absentes.
+    """
+    project = QgsProject.instance()
+    scope = project.customVariables()
+    op, _ = project.readEntry("bridge", "operator", "")
+    ver, _ = project.readEntry("bridge", "version", "")
+    return {
+        "operator": op or scope.get("bridge_operator", ""),
+        "version": ver or scope.get("bridge_version", ""),
+        "plugin": scope.get("bridge_plugin", ""),
+    }
 
 
 def stamp_project():
@@ -295,6 +315,7 @@ RELATION_DEFS = [
     ("ducts",          "docs_elements",      "element_id",           "docs_element_duct"),
     ("demand_points",  "docs_elements",      "element_id",           "docs_element_demand_point"),
     ("zone_pop",       "docs_elements",      "element_id",           "docs_element_zone_pop"),
+    ("zone_mro",       "docs_elements",      "element_id",           "docs_element_zone_mro"),
 
     # Chantier → Zones
     ("zone_pop",       "permis_voirie",      "zone_pop_id",          "permis_to_pop"),
@@ -1023,6 +1044,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
         _log("psycopg2 indisponible — styles non appliques", Qgis.Warning)
         return styled_keys
 
+    conn = None
     try:
         conn = psycopg2.connect(
             host=conn_params.get("host", "localhost"),
@@ -1032,45 +1054,48 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             password=password,
         )
         cur = conn.cursor()
-    except Exception as exc:
+
+        for key, layer in loaded.items():
+            provider = layer.dataProvider()
+            if not provider:
+                continue
+            src_uri = QgsDataSourceUri(provider.uri().uri())
+            schema = src_uri.schema() or "infra"
+            table = src_uri.table()
+            geom_col = src_uri.geometryColumn() or ""
+
+            try:
+                cur.execute(
+                    'SELECT styleqml::text FROM public.layer_styles '
+                    "WHERE f_table_schema = %s AND f_table_name = %s "
+                    "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
+                    "AND \"styleName\" = 'default' LIMIT 1",
+                    (schema, table, geom_col),
+                )
+                row = cur.fetchone()
+            except psycopg2.Error:
+                continue
+
+            if not row or not row[0]:
+                continue
+
+            try:
+                doc = QDomDocument()
+                doc.setContent(row[0])
+                msg, ok = layer.importNamedStyle(doc)
+                if ok:
+                    layer.triggerRepaint()
+                    styled_keys.add(key)
+            except Exception:
+                pass
+
+        cur.close()
+    except psycopg2.Error as exc:
         _log(f"Connexion styles impossible: {exc}", Qgis.Warning)
         return styled_keys
-
-    for key, layer in loaded.items():
-        provider = layer.dataProvider()
-        if not provider:
-            continue
-        src_uri = QgsDataSourceUri(provider.uri().uri())
-        schema = src_uri.schema() or "infra"
-        table = src_uri.table()
-        geom_col = src_uri.geometryColumn() or ""
-
-        try:
-            cur.execute(
-                'SELECT styleqml::text FROM public.layer_styles '
-                "WHERE f_table_schema = %s AND f_table_name = %s "
-                "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
-                "AND \"styleName\" = 'default' LIMIT 1",
-                (schema, table, geom_col),
-            )
-            row = cur.fetchone()
-        except Exception:
-            continue
-
-        if not row or not row[0]:
-            continue
-
-        try:
-            doc = QDomDocument()
-            doc.setContent(row[0])
-            msg, ok = layer.importNamedStyle(doc)
-            if ok:
-                layer.triggerRepaint()
-                styled_keys.add(key)
-        except Exception:
-            pass
-
-    conn.close()
+    finally:
+        if conn is not None:
+            conn.close()
 
     if styled_keys:
         _log(f"{len(styled_keys)} style(s) applique(s) depuis public.layer_styles")
