@@ -113,8 +113,6 @@ LAYER_CATALOG = [
     ("zone_pop",           "Zones",           "infra", "zone_pop",           "geom", "id",  "Zones POP"),
     ("zone_mro",           "Zones",           "infra", "zone_mro",           "geom", "id",  "Zones MRO"),
 
-    # -- Topologie --------------------------------------------------------
-    ("topo_violations",    "Topologie",       "infra", "topology_violations","geom", "id",  "Violations topologie"),
 
     # -- Chantier ---------------------------------------------------------
     ("interventions",      "Chantier",        "chantier", "interventions",      "geom", "id",  "Interventions"),
@@ -168,8 +166,6 @@ EMBEDDED_STYLES = {
     "zone_distribution":"zone_distribution.qml",
     "zone_pop":         "zone_pop.qml",
     "zone_mro":         "zone_mro.qml",
-    # Topologie
-    "topo_violations":  "topology_violations.qml",
     # OSIRIS
     "osiris_frozen":    "osiris_frozen_zones.qml",
     "osiris_worksites": "osiris_worksites.qml",
