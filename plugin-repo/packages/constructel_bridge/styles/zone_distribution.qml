@@ -812,7 +812,7 @@
             <Option type="invalid" name="Description"/>
             <Option type="bool" value="false" name="DisplayGroupName"/>
             <Option type="invalid" name="FilterExpression"/>
-            <Option type="QString" value="code" name="Group"/>
+            <Option type="QString" value="name" name="Group"/>
             <Option type="QString" value="id" name="Key"/>
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_mro" name="LayerName"/>
@@ -821,11 +821,11 @@
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="true" name="OrderByField"/>
-            <Option type="QString" value="code" name="OrderByFieldName"/>
+            <Option type="QString" value="name" name="OrderByFieldName"/>
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
             <Option type="bool" value="true" name="UseCompleter"/>
-            <Option type="QString" value="code" name="Value"/>
+            <Option type="QString" value="name" name="Value"/>
           </Option>
         </config>
       </editWidget>

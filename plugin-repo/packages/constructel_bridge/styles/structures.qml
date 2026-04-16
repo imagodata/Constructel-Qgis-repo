@@ -1657,7 +1657,7 @@
             <Option name="Description" type="invalid"/>
             <Option name="DisplayGroupName" type="bool" value="false"/>
             <Option name="FilterExpression" type="invalid"/>
-            <Option name="Group" type="QString" value="code"/>
+            <Option name="Group" type="QString" value="name"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="QString" value=""/>
             <Option name="LayerName" type="QString" value="zone_mro"/>
@@ -1666,11 +1666,11 @@
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
             <Option name="OrderByField" type="bool" value="true"/>
-            <Option name="OrderByFieldName" type="QString" value="code"/>
+            <Option name="OrderByFieldName" type="QString" value="name"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="false"/>
             <Option name="UseCompleter" type="bool" value="true"/>
-            <Option name="Value" type="QString" value="code"/>
+            <Option name="Value" type="QString" value="name"/>
           </Option>
         </config>
       </editWidget>

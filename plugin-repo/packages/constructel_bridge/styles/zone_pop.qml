@@ -701,7 +701,7 @@
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
             <Option type="bool" value="true" name="UseCompleter"/>
-            <Option type="QString" value="code" name="Value"/>
+            <Option type="QString" value="name" name="Value"/>
           </Option>
         </config>
       </editWidget>

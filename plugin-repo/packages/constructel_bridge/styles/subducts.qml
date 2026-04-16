@@ -719,7 +719,7 @@
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
             <Option type="bool" value="true" name="UseCompleter"/>
-            <Option type="QString" value="code" name="Value"/>
+            <Option type="QString" value="name" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -797,7 +797,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="structures" name="LayerName"/>
             <Option type="bool" value="true" name="OrderByValue"/>
-            <Option type="QString" value="coalesce(nomenclature, label)" name="Value"/>
+            <Option type="QString" value="coalesce(attribute(get_feature('zone_mro', 'id', zone_mro_id), 'name'), '') || ' / ' || coalesce(attribute(get_feature('zone_pop', 'id', zone_pop_id), 'code'), '') || ' / ' || coalesce(nomenclature, label, structure_type)" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -812,7 +812,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="structures" name="LayerName"/>
             <Option type="bool" value="true" name="OrderByValue"/>
-            <Option type="QString" value="coalesce(nomenclature, label)" name="Value"/>
+            <Option type="QString" value="coalesce(attribute(get_feature('zone_mro', 'id', zone_mro_id), 'name'), '') || ' / ' || coalesce(attribute(get_feature('zone_pop', 'id', zone_pop_id), 'code'), '') || ' / ' || coalesce(nomenclature, label, structure_type)" name="Value"/>
           </Option>
         </config>
       </editWidget>
