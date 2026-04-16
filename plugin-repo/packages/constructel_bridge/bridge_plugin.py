@@ -433,10 +433,16 @@ class ConstructelBridgePlugin:
 
         # Ne traiter que les projets Bridge (eviter d'interferer avec
         # des projets QGIS generiques qui ne sont pas geres par le plugin)
-        from .bridge_project_init import is_bridge_project
+        from .bridge_project_init import is_bridge_project, get_bridge_info
         if not is_bridge_project():
             self._log("Projet non-Bridge detecte — hooks/relations/i18n ignores")
             return
+
+        info = get_bridge_info()
+        self._log(
+            f"Projet Bridge detecte — operator={info['operator']!r} "
+            f"version={info['version']!r} plugin={info['plugin']!r}"
+        )
 
         self._layer_hooks_installed = False
         try:
@@ -608,7 +614,7 @@ class ConstructelBridgePlugin:
                 sslmode=DEFAULT_SSLMODE,
             )
             self._conn.autocommit = True
-        except Exception as exc:
+        except (psycopg2.Error, OSError) as exc:
             self._log(
                 f"Connection failed to {DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DBNAME}: {exc}",
                 Qgis.Critical,
@@ -867,17 +873,23 @@ class ConstructelBridgePlugin:
                     row = cur.fetchone()
                     if not row or not row[0]:
                         continue
-                except Exception:
+                except (Exception, ) as _style_err:
+                    self._log(f"Style query error for {schema}.{table}: {_style_err}", Qgis.Warning)
                     continue
                 # Ecrire le QML dans un fichier temporaire et l'appliquer
                 import tempfile
                 tmp = tempfile.NamedTemporaryFile(
                     suffix=".qml", delete=False, mode="w", encoding="utf-8"
                 )
-                tmp.write(row[0])
-                tmp.close()
-                result = layer.loadNamedStyle(tmp.name)
-                os.unlink(tmp.name)
+                try:
+                    tmp.write(row[0])
+                    tmp.close()
+                    result = layer.loadNamedStyle(tmp.name)
+                finally:
+                    try:
+                        os.unlink(tmp.name)
+                    except OSError:
+                        pass
                 if isinstance(result, tuple):
                     ok = result[1] if isinstance(result[0], str) else result[0]
                 else:
@@ -1005,12 +1017,11 @@ class ConstructelBridgePlugin:
         else:
             settings.remove(f"{base}/authcfg")
 
-        # Always store password in connection so that the browser /
-        # explorer can open projects even when authcfg resolution fails
-        # (e.g. master-password not yet entered, stale config id).
-        settings.setValue(f"{base}/password", password)
+        # Only store username; password is handled by Auth Manager (encrypted).
+        # Storing plaintext password in QgsSettings is a security risk.
         settings.setValue(f"{base}/saveUsername", True)
-        settings.setValue(f"{base}/savePassword", True)
+        settings.setValue(f"{base}/savePassword", False)
+        settings.remove(f"{base}/password")
 
         self._log(tr("pg.configured"))
 
@@ -1162,15 +1173,27 @@ class ConstructelBridgePlugin:
             return
 
         try:
-            provider.executeSql(
-                f"SELECT set_config('app.current_user', '{self._bridge_user}', true)"
-            )
-            provider.executeSql(
-                f"SET application_name = 'constructel_bridge:{self._bridge_user}'"
-            )
+            # Use the plugin's own psycopg2 connection for parameterized queries
+            # to avoid SQL injection via provider.executeSql() f-strings.
+            if self._conn and not self._conn.closed:
+                cur = self._conn.cursor()
+                try:
+                    cur.execute("SELECT set_config('app.current_user', %s, true)", (self._bridge_user,))
+                    cur.execute("SET application_name = %s", (f"constructel_bridge:{self._bridge_user}",))
+                finally:
+                    cur.close()
+            else:
+                # Fallback: escape value for provider.executeSql() (no parameterized API)
+                safe_user = self._bridge_user.replace("'", "''")
+                provider.executeSql(
+                    f"SELECT set_config('app.current_user', '{safe_user}', true)"
+                )
+                provider.executeSql(
+                    f"SET application_name = 'constructel_bridge:{safe_user}'"
+                )
             self._log(tr("hook.commit_tagged", user=self._bridge_user, layer=layer.name()))
-        except Exception as exc:
-            self._log(tr("hook.exec_error", error=exc), Qgis.Warning)
+        except (Exception, ) as exc:
+            self._log(tr("hook.exec_error", error=exc), Qgis.Warning)  # noqa: broad-except — provider API may raise various types
 
     # =====================================================================
     # Masquage des couches sans geometrie (listes / ref)
@@ -1435,6 +1458,10 @@ class ConstructelBridgePlugin:
         import tempfile
 
         password = getattr(self, "_password", None) or _DEFAULT_PW
+        # Validate schema against whitelist to prevent SQL injection
+        if schema not in self._PROJECT_SCHEMAS:
+            self._log(f"Rejected invalid schema: {schema!r}", Qgis.Warning)
+            return False
         cur = self._conn.cursor()
         try:
             cur.execute(

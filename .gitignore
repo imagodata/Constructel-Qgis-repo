@@ -1,6 +1,7 @@
 # Secrets / environment
 .env
 .env.*
+credentials.json
 
 # Plugin ZIPs (large binaries - manage separately or use Git LFS)
 plugin-repo/packages/*.zip
@@ -14,6 +15,14 @@ resource-repo/*.zip
 # Python
 __pycache__/
 *.pyc
+*.pyo
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store

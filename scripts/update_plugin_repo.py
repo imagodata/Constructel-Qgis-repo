@@ -138,8 +138,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate QGIS plugin repository XML")
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("QGIS_REPO_BASE_URL", "http://192.168.160.31:8080"),
-        help="Base URL where the repository is served (default: $QGIS_REPO_BASE_URL or http://192.168.160.31:8080)",
+        default=os.environ.get("QGIS_REPO_BASE_URL", "http://localhost:8080"),
+        help="Base URL where the repository is served (default: $QGIS_REPO_BASE_URL or http://localhost:8080)",
     )
     parser.add_argument(
         "--packages-dir",

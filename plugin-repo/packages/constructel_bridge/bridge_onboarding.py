@@ -9,6 +9,7 @@ Affiche apres la premiere connexion reussie:
   Page 4: Resume et finalisation
 """
 
+import os
 import re
 
 from qgis.PyQt.QtCore import Qt
@@ -72,7 +73,9 @@ RECOMMENDED_PLUGINS = [
 ]
 
 RESOURCE_SHARING_REPO_NAME = "Constructel"
-RESOURCE_SHARING_REPO_URL = "http://192.168.160.31:9081/"
+RESOURCE_SHARING_REPO_URL = os.environ.get(
+    "CONSTRUCTEL_RESOURCE_REPO_URL", "http://192.168.160.31:9081/"
+)
 
 
 # =========================================================================

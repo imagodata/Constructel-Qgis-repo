@@ -79,11 +79,20 @@ class ConstructelConnectDialog(QDialog):
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self._ok_button = buttons.button(QDialogButtonBox.Ok)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # Disable OK button when password is empty
+        self._password_edit.textChanged.connect(self._validate)
+        self._validate()
+
         self._password_edit.setFocus()
+
+    def _validate(self):
+        """Enable OK only when password is non-empty."""
+        self._ok_button.setEnabled(bool(self._password_edit.text()))
 
     def _toggle_password_visibility(self, visible: bool):
         """Toggle between masked and clear-text password display."""
