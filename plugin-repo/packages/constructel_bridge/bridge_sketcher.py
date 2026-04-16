@@ -299,6 +299,83 @@ def apply_form_containers(layer: QgsVectorLayer, lang: str | None = None):
 
 
 # =====================================================================
+# ValueRelation LayerName sync — garde les FK resolvables apres renommage
+# =====================================================================
+
+def _sync_value_relation_layer_names(project):
+    """Met a jour LayerName et expressions get_feature() des ValueRelation.
+
+    Apres apply_layer_name(), les couches sont renommees (ex: zone_pop →
+    "Zones POP") mais les widgets ValueRelation referencent encore l'ancien
+    nom de table dans:
+      - le champ ``LayerName`` (lookup du dropdown)
+      - les expressions ``Value`` contenant get_feature('table_name', ...)
+
+    Cette passe construit un mapping table→nom_actuel et corrige les deux
+    pour que QGIS affiche le nom/code au lieu du UUID brut.
+    """
+    import re
+
+    # Construire le mapping table_name -> nom actuel de la couche
+    table_to_layer_name: dict[str, str] = {}
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        provider = layer.dataProvider()
+        if provider and provider.name() == "postgres":
+            uri = QgsDataSourceUri(layer.source())
+            table = uri.table()
+            if table:
+                table_to_layer_name[table] = layer.name()
+
+    if not table_to_layer_name:
+        return 0
+
+    # Regex pour get_feature('table_name', ...) — capture le nom entre quotes
+    gf_pattern = re.compile(
+        r"get_feature\(\s*'(" + "|".join(re.escape(t) for t in table_to_layer_name) + r")'\s*,"
+    )
+
+    patched = 0
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        fields = layer.fields()
+        for i in range(fields.count()):
+            setup = layer.editorWidgetSetup(i)
+            if setup.type() != "ValueRelation":
+                continue
+            config = dict(setup.config())
+            dirty = False
+
+            # 1. Corriger LayerName
+            ref_name = config.get("LayerName", "")
+            actual_name = table_to_layer_name.get(ref_name)
+            if actual_name and actual_name != ref_name:
+                config["LayerName"] = actual_name
+                dirty = True
+
+            # 2. Corriger get_feature() dans l'expression Value
+            value_expr = config.get("Value", "")
+            if value_expr and gf_pattern.search(value_expr):
+                new_expr = gf_pattern.sub(
+                    lambda m: f"get_feature('{table_to_layer_name[m.group(1)]}',",
+                    value_expr,
+                )
+                if new_expr != value_expr:
+                    config["Value"] = new_expr
+                    dirty = True
+
+            if dirty:
+                layer.setEditorWidgetSetup(
+                    i, QgsEditorWidgetSetup("ValueRelation", config)
+                )
+                patched += 1
+
+    return patched
+
+
+# =====================================================================
 # API publique — applique tout
 # =====================================================================
 
@@ -328,6 +405,10 @@ def apply_all_translations(lang: str | None = None):
             labels_switched += 1
         apply_layer_name(layer, lang)
 
+    # Apres renommage des couches, synchroniser les LayerName dans les
+    # widgets ValueRelation pour que les FK affichent nom/code, pas UUID
+    vr_synced = _sync_value_relation_layer_names(project)
+
     groups_renamed = apply_group_names(lang)
 
     # Variable projet accessible via @wyre_language dans les expressions QGIS
@@ -337,6 +418,7 @@ def apply_all_translations(lang: str | None = None):
     _log(
         f"i18n [{lang}]: {layers_translated} couche(s) traduites, "
         f"{vr_switched} ValueRelation basculee(s), "
+        f"{vr_synced} LayerName(s) synchronisee(s), "
         f"{forms_translated} formulaire(s) traduit(s), "
         f"{labels_switched} etiquette(s) basculee(s), "
         f"{groups_renamed} groupe(s) renomme(s)"
@@ -354,3 +436,6 @@ def apply_to_layer(layer: QgsVectorLayer, lang: str | None = None):
     apply_form_containers(layer, lang)
     apply_label_expressions(layer, lang)
     apply_layer_name(layer, lang)
+    # Sync les LayerName des VR de toutes les couches qui pourraient
+    # referencer cette couche nouvellement renommee
+    _sync_value_relation_layer_names(QgsProject.instance())

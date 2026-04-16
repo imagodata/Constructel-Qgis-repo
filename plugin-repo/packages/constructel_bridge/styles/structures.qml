@@ -1589,28 +1589,9 @@
     <checkConfiguration/>
   </geometryOptions>
   <legend type="default-vector" showLabelLegend="0"/>
-  <referencedLayers>
-    <relation referencingLayer="structures_ba4866c6_ef84_4637_8654_5abe13db0401" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" name="structures_to_pop" referencedLayer="zone_pop_bfe4476c_6650_4a33_8a04_c3a7996f0146" layerName="POP Zones" id="structures_to_pop" layerId="zone_pop_bfe4476c_6650_4a33_8a04_c3a7996f0146" providerKey="postgres">
-      <fieldRef referencedField="id" referencingField="zone_pop_id"/>
-    </relation>
-  </referencedLayers>
-  <referencingLayers>
-    <relation referencingLayer="v_element_documents_list_08883c0e_8f41_49f0_b8a4_2bbe21af281e" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;" name="docs_element_structure" referencedLayer="structures_ba4866c6_ef84_4637_8654_5abe13db0401" layerName="v_element_documents_list" id="docs_element_structure" layerId="v_element_documents_list_08883c0e_8f41_49f0_b8a4_2bbe21af281e" providerKey="postgres">
-      <fieldRef referencedField="id" referencingField="element_id"/>
-    </relation>
-    <relation referencingLayer="cables_560d6313_e5cf_46a3_9c27_5283dd054086" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)" name="rel_cables_from_end" referencedLayer="structures_ba4866c6_ef84_4637_8654_5abe13db0401" layerName="Cables" id="rel_cables_from_end" layerId="cables_560d6313_e5cf_46a3_9c27_5283dd054086" providerKey="postgres">
-      <fieldRef referencedField="id" referencingField="end_point_id"/>
-    </relation>
-    <relation referencingLayer="cables_560d6313_e5cf_46a3_9c27_5283dd054086" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;cables&quot; (geom)" name="rel_cables_from_start" referencedLayer="structures_ba4866c6_ef84_4637_8654_5abe13db0401" layerName="Cables" id="rel_cables_from_start" layerId="cables_560d6313_e5cf_46a3_9c27_5283dd054086" providerKey="postgres">
-      <fieldRef referencedField="id" referencingField="start_point_id"/>
-    </relation>
-    <relation referencingLayer="subducts_a5d7e019_4eee_41d6_b386_4b07016b6769" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;subducts&quot; (geom)" name="rel_subducts_from_end" referencedLayer="structures_ba4866c6_ef84_4637_8654_5abe13db0401" layerName="Subducts" id="rel_subducts_from_end" layerId="subducts_a5d7e019_4eee_41d6_b386_4b07016b6769" providerKey="postgres">
-      <fieldRef referencedField="id" referencingField="end_structure_id"/>
-    </relation>
-    <relation referencingLayer="subducts_a5d7e019_4eee_41d6_b386_4b07016b6769" strength="Association" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;subducts&quot; (geom)" name="rel_subducts_from_start" referencedLayer="structures_ba4866c6_ef84_4637_8654_5abe13db0401" layerName="Subducts" id="rel_subducts_from_start" layerId="subducts_a5d7e019_4eee_41d6_b386_4b07016b6769" providerKey="postgres">
-      <fieldRef referencedField="id" referencingField="start_structure_id"/>
-    </relation>
-  </referencingLayers>
+  <!-- Relations creees dynamiquement par le plugin Constructel Bridge (RELATION_DEFS) -->
+  <referencedLayers/>
+  <referencingLayers/>
   <fieldConfiguration>
     <field configurationFlags="NoFlag" name="id">
       <editWidget type="TextEdit">
