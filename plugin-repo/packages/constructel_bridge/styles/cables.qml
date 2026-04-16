@@ -590,7 +590,7 @@
             <Option type="QString" value="postgres" name="LayerProviderName"/>
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
-            <Option type="bool" value="false" name="UseCompleter"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
             <Option type="QString" value="code" name="Value"/>
           </Option>
         </config>
@@ -608,8 +608,8 @@
             <Option type="QString" value="postgres" name="LayerProviderName"/>
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
-            <Option type="bool" value="false" name="UseCompleter"/>
-            <Option type="QString" value="name" name="Value"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
+            <Option type="QString" value="code" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -1001,6 +1001,16 @@
   <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
+    <actionsetting type="5" id="{action-open-doc-folder}" name="Ouvrir dossier SharePoint" shortTitle="SharePoint" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFolder.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "doc_folder_url" %]</expression>
+    </actionsetting>
+    <actionsetting type="5" id="{action-open-primary-pdf}" name="Ouvrir PDF principal" shortTitle="PDF" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFile.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "primary_pdf_url" %]</expression>
+    </actionsetting>
   </attributeactions>
   <attributetableconfig sortOrder="0" sortExpression="" actionWidgetStyle="dropDown">
     <columns>
@@ -1107,7 +1117,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="3" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📅 Dates">
+      <attributeEditorContainer type="GroupBox" columnCount="3" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="1" groupBox="1" horizontalStretch="0" visibilityExpression="&quot;status&quot; IS NOT NULL AND &quot;status&quot; != 'CP'" showLabel="1" name="📅 Dates">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1162,7 +1172,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📊 OTDR Measurements">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="1" groupBox="1" horizontalStretch="0" visibilityExpression="&quot;status&quot; IN ('MEASURED', 'AS_BUILT')" showLabel="1" name="📊 OTDR Measurements">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
