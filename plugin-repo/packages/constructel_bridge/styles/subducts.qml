@@ -501,7 +501,7 @@
     <rules key="{main}">
       <rule key="{label_subducts}" scalemaxdenom="3000" scalemindenom="1">
         <settings calloutType="simple">
-          <text-style fontStrikeout="0" fontSize="7" fontWordSpacing="0" useSubstitutions="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" capitalization="0" forcedItalic="0" fontLetterSpacing="0" fontUnderline="0" blendMode="0" tabStopDistance="80" multilineHeight="1" fontWeight="50" textColor="50,50,50,255,rgb:0.1960784,0.1960784,0.1960784,1" tabStopDistanceUnit="Point" forcedBold="0" stretchFactor="100" allowHtml="0" fontKerning="1" fontSizeUnit="Point" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" multilineHeightUnit="Percentage" fieldName="CASE WHEN &quot;color&quot; IS NOT NULL AND &quot;numero&quot; IS NOT NULL THEN &quot;color&quot; || ' #' || &quot;numero&quot; WHEN &quot;label&quot; IS NOT NULL THEN &quot;label&quot; ELSE 'SD' END" fontItalic="0" textOrientation="horizontal" fontSizeMapUnitScale="3x:0,0,0,0,0,0" namedStyle="" legendString="Aa" isExpression="1" fontFamily="Arial">
+          <text-style fontStrikeout="0" fontSize="7" fontWordSpacing="0" useSubstitutions="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" capitalization="0" forcedItalic="0" fontLetterSpacing="0" fontUnderline="0" blendMode="0" tabStopDistance="80" multilineHeight="1" fontWeight="50" textColor="50,50,50,255,rgb:0.1960784,0.1960784,0.1960784,1" tabStopDistanceUnit="Point" forcedBold="0" stretchFactor="100" allowHtml="0" fontKerning="1" fontSizeUnit="Point" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" multilineHeightUnit="Percentage" fieldName="CASE WHEN &quot;marlin_id&quot; IS NOT NULL THEN &quot;marlin_id&quot; ELSE 'SD ' || left(&quot;id&quot;::text, 8) END" fontItalic="0" textOrientation="horizontal" fontSizeMapUnitScale="3x:0,0,0,0,0,0" namedStyle="" legendString="Aa" isExpression="1" fontFamily="Arial">
             <families/>
             <text-buffer bufferSizeMapUnitScale="3x:0,0,0,0,0,0" bufferSizeUnits="MM" bufferOpacity="1" bufferSize="0.5" bufferDraw="1" bufferBlendMode="0" bufferColor="255,255,255,200,rgb:1,1,1,0.7843137" bufferNoFill="0" bufferJoinStyle="128"/>
             <text-mask maskSizeUnits="MM" maskJoinStyle="128" maskOpacity="1" maskType="0" maskSize="1.5" maskSize2="1.5" maskEnabled="0" maskSizeMapUnitScale="3x:0,0,0,0,0,0" maskedSymbolLayers=""/>
@@ -603,7 +603,7 @@
       <Option type="int" value="30" name="QFieldSync/tracking_time_requirement_interval_seconds"/>
       <Option type="int" value="0" name="QFieldSync/value_map_button_interface_threshold"/>
       <Option type="List" name="dualview/previewExpressions">
-        <Option type="QString" value="&quot;label&quot;"/>
+        <Option type="QString" value="coalesce(&quot;marlin_id&quot;, left(&quot;id&quot;::text, 8))"/>
       </Option>
       <Option type="int" value="0" name="embeddedWidgets/count"/>
       <Option type="QString" value="01_suivi_travaux" name="styleCategory"/>
@@ -699,7 +699,7 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="false" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="ducts_4ea1455d_c8a5_4a85_b419_a3507704954d" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="ducts" name="LayerName"/>
             <Option type="QString" value="coalesce(nomenclature, 'Duct ' || left(id::text, 8))" name="Value"/>
           </Option>
@@ -779,7 +779,7 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="cables_954ed9bd_a418_4aa8_ae55_2f34cbaedd78" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="cables" name="LayerName"/>
             <Option type="bool" value="true" name="OrderByValue"/>
             <Option type="QString" value="coalesce(nomenclature, name)" name="Value"/>
@@ -794,7 +794,7 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="structures" name="LayerName"/>
             <Option type="bool" value="true" name="OrderByValue"/>
             <Option type="QString" value="coalesce(nomenclature, label)" name="Value"/>
@@ -809,7 +809,7 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="structures_9b1e4129_9732_4db4_9c0c_267be688af4f" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="structures" name="LayerName"/>
             <Option type="bool" value="true" name="OrderByValue"/>
             <Option type="QString" value="coalesce(nomenclature, label)" name="Value"/>
@@ -854,18 +854,18 @@
   </fieldConfiguration>
   <aliases>
     <alias index="0" field="id" name="ID"/>
-    <alias index="1" field="zone_pop_id" name="Zona POP"/>
-    <alias index="2" field="duct_id" name="Ducto principal"/>
-    <alias index="3" field="zone_mro_id" name="Zona MRO"/>
-    <alias index="4" field="marlin_id" name="ID Marlin"/>
-    <alias index="5" field="model" name="Modelo"/>
-    <alias index="6" field="status" name="Estado"/>
-    <alias index="7" field="cable_id" name="Cabo"/>
-    <alias index="8" field="start_structure_id" name="Estrutura inicio"/>
-    <alias index="9" field="end_structure_id" name="Estrutura fim"/>
+    <alias index="1" field="zone_pop_id" name="POP Zone"/>
+    <alias index="2" field="duct_id" name="Parent Duct"/>
+    <alias index="3" field="zone_mro_id" name="MRO Zone"/>
+    <alias index="4" field="marlin_id" name="Marlin ID"/>
+    <alias index="5" field="model" name="Model"/>
+    <alias index="6" field="status" name="Status"/>
+    <alias index="7" field="cable_id" name="Cable"/>
+    <alias index="8" field="start_structure_id" name="Start Structure"/>
+    <alias index="9" field="end_structure_id" name="End Structure"/>
     <alias index="10" field="source_data" name="Data Source"/>
-    <alias index="11" field="created_at" name="Criado em"/>
-    <alias index="12" field="updated_at" name="Atualizado em"/>
+    <alias index="11" field="created_at" name="Created At"/>
+    <alias index="12" field="updated_at" name="Updated At"/>
   </aliases>
   <defaults>
     <default expression="" field="id" applyOnUpdate="0"/>
@@ -966,11 +966,11 @@ def my_form_open(dialog, layer, feature):
     <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
       <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
     </labelStyle>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🎯 General">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="General">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="⚡ Acoes Terreno">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Field Actions">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -980,7 +980,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🏷️ Identification">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Identification">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -996,11 +996,11 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🔗 Connections">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Technical">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🚧 Ducto">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Parent Duct">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1010,7 +1010,37 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="📍 Zones">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Endpoints">
+        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+        </labelStyle>
+        <attributeEditorField index="8" verticalStretch="0" horizontalStretch="1" showLabel="1" name="start_structure_id">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField index="9" verticalStretch="0" horizontalStretch="1" showLabel="1" name="end_structure_id">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+      </attributeEditorContainer>
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Cable">
+        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+        </labelStyle>
+        <attributeEditorField index="7" verticalStretch="0" horizontalStretch="1" showLabel="1" name="cable_id">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+      </attributeEditorContainer>
+    </attributeEditorContainer>
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Location">
+      <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+        <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+      </labelStyle>
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Zones">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1026,11 +1056,11 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="ℹ️ Info">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Info">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🔑 Identifier">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="IDs">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1040,7 +1070,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="💾 Source">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Source &amp; Audit">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1049,11 +1079,6 @@ def my_form_open(dialog, layer, feature):
             <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
           </labelStyle>
         </attributeEditorField>
-      </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="📊 Audit">
-        <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
-          <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
-        </labelStyle>
         <attributeEditorField index="11" verticalStretch="0" horizontalStretch="1" showLabel="1" name="created_at">
           <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
             <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
@@ -1073,7 +1098,6 @@ def my_form_open(dialog, layer, feature):
     <field editable="0" name="duct_id"/>
     <field editable="0" name="end_structure_id"/>
     <field editable="0" name="id"/>
-    <field editable="0" name="is_occupied"/>
     <field editable="1" name="marlin_id"/>
     <field editable="0" name="model"/>
     <field editable="1" name="source_data"/>
@@ -1089,7 +1113,6 @@ def my_form_open(dialog, layer, feature):
     <field labelOnTop="0" name="duct_id"/>
     <field labelOnTop="0" name="end_structure_id"/>
     <field labelOnTop="0" name="id"/>
-    <field labelOnTop="0" name="is_occupied"/>
     <field labelOnTop="0" name="marlin_id"/>
     <field labelOnTop="0" name="model"/>
     <field labelOnTop="0" name="source_data"/>
@@ -1101,16 +1124,12 @@ def my_form_open(dialog, layer, feature):
   </labelOnTop>
   <reuseLastValue>
     <field reuseLastValue="0" name="cable_id"/>
-    <field reuseLastValue="0" name="color"/>
     <field reuseLastValue="0" name="created_at"/>
     <field reuseLastValue="0" name="duct_id"/>
     <field reuseLastValue="0" name="end_structure_id"/>
     <field reuseLastValue="0" name="id"/>
-    <field reuseLastValue="0" name="is_occupied"/>
-    <field reuseLastValue="0" name="label"/>
     <field reuseLastValue="0" name="marlin_id"/>
     <field reuseLastValue="0" name="model"/>
-    <field reuseLastValue="0" name="number"/>
     <field reuseLastValue="0" name="source_data"/>
     <field reuseLastValue="0" name="start_structure_id"/>
     <field reuseLastValue="0" name="status"/>
@@ -1120,7 +1139,7 @@ def my_form_open(dialog, layer, feature):
   </reuseLastValue>
   <dataDefinedFieldProperties/>
   <widgets/>
-  <previewExpression>"label"</previewExpression>
-  <mapTip enabled="1">&lt;div style="font-family:Arial;font-size:11px;background:#fff8e1;padding:8px;border-radius:6px;border:1px solid #ffcc80;">&lt;strong>🔸 [% coalesce("label", 'Subduct #' || "number") %]&lt;/strong>&lt;br/>&lt;span style="color:#e65100;">🎨 [% coalesce("color", '—') %] | 🔢 N° [% coalesce("number", '—') %]&lt;/span>[% IF "is_occupied" = true %]&lt;br/>&lt;span style="color:#c62828;font-weight:bold;">✅ Occupé&lt;/span>[% ELSE %]&lt;br/>&lt;span style="color:#2e7d32;">⬜ Libre&lt;/span>[% END %]&lt;br/>&lt;em style="color:#666;font-size:10px;">🔄 [% "status" %]&lt;/em>&lt;/div></mapTip>
+  <previewExpression>coalesce("marlin_id", left("id"::text, 8))</previewExpression>
+  <mapTip enabled="1">&lt;div style="font-family:Arial;font-size:11px;background:#fff8e1;padding:8px;border-radius:6px;border:1px solid #ffcc80;">&lt;strong>🔸 Subduct [% coalesce("marlin_id", left("id"::text, 8)) %]&lt;/strong>&lt;br/>&lt;span style="color:#e65100;">📦 [% coalesce("model", '—') %]&lt;/span>[% IF "cable_id" IS NOT NULL %]&lt;br/>&lt;span style="color:#c62828;font-weight:bold;">🔌 Cabo associe&lt;/span>[% ELSE %]&lt;br/>&lt;span style="color:#2e7d32;">⬜ Libre&lt;/span>[% END %]&lt;br/>&lt;em style="color:#666;font-size:10px;">🔄 [% "status" %]&lt;/em>&lt;/div></mapTip>
   <layerGeometryType>1</layerGeometryType>
 </qgis>

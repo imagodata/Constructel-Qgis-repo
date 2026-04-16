@@ -120,26 +120,6 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
         "connection_date":         {"fr": "Date raccordement",  "en": "Connection date",        "pt": "Data ligacao"},
     },
 
-    # -----------------------------------------------------------------
-    # infra.topology_violations
-    # -----------------------------------------------------------------
-    "topology_violations": {
-        "id":                    {"fr": "ID",                  "en": "ID",                     "pt": "ID"},
-        "violation_type":        {"fr": "Type violation",      "en": "Violation type",         "pt": "Tipo violacao"},
-        "severity":              {"fr": "Severite",            "en": "Severity",               "pt": "Severidade"},
-        "element_type":          {"fr": "Type element",        "en": "Element type",           "pt": "Tipo elemento"},
-        "element_id":            {"fr": "ID element",          "en": "Element ID",             "pt": "ID elemento"},
-        "related_element_type":  {"fr": "Type element lie",    "en": "Related element type",   "pt": "Tipo elemento rel."},
-        "related_element_id":    {"fr": "ID element lie",      "en": "Related element ID",     "pt": "ID elemento rel."},
-        "description":           {"fr": "Description",         "en": "Description",            "pt": "Descricao"},
-        "metric_value":          {"fr": "Valeur metrique",     "en": "Metric value",           "pt": "Valor metrico"},
-        "metric_unit":           {"fr": "Unite",               "en": "Unit",                   "pt": "Unidade"},
-        "geom":                  {"fr": "Geometrie",           "en": "Geometry",               "pt": "Geometria"},
-        "detected_at":           {"fr": "Detecte le",          "en": "Detected at",            "pt": "Detetado em"},
-        "resolved_at":           {"fr": "Resolu le",           "en": "Resolved at",            "pt": "Resolvido em"},
-        "resolved_by":           {"fr": "Resolu par",          "en": "Resolved by",            "pt": "Resolvido por"},
-        "notes":                 {"fr": "Notes",               "en": "Notes",                  "pt": "Notas"},
-    },
 
     # -----------------------------------------------------------------
     # infra.zone_mro
@@ -429,5 +409,4 @@ LAYER_DISPLAY_NAMES: dict[str, dict[str, str]] = {
     "zone_pop":           {"fr": "Zones POP",            "en": "POP Zones",            "pt": "Zonas POP"},
     "zone_distribution":  {"fr": "Zones Distribution",   "en": "Distribution Zones",   "pt": "Zonas Distribuicao"},
     "zone_drop":          {"fr": "Zones Drop",           "en": "Drop Zones",           "pt": "Zonas Drop"},
-    "topology_violations": {"fr": "Violations topologie", "en": "Topology violations",  "pt": "Violacoes topologia"},
 }
