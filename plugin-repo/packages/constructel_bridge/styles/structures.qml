@@ -1637,11 +1637,11 @@
             <Option name="LayerSource" type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
-            <Option name="OrderByField" type="bool" value="false"/>
-            <Option name="OrderByFieldName" type="QString" value="id"/>
-            <Option name="OrderByKey" type="bool" value="true"/>
+            <Option name="OrderByField" type="bool" value="true"/>
+            <Option name="OrderByFieldName" type="QString" value="code"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="false"/>
-            <Option name="UseCompleter" type="bool" value="false"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
             <Option name="Value" type="QString" value="code"/>
           </Option>
         </config>
@@ -1657,7 +1657,7 @@
             <Option name="Description" type="invalid"/>
             <Option name="DisplayGroupName" type="bool" value="false"/>
             <Option name="FilterExpression" type="invalid"/>
-            <Option name="Group" type="QString" value="name"/>
+            <Option name="Group" type="QString" value="code"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="QString" value=""/>
             <Option name="LayerName" type="QString" value="zone_mro"/>
@@ -1665,12 +1665,12 @@
             <Option name="LayerSource" type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygonZ checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_mro&quot; (geom)"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
-            <Option name="OrderByField" type="bool" value="false"/>
-            <Option name="OrderByFieldName" type="QString" value="id"/>
-            <Option name="OrderByKey" type="bool" value="true"/>
+            <Option name="OrderByField" type="bool" value="true"/>
+            <Option name="OrderByFieldName" type="QString" value="code"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="false"/>
-            <Option name="UseCompleter" type="bool" value="false"/>
-            <Option name="Value" type="QString" value="name"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
+            <Option name="Value" type="QString" value="code"/>
           </Option>
         </config>
       </editWidget>
@@ -1779,13 +1779,15 @@
           <Option type="Map">
             <Option name="AllowMulti" type="bool" value="false"/>
             <Option name="AllowNull" type="bool" value="true"/>
+            <Option name="CompleterMatchFlags" type="int" value="2"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="QString" value=""/>
             <Option name="LayerName" type="QString" value="demand_points"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="LayerSource" type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;demand_points&quot; (geom)"/>
             <Option name="OrderByValue" type="bool" value="true"/>
-            <Option name="Value" type="QString" value="identifier"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
+            <Option name="Value" type="QString" value="coalesce(homecount, 0) || ' — ' || coalesce(full_address, street || ' ' || street_number || ', ' || city, identifier)"/>
           </Option>
         </config>
       </editWidget>
@@ -2008,6 +2010,16 @@
   <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
+    <actionsetting type="5" id="{action-open-doc-folder}" name="Ouvrir dossier SharePoint" shortTitle="SharePoint" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFolder.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "doc_folder_url" %]</expression>
+    </actionsetting>
+    <actionsetting type="5" id="{action-open-primary-pdf}" name="Ouvrir PDF principal" shortTitle="PDF" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFile.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "primary_pdf_url" %]</expression>
+    </actionsetting>
   </attributeactions>
   <attributetableconfig sortOrder="0" sortExpression="&quot;id&quot;" actionWidgetStyle="dropDown">
     <columns>
@@ -2100,7 +2112,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer showLabel="1" collapsed="0" columnCount="3" name="📅 Dates" collapsedExpression="" type="GroupBox" collapsedExpressionEnabled="0" visibilityExpression="" verticalStretch="0" visibilityExpressionEnabled="0" horizontalStretch="0" groupBox="1">
+      <attributeEditorContainer showLabel="1" collapsed="0" columnCount="3" name="📅 Dates" collapsedExpression="" type="GroupBox" collapsedExpressionEnabled="0" visibilityExpression="&quot;status&quot; IS NOT NULL AND &quot;status&quot; != 'CP'" verticalStretch="0" visibilityExpressionEnabled="1" horizontalStretch="0" groupBox="1">
         <labelStyle overrideLabelFont="0" overrideLabelColor="0" labelColor="">
           <labelFont description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" italic="0" strikethrough="0" underline="0" style="" bold="0"/>
         </labelStyle>

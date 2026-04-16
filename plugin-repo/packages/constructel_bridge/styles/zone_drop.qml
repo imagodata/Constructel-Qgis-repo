@@ -695,17 +695,17 @@
             <Option type="invalid" name="FilterExpression"/>
             <Option type="QString" value="code" name="Group"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_pop" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
             <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
-            <Option type="bool" value="false" name="OrderByField"/>
-            <Option type="QString" value="id" name="OrderByFieldName"/>
-            <Option type="bool" value="true" name="OrderByKey"/>
+            <Option type="bool" value="true" name="OrderByField"/>
+            <Option type="QString" value="code" name="OrderByFieldName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
-            <Option type="bool" value="false" name="UseCompleter"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
             <Option type="QString" value="code" name="Value"/>
           </Option>
         </config>
@@ -721,20 +721,20 @@
             <Option type="invalid" name="Description"/>
             <Option type="bool" value="false" name="DisplayGroupName"/>
             <Option type="invalid" name="FilterExpression"/>
-            <Option type="QString" value="name" name="Group"/>
+            <Option type="QString" value="code" name="Group"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_mro_033ce78e_83b7_4098_bdb3_8bf371107285" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_mro" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
             <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygonZ checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_mro&quot; (geom)" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
-            <Option type="bool" value="false" name="OrderByField"/>
-            <Option type="QString" value="id" name="OrderByFieldName"/>
-            <Option type="bool" value="true" name="OrderByKey"/>
+            <Option type="bool" value="true" name="OrderByField"/>
+            <Option type="QString" value="code" name="OrderByFieldName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
-            <Option type="bool" value="false" name="UseCompleter"/>
-            <Option type="QString" value="name" name="Value"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
+            <Option type="QString" value="code" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -751,18 +751,18 @@
             <Option type="invalid" name="FilterExpression"/>
             <Option type="invalid" name="Group"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_distribution_48b32be7_1696_4a79_8c32_c677d10f811b" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_distribution" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
             <Option type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_distribution&quot; (geom)" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
-            <Option type="bool" value="false" name="OrderByField"/>
-            <Option type="QString" value="id" name="OrderByFieldName"/>
-            <Option type="bool" value="true" name="OrderByKey"/>
+            <Option type="bool" value="true" name="OrderByField"/>
+            <Option type="QString" value="nomenclature" name="OrderByFieldName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
-            <Option type="bool" value="false" name="UseCompleter"/>
-            <Option type="QString" value="breakout_letter" name="Value"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
+            <Option type="QString" value="nomenclature" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -1120,7 +1120,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Summary">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="📊 Summary">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1135,7 +1135,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Area">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="📏 Area">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1145,7 +1145,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Metrics">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="📊 Metrics">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1185,7 +1185,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Zones">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🗺️ Zones">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1205,7 +1205,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Address">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="📍 Address">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1230,7 +1230,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="IDs">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="🔑 IDs">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1245,7 +1245,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="Source &amp; Audit">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="1" visibilityExpression="" showLabel="1" name="💾 Source &amp; Audit">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>

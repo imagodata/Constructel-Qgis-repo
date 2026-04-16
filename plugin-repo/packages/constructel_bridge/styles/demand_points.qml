@@ -789,9 +789,12 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_pop_834471d5_feab_46dd_b891_0ad8d2e943b1" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_pop" name="LayerName"/>
+            <Option type="QString" value="postgres" name="LayerProviderName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
             <Option type="QString" value="code" name="Value"/>
           </Option>
         </config>
@@ -804,10 +807,13 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_mro_033ce78e_83b7_4098_bdb3_8bf371107285" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_mro" name="LayerName"/>
+            <Option type="QString" value="postgres" name="LayerProviderName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
-            <Option type="QString" value="name" name="Value"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
+            <Option type="QString" value="code" name="Value"/>
           </Option>
         </config>
       </editWidget>
@@ -819,9 +825,12 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_drop_60ab71d7_1014_4b06_8dbd_b3e4d4adbe91" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_drop" name="LayerName"/>
+            <Option type="QString" value="postgres" name="LayerProviderName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
             <Option type="QString" value="nomenclature" name="Value"/>
           </Option>
         </config>
@@ -834,9 +843,12 @@
             <Option type="bool" value="false" name="AllowMulti"/>
             <Option type="bool" value="true" name="AllowNull"/>
             <Option type="QString" value="id" name="Key"/>
-            <Option type="QString" value="zone_distribution_48b32be7_1696_4a79_8c32_c677d10f811b" name="Layer"/>
+            <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="zone_distribution" name="LayerName"/>
+            <Option type="QString" value="postgres" name="LayerProviderName"/>
+            <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="true" name="OrderByValue"/>
+            <Option type="bool" value="true" name="UseCompleter"/>
             <Option type="QString" value="nomenclature" name="Value"/>
           </Option>
         </config>
@@ -1140,6 +1152,16 @@
   <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
+    <actionsetting type="5" id="{action-open-doc-folder}" name="Ouvrir dossier SharePoint" shortTitle="SharePoint" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFolder.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "doc_folder_url" %]</expression>
+    </actionsetting>
+    <actionsetting type="5" id="{action-open-primary-pdf}" name="Ouvrir PDF principal" shortTitle="PDF" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFile.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "primary_pdf_url" %]</expression>
+    </actionsetting>
   </attributeactions>
   <attributetableconfig sortOrder="0" sortExpression="&quot;id&quot;" actionWidgetStyle="dropDown">
     <columns>
@@ -1204,7 +1226,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Field Actions">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="⚡ Field Actions">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1214,7 +1236,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Identification">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🏷️ Identification">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1229,7 +1251,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Dates">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📅 Dates">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1249,7 +1271,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Address Components">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📍 Address Components">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1274,7 +1296,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Details">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📏 Details">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1289,7 +1311,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Main Zones">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🗺️ Main Zones">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1304,7 +1326,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Distribution Zones">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🗺️ Distribution Zones">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1324,7 +1346,7 @@ def my_form_open(dialog, layer, feature):
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="IDs">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="🔑 IDs">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
@@ -1339,7 +1361,7 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
-      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Source &amp; Audit">
+      <attributeEditorContainer type="GroupBox" columnCount="2" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="💾 Source &amp; Audit">
         <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
           <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
         </labelStyle>
