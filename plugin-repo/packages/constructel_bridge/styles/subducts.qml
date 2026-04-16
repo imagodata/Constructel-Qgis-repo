@@ -879,8 +879,8 @@
     <default expression="" field="start_structure_id" applyOnUpdate="0"/>
     <default expression="" field="end_structure_id" applyOnUpdate="0"/>
     <default expression="" field="source_data" applyOnUpdate="0"/>
-    <default expression="" field="created_at" applyOnUpdate="0"/>
-    <default expression="" field="updated_at" applyOnUpdate="0"/>
+    <default expression="now()" field="created_at" applyOnUpdate="0"/>
+    <default expression="now()" field="updated_at" applyOnUpdate="1"/>
   </defaults>
   <constraints>
     <constraint constraints="3" unique_strength="1" exp_strength="0" notnull_strength="1" field="id"/>
@@ -889,7 +889,7 @@
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="zone_mro_id"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="marlin_id"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="model"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="status"/>
+    <constraint constraints="1" unique_strength="0" exp_strength="0" notnull_strength="1" field="status"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="cable_id"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="start_structure_id"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="end_structure_id"/>
@@ -1090,6 +1090,32 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
+    </attributeEditorContainer>
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📄 Documents">
+      <attributeEditorContainer type="GroupBox" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="1" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📎 Documents liés">
+        <attributeEditorField showLabel="1" name="doc_count" verticalStretch="0" horizontalStretch="0" index="-1">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" name="doc_types" verticalStretch="0" horizontalStretch="0" index="-1">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" name="latest_doc_date" verticalStretch="0" horizontalStretch="0" index="-1">
+          <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+      </attributeEditorContainer>
+      <attributeEditorRelation showLabel="1" nmRelationId="" name="docs_element_subduct" label="Document List" verticalStretch="1" relationWidgetTypeId="relation_editor" relation="docs_element_subduct" horizontalStretch="0" forceSuppressFormPopup="0">
+        <editor_configuration type="Map">
+          <Option type="bool" name="allow_add_child_feature_with_no_geometry" value="false"/>
+          <Option type="QString" name="buttons" value="AllButtons"/>
+          <Option type="bool" name="show_first_feature" value="true"/>
+        </editor_configuration>
+      </attributeEditorRelation>
     </attributeEditorContainer>
   </attributeEditorForm>
   <editable>

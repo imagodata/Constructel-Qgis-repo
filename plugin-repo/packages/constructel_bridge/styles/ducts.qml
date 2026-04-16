@@ -992,8 +992,8 @@
     <default expression="" field="source_data" applyOnUpdate="0"/>
     <default expression="0" field="doc_count" applyOnUpdate="0"/>
     <default expression="" field="doc_folder_url" applyOnUpdate="0"/>
-    <default expression="" field="created_at" applyOnUpdate="0"/>
-    <default expression="" field="updated_at" applyOnUpdate="0"/>
+    <default expression="now()" field="created_at" applyOnUpdate="0"/>
+    <default expression="now()" field="updated_at" applyOnUpdate="1"/>
   </defaults>
   <constraints>
     <constraint constraints="3" unique_strength="1" exp_strength="0" notnull_strength="1" field="id"/>
@@ -1004,13 +1004,13 @@
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="model"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="start_point_id"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="end_point_id"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="length_m"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="subduct_count"/>
+    <constraint constraints="4" unique_strength="0" exp_strength="2" notnull_strength="0" field="length_m"/>
+    <constraint constraints="4" unique_strength="0" exp_strength="2" notnull_strength="0" field="subduct_count"/>
     <constraint constraints="1" unique_strength="0" exp_strength="0" notnull_strength="1" field="status"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="transition_source"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="planned_date"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="completion_date"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="validation_date"/>
+    <constraint constraints="4" unique_strength="0" exp_strength="2" notnull_strength="0" field="validation_date"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="source_data"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="doc_count"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="doc_folder_url"/>
@@ -1026,13 +1026,13 @@
     <constraint desc="" exp="" field="model"/>
     <constraint desc="" exp="" field="start_point_id"/>
     <constraint desc="" exp="" field="end_point_id"/>
-    <constraint desc="" exp="" field="length_m"/>
-    <constraint desc="" exp="" field="subduct_count"/>
+    <constraint desc="La longueur doit être positive" exp="&quot;length_m&quot; IS NULL OR &quot;length_m&quot; > 0" field="length_m"/>
+    <constraint desc="Le nombre de sous-fourreaux doit être positif" exp="&quot;subduct_count&quot; IS NULL OR &quot;subduct_count&quot; >= 0" field="subduct_count"/>
     <constraint desc="" exp="" field="status"/>
     <constraint desc="" exp="" field="transition_source"/>
     <constraint desc="" exp="" field="planned_date"/>
     <constraint desc="" exp="" field="completion_date"/>
-    <constraint desc="" exp="" field="validation_date"/>
+    <constraint desc="La date de validation doit être postérieure à la réalisation" exp="&quot;validation_date&quot; IS NULL OR &quot;completion_date&quot; IS NULL OR &quot;validation_date&quot; >= &quot;completion_date&quot;" field="validation_date"/>
     <constraint desc="" exp="" field="source_data"/>
     <constraint desc="" exp="" field="doc_count"/>
     <constraint desc="" exp="" field="doc_folder_url"/>

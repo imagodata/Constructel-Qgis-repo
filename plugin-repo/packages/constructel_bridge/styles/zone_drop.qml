@@ -1271,7 +1271,7 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Documents">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📄 Documents">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>

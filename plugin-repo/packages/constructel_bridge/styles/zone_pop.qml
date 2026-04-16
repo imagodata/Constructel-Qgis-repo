@@ -1060,7 +1060,7 @@
     <default expression="" field="total_cables" applyOnUpdate="0"/>
     <default expression="" field="total_breakouts" applyOnUpdate="0"/>
     <default expression="" field="nb_distribution_clusters" applyOnUpdate="0"/>
-    <default expression="" field="dp_sum_total" applyOnUpdate="0"/>
+    <default expression="0" field="dp_sum_total" applyOnUpdate="0"/>
     <default expression="" field="dp_sum_hp" applyOnUpdate="0"/>
     <default expression="" field="dp_sum_nhp" applyOnUpdate="0"/>
     <default expression="" field="dp_sum_le" applyOnUpdate="0"/>
@@ -1073,16 +1073,16 @@
     <default expression="" field="actual_end_date" applyOnUpdate="0"/>
     <default expression="" field="reception_date" applyOnUpdate="0"/>
     <default expression="" field="commissioning_date" applyOnUpdate="0"/>
-    <default expression="" field="status" applyOnUpdate="0"/>
+    <default expression="'PLANNED'" field="status" applyOnUpdate="0"/>
     <default expression="" field="source_data" applyOnUpdate="0"/>
-    <default expression="" field="doc_count" applyOnUpdate="0"/>
+    <default expression="0" field="doc_count" applyOnUpdate="0"/>
     <default expression="" field="doc_folder_url" applyOnUpdate="0"/>
     <default expression="" field="nb_hp_sent" applyOnUpdate="0"/>
     <default expression="" field="smartwork_reference" applyOnUpdate="0"/>
     <default expression="" field="sous_traitant" applyOnUpdate="0"/>
     <default expression="" field="splicing_pct" applyOnUpdate="0"/>
-    <default expression="" field="created_at" applyOnUpdate="0"/>
-    <default expression="" field="updated_at" applyOnUpdate="0"/>
+    <default expression="now()" field="created_at" applyOnUpdate="0"/>
+    <default expression="now()" field="updated_at" applyOnUpdate="1"/>
   </defaults>
   <constraints>
     <constraint constraints="3" unique_strength="1" exp_strength="0" notnull_strength="1" field="id"/>
@@ -1519,7 +1519,7 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Documents">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📄 Documents">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>
