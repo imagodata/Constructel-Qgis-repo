@@ -1079,15 +1079,15 @@
     <default expression="" field="postal_code" applyOnUpdate="0"/>
     <default expression="" field="city" applyOnUpdate="0"/>
     <default expression="" field="homecount" applyOnUpdate="0"/>
-    <default expression="" field="status" applyOnUpdate="0"/>
+    <default expression="'CP'" field="status" applyOnUpdate="0"/>
     <default expression="" field="transition_source" applyOnUpdate="0"/>
     <default expression="" field="planning_date" applyOnUpdate="0"/>
     <default expression="" field="connection_date" applyOnUpdate="0"/>
     <default expression="" field="source_data" applyOnUpdate="0"/>
-    <default expression="" field="doc_count" applyOnUpdate="0"/>
+    <default expression="0" field="doc_count" applyOnUpdate="0"/>
     <default expression="" field="doc_folder_url" applyOnUpdate="0"/>
-    <default expression="" field="created_at" applyOnUpdate="0"/>
-    <default expression="" field="updated_at" applyOnUpdate="0"/>
+    <default expression="now()" field="created_at" applyOnUpdate="0"/>
+    <default expression="now()" field="updated_at" applyOnUpdate="1"/>
   </defaults>
   <constraints>
     <constraint constraints="3" unique_strength="1" exp_strength="0" notnull_strength="1" field="id"/>
@@ -1102,11 +1102,11 @@
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="street_number"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="postal_code"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="city"/>
-    <constraint constraints="1" unique_strength="0" exp_strength="0" notnull_strength="1" field="homecount"/>
+    <constraint constraints="5" unique_strength="0" exp_strength="2" notnull_strength="1" field="homecount"/>
     <constraint constraints="1" unique_strength="0" exp_strength="0" notnull_strength="1" field="status"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="transition_source"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="planning_date"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="connection_date"/>
+    <constraint constraints="4" unique_strength="0" exp_strength="2" notnull_strength="0" field="connection_date"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="source_data"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="doc_count"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="doc_folder_url"/>
@@ -1126,11 +1126,11 @@
     <constraint desc="" exp="" field="street_number"/>
     <constraint desc="" exp="" field="postal_code"/>
     <constraint desc="" exp="" field="city"/>
-    <constraint desc="" exp="" field="homecount"/>
+    <constraint desc="Le homecount doit être positif ou nul" exp="&quot;homecount&quot; >= 0" field="homecount"/>
     <constraint desc="" exp="" field="status"/>
     <constraint desc="" exp="" field="transition_source"/>
     <constraint desc="" exp="" field="planning_date"/>
-    <constraint desc="" exp="" field="connection_date"/>
+    <constraint desc="La date de connexion doit être postérieure à la planification" exp="&quot;connection_date&quot; IS NULL OR &quot;planning_date&quot; IS NULL OR &quot;connection_date&quot; >= &quot;planning_date&quot;" field="connection_date"/>
     <constraint desc="" exp="" field="source_data"/>
     <constraint desc="" exp="" field="doc_count"/>
     <constraint desc="" exp="" field="doc_folder_url"/>
@@ -1365,7 +1365,7 @@ def my_form_open(dialog, layer, feature):
         </attributeEditorField>
       </attributeEditorContainer>
     </attributeEditorContainer>
-    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="Documents">
+    <attributeEditorContainer type="Tab" columnCount="1" collapsedExpression="" verticalStretch="0" collapsed="0" collapsedExpressionEnabled="0" visibilityExpressionEnabled="0" groupBox="0" horizontalStretch="0" visibilityExpression="" showLabel="1" name="📄 Documents">
       <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
         <labelFont italic="0" bold="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style="" underline="0" strikethrough="0"/>
       </labelStyle>

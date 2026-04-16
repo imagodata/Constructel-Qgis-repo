@@ -943,8 +943,8 @@
     <default expression="" field="source_data" applyOnUpdate="0"/>
     <default expression="0" field="doc_count" applyOnUpdate="0"/>
     <default expression="" field="doc_folder_url" applyOnUpdate="0"/>
-    <default expression="" field="created_at" applyOnUpdate="0"/>
-    <default expression="" field="updated_at" applyOnUpdate="0"/>
+    <default expression="now()" field="created_at" applyOnUpdate="0"/>
+    <default expression="now()" field="updated_at" applyOnUpdate="1"/>
   </defaults>
   <constraints>
     <constraint constraints="3" unique_strength="1" exp_strength="0" notnull_strength="1" field="id"/>
@@ -958,13 +958,13 @@
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="breakout_letter"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="start_point_id"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="end_point_id"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="length_m"/>
+    <constraint constraints="4" unique_strength="0" exp_strength="2" notnull_strength="0" field="length_m"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="pose_type"/>
     <constraint constraints="1" unique_strength="0" exp_strength="0" notnull_strength="1" field="status"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="transition_source"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="blowing_date"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="measurement_date"/>
-    <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="validation_date"/>
+    <constraint constraints="4" unique_strength="0" exp_strength="2" notnull_strength="0" field="validation_date"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="otdr_measurements"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="source_data"/>
     <constraint constraints="0" unique_strength="0" exp_strength="0" notnull_strength="0" field="doc_count"/>
@@ -984,13 +984,13 @@
     <constraint desc="" exp="" field="breakout_letter"/>
     <constraint desc="" exp="" field="start_point_id"/>
     <constraint desc="" exp="" field="end_point_id"/>
-    <constraint desc="" exp="" field="length_m"/>
+    <constraint desc="La longueur doit être positive" exp="&quot;length_m&quot; IS NULL OR &quot;length_m&quot; > 0" field="length_m"/>
     <constraint desc="" exp="" field="pose_type"/>
     <constraint desc="" exp="" field="status"/>
     <constraint desc="" exp="" field="transition_source"/>
     <constraint desc="" exp="" field="blowing_date"/>
     <constraint desc="" exp="" field="measurement_date"/>
-    <constraint desc="" exp="" field="validation_date"/>
+    <constraint desc="La date de validation doit être postérieure au soufflage" exp="&quot;validation_date&quot; IS NULL OR &quot;blowing_date&quot; IS NULL OR &quot;validation_date&quot; >= &quot;blowing_date&quot;" field="validation_date"/>
     <constraint desc="" exp="" field="otdr_measurements"/>
     <constraint desc="" exp="" field="source_data"/>
     <constraint desc="" exp="" field="doc_count"/>
