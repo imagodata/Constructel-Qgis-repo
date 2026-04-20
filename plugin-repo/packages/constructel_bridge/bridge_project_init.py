@@ -212,9 +212,10 @@ EMBEDDED_STYLES = {
 # =====================================================================
 
 # Couches infra de base (reutilise dans les templates)
+# NB: subducts est volontairement exclu — decoche par defaut dans tous les profils
 _INFRA_BASE = {
     "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-    "structures", "ducts", "subducts", "cables", "splices",
+    "structures", "ducts", "cables", "splices",
     "demand_points", "topo_violations",
     "docs_elements", "v_form_lists",
 }
@@ -264,7 +265,7 @@ TEMPLATES = {
     "complet": {
         "label": "Projet complet",
         "description": "Toutes les couches : infra + chantier + OSIRIS + cadastre + urbanisme",
-        "layers": {k for k, *_ in LAYER_CATALOG},
+        "layers": {k for k, *_ in LAYER_CATALOG} - {"subducts"},
         "basemap": True,
     },
 }
