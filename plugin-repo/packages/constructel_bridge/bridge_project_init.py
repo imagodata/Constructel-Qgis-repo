@@ -125,7 +125,6 @@ LAYER_CATALOG = [
     ("cables",             "Infrastructure",  "infra", "cables",             "geom", "id",  "Cables"),
     ("subducts",           "Infrastructure",  "infra", "subducts",           "geom", "id",  "Sous-fourreaux"),
     ("ducts",              "Infrastructure",  "infra", "ducts",              "geom", "id",  "Conduites"),
-    ("splices",            "Infrastructure",  "infra", "structure_cable_splices", None, "id", "Soudures"),
 
     # -- Zones ------------------------------------------------------------
     ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
@@ -215,7 +214,7 @@ EMBEDDED_STYLES = {
 # NB: subducts est volontairement exclu — decoche par defaut dans tous les profils
 _INFRA_BASE = {
     "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-    "structures", "ducts", "cables", "splices",
+    "structures", "ducts", "cables",
     "demand_points", "topo_violations",
     "docs_elements", "v_form_lists",
 }
@@ -305,10 +304,6 @@ RELATION_DEFS = [
 
     # Subducts → Cables
     ("cables",         "subducts",           "cable_id",             "rel_subducts_to_cable"),
-
-    # Splices
-    ("structures",     "splices",            "structure_id",         "splices_to_structure"),
-    ("cables",         "splices",            "cable_id",             "splices_to_cable"),
 
     # Documents → Infrastructure (relation editors dans onglet Documentos)
     ("structures",     "docs_elements",      "element_id",           "docs_element_structure"),
@@ -1070,7 +1065,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
                     'SELECT styleqml::text FROM public.layer_styles '
                     "WHERE f_table_schema = %s AND f_table_name = %s "
                     "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
-                    "AND \"styleName\" = 'default' LIMIT 1",
+                    "AND stylename = 'default' LIMIT 1",
                     (schema, table, geom_col),
                 )
                 row = cur.fetchone()
