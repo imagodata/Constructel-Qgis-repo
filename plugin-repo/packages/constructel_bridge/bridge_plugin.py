@@ -41,6 +41,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
+from .bridge_expressions import register_expressions, unregister_expressions
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
@@ -260,6 +261,7 @@ class ConstructelBridgePlugin:
     def initGui(self):
         """Appele par QGIS au chargement du plugin."""
         init_language()
+        register_expressions()
         # Activer les macros projet pour que openProject/saveProject/closeProject
         # s'executent automatiquement (evite le bandeau "macros desactivees")
         QgsSettings().setValue("qgis/enableMacros", "Always")
@@ -391,6 +393,7 @@ class ConstructelBridgePlugin:
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
+        unregister_expressions()
         try:
             QgsProject.instance().readProject.disconnect(self._on_project_read)
         except TypeError:
@@ -867,7 +870,7 @@ class ConstructelBridgePlugin:
                         'SELECT styleqml::text FROM public.layer_styles '
                         "WHERE f_table_schema = %s AND f_table_name = %s "
                         'AND f_geometry_column = %s AND useasdefault = true '
-                        'AND "styleName" = \'default\' LIMIT 1',
+                        "AND stylename = 'default' LIMIT 1",
                         (schema, table, geom_col),
                     )
                     row = cur.fetchone()

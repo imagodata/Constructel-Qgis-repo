@@ -1721,11 +1721,11 @@
         <config>
           <Option type="Map">
             <Option name="AllowMulti" type="bool" value="false"/>
-            <Option name="AllowNull" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="true"/>
             <Option name="CompleterMatchFlags" type="int" value="2"/>
             <Option name="Description" type="invalid"/>
             <Option name="DisplayGroupName" type="bool" value="false"/>
-            <Option name="FilterExpression" type="QString" value="&quot;category&quot; = 'status_structures' AND (CASE WHEN current_value('structure_type') IS NULL OR current_value('structure_type') = '' THEN &quot;sub_type&quot; IS NULL ELSE &quot;sub_type&quot; = current_value('structure_type') END)"/>
+            <Option name="FilterExpression" type="QString" value="&quot;category&quot; = 'status_structures' AND (current_value('structure_type') IS NULL OR &quot;sub_type&quot; = current_value('structure_type'))"/>
             <Option name="Group" type="QString" value="sort_order"/>
             <Option name="Key" type="QString" value="code"/>
             <Option name="Layer" type="invalid"/>
@@ -1946,14 +1946,14 @@
   </defaults>
   <constraints>
     <constraint exp_strength="0" constraints="3" unique_strength="1" notnull_strength="1" field="id"/>
-    <constraint exp_strength="0" constraints="1" unique_strength="0" notnull_strength="1" field="zone_pop_id"/>
+    <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="zone_pop_id"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="zone_mro_id"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="marlin_id"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="nomenclature"/>
-    <constraint exp_strength="0" constraints="1" unique_strength="0" notnull_strength="1" field="structure_type"/>
+    <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="structure_type"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="label"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="is_splice_closure"/>
-    <constraint exp_strength="0" constraints="1" unique_strength="0" notnull_strength="1" field="status"/>
+    <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="status"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="transition_source"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="nearest_demand_point_id"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0" field="nearest_address"/>

@@ -2,8 +2,11 @@
 name=Constructel Bridge
 qgisMinimumVersion=3.28
 description=Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.
-version=1.3.10
-changelog=v1.3.7 - Fix: utiliser importNamedStyle(QDomDocument) au lieu de fichier temp pour charger les styles DB, recreer les relations apres les styles pour binder les panels Documents/Splices
+version=1.3.13
+changelog=v1.3.13 - Retrait couche Soudures (infra.structure_cable_splices) qui n'existe pas en BDD: suppression de la definition catalog, de l'inclusion dans _INFRA_BASE, et des relations splices_to_structure / splices_to_cable
+    v1.3.12 - Fix: requete BDD styles utilisait "styleName" (colonne inexistante) au lieu de stylename — les styles BDD ne se chargeaient pas et le plugin fallback vers QML embarques figes; simplification FilterExpression multi-edit sans @form_mode
+    v1.3.11 - Ajout fonction d'expression wyre_selected_common(schema_table, field_name) pour filtrer dynamiquement les ValueRelation en multi-edition (formulaires structures et zone_distribution)
+    v1.3.7 - Fix: utiliser importNamedStyle(QDomDocument) au lieu de fichier temp pour charger les styles DB, recreer les relations apres les styles pour binder les panels Documents/Splices
     v1.3.6 - Fix: creer les relations AVANT l'application des styles pour que les panels Documents et Splices fonctionnent sans rechargement manuel
     v1.3.5 - Fix: restauration couche splices (soudures) dans le catalogue, correction chargement styles DB pour couches sans geometrie (NULL geometry_column), relations splices/documents fonctionnelles
     v1.3.3 - Init/ajout couches: groupe Basemaps, groupe Reference, cadastre UrbIS WFS corrige, urbanisme Brussels, mode ajout sur projet existant (couches deja chargees grisees), nettoyage couches fantomes, toolbar init project

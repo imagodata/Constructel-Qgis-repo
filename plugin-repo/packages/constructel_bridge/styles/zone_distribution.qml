@@ -926,11 +926,11 @@
         <config>
           <Option type="Map">
             <Option name="AllowMulti" type="bool" value="false"/>
-            <Option name="AllowNull" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="true"/>
             <Option name="CompleterMatchFlags" type="int" value="2"/>
             <Option name="Description" type="invalid"/>
             <Option name="DisplayGroupName" type="bool" value="false"/>
-            <Option name="FilterExpression" type="QString" value="&quot;category&quot; = 'status_zone_distribution' AND (CASE WHEN current_value('zone_type') IS NULL OR current_value('zone_type') = '' THEN &quot;sub_type&quot; IS NULL ELSE &quot;sub_type&quot; = current_value('zone_type') END)"/>
+            <Option name="FilterExpression" type="QString" value="&quot;category&quot; = 'status_zone_distribution' AND (current_value('zone_type') IS NULL OR &quot;sub_type&quot; = current_value('zone_type'))"/>
             <Option name="Group" type="QString" value="sort_order"/>
             <Option name="Key" type="QString" value="code"/>
             <Option name="Layer" type="invalid"/>
