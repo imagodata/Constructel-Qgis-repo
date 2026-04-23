@@ -6,9 +6,15 @@ services:
     ports:
       - "192.168.160.31:9080:80"
       - "192.168.160.31:9081:81"
+      - "192.168.160.31:9082:82"
     volumes:
       - ./plugin-repo:/data/plugin-repo:ro
-      - ./resource-repo:/data/resource-repo:ro
+      # resource-repo: RW so the post-receive hook can refresh the working tree + rebuild ZIPs after each push
+      - ./resource-repo:/data/resource-repo:rw
+      # resource-repo.git: RW so git-http-backend can accept pushes
+      - ./resource-repo.git:/data/resource-repo.git:rw
+      # scripts: read-only, needed by the post-receive hook (build_resource_zips.sh)
+      - ./scripts:/data/scripts:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/health"]
       interval: 30s

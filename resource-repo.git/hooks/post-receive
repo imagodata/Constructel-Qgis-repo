@@ -1,3 +1,80 @@
-#!/bin/sh
-# Update info for dumb HTTP protocol after each push
-exec git update-server-info
+#!/bin/bash
+# post-receive hook - Constructel QGIS Resource Sharing
+#
+# After each push to the bare repo:
+#   1. Refresh dumb-HTTP metadata (always)
+#   2. If the working tree has been bootstrapped (marker file present),
+#      sync resource-repo/ with master and rebuild ZIP archives.
+#
+# The marker file gate prevents accidentally overwriting the live
+# resource-repo/ directory before the initial sync has been performed.
+# Enable by running scripts/sync_bare_from_worktree.sh.
+
+set -euo pipefail
+
+# Always refresh dumb-HTTP metadata
+git update-server-info
+
+GIT_DIR_ABS="$(git rev-parse --git-dir)"
+# Resolve to absolute path if relative (git-http-backend invokes with GIT_DIR="." at cwd)
+GIT_DIR_ABS="$(cd "$GIT_DIR_ABS" && pwd)"
+REPO_ROOT="$(cd "$GIT_DIR_ABS/.." && pwd)"
+WORK_TREE="$REPO_ROOT/resource-repo"
+# Marker lives inside the bare repo dir so git-clean on the work tree cannot remove it
+MARKER="$GIT_DIR_ABS/.sync-enabled"
+LEGACY_MARKER="$WORK_TREE/.sync-enabled"
+BUILD_SCRIPT="$REPO_ROOT/scripts/build_resource_zips.sh"
+LOG_PREFIX="[post-receive]"
+
+log() { echo "$LOG_PREFIX $*" >&2; }
+
+if [ ! -f "$MARKER" ] && [ ! -f "$LEGACY_MARKER" ]; then
+    log "marker $MARKER absent - worktree sync skipped"
+    log "run scripts/sync_bare_from_worktree.sh once to bootstrap"
+    exit 0
+fi
+
+if [ ! -d "$WORK_TREE" ]; then
+    log "working tree $WORK_TREE missing - skipping"
+    exit 0
+fi
+
+# stdin lines: <old-sha> <new-sha> <ref>
+MASTER_UPDATED=0
+while read -r _old _new ref; do
+    if [ "$ref" = "refs/heads/master" ] || [ "$ref" = "refs/heads/main" ]; then
+        MASTER_UPDATED=1
+    fi
+done
+
+if [ "$MASTER_UPDATED" -eq 0 ]; then
+    log "master/main not updated - worktree left untouched"
+    exit 0
+fi
+
+DEFAULT_REF=""
+if git show-ref --verify --quiet refs/heads/master; then
+    DEFAULT_REF=master
+elif git show-ref --verify --quiet refs/heads/main; then
+    DEFAULT_REF=main
+else
+    log "no master/main branch in bare repo - aborting"
+    exit 0
+fi
+
+log "syncing $WORK_TREE from $DEFAULT_REF"
+# cwd must be inside WORK_TREE so that '.' pathspecs and git-clean resolve correctly
+(
+    cd "$WORK_TREE" || exit 1
+    GIT_DIR="$GIT_DIR_ABS" GIT_WORK_TREE="$WORK_TREE" git checkout -f "$DEFAULT_REF" -- .
+    GIT_DIR="$GIT_DIR_ABS" GIT_WORK_TREE="$WORK_TREE" git clean -fd --exclude=.sync-enabled
+)
+
+if [ -x "$BUILD_SCRIPT" ]; then
+    log "rebuilding collection ZIPs"
+    "$BUILD_SCRIPT" >&2 || log "build_resource_zips.sh failed (non-fatal)"
+else
+    log "build script not found or not executable: $BUILD_SCRIPT"
+fi
+
+log "done"
