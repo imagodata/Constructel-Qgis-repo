@@ -20,9 +20,15 @@ collections_dir = sys.argv[1]
 resource_dir = sys.argv[2]
 
 os.chdir(collections_dir)
-for d in sorted(os.listdir('.')):
-    if not os.path.isdir(d):
-        continue
+existing_dirs = {d for d in os.listdir('.') if os.path.isdir(d)}
+
+# Remove orphan zips (collection dir was deleted upstream)
+for f in os.listdir('.'):
+    if f.endswith('.zip') and f[:-4] not in existing_dirs:
+        os.remove(f)
+        print(f'Removed orphan zip: {f}')
+
+for d in sorted(existing_dirs):
     zipname = os.path.join(collections_dir, f'{d}.zip')
     print(f'Zipping collection: {d}')
     with zipfile.ZipFile(zipname, 'w', zipfile.ZIP_DEFLATED) as zf:
