@@ -63,10 +63,12 @@ else
 fi
 
 log "syncing $WORK_TREE from $DEFAULT_REF"
-# cwd must be inside WORK_TREE so that '.' pathspecs and git-clean resolve correctly
+# Use `checkout -f <ref>` (no pathspec) so that files deleted in <ref> are
+# also removed from the worktree. The pathspec form `checkout -f <ref> -- .`
+# only updates listed paths and leaves stale deletions behind.
 (
     cd "$WORK_TREE" || exit 1
-    GIT_DIR="$GIT_DIR_ABS" GIT_WORK_TREE="$WORK_TREE" git checkout -f "$DEFAULT_REF" -- .
+    GIT_DIR="$GIT_DIR_ABS" GIT_WORK_TREE="$WORK_TREE" git checkout -f "$DEFAULT_REF"
     GIT_DIR="$GIT_DIR_ABS" GIT_WORK_TREE="$WORK_TREE" git clean -fd --exclude=.sync-enabled
 )
 
