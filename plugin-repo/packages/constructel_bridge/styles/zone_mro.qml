@@ -649,10 +649,10 @@
   <legend showLabelLegend="0" type="default-vector"/>
   <referencedLayers/>
   <referencingLayers>
-    <relation name="docs_element_zone_mro" referencingLayer="v_element_documents_list_4fca627a_c007_4ea1_b089_3c2acccad096" layerId="v_element_documents_list_4fca627a_c007_4ea1_b089_3c2acccad096" layerName="v_element_documents_list" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;" providerKey="postgres" id="docs_element_zone_mro" referencedLayer="zone_mro_358e74a1_211b_4d5d_8e30_0c0b37e8de11" strength="Association">
+    <relation name="docs_element_zone_mro" referencingLayer="v_element_documents_list_4fca627a_c007_4ea1_b089_3c2acccad096" layerId="v_element_documents_list_4fca627a_c007_4ea1_b089_3c2acccad096" layerName="v_element_documents_list" dataSource="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;" providerKey="postgres" id="docs_element_zone_mro" referencedLayer="zone_mro_358e74a1_211b_4d5d_8e30_0c0b37e8de11" strength="Association">
       <fieldRef referencingField="element_id" referencedField="id"/>
     </relation>
-    <relation name="zone_pop_to_mro" referencingLayer="zone_pop_a56f86aa_c4af_46d5_b112_687ec67a3fdc" layerId="zone_pop_a56f86aa_c4af_46d5_b112_687ec67a3fdc" layerName="Zones POP" dataSource="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" providerKey="postgres" id="zone_pop_to_mro" referencedLayer="zone_mro_358e74a1_211b_4d5d_8e30_0c0b37e8de11" strength="Association">
+    <relation name="zone_pop_to_mro" referencingLayer="zone_pop_a56f86aa_c4af_46d5_b112_687ec67a3fdc" layerId="zone_pop_a56f86aa_c4af_46d5_b112_687ec67a3fdc" layerName="Zones POP" dataSource="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" providerKey="postgres" id="zone_pop_to_mro" referencedLayer="zone_mro_358e74a1_211b_4d5d_8e30_0c0b37e8de11" strength="Association">
       <fieldRef referencingField="zone_mro_id" referencedField="id"/>
     </relation>
   </referencingLayers>
@@ -742,7 +742,7 @@
             <Option name="Layer" type="invalid"/>
             <Option name="LayerName" type="QString" value="v_form_lists"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
-            <Option name="LayerSource" type="QString" value="dbname='wyre_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
             <Option name="OrderByField" type="bool" value="false"/>

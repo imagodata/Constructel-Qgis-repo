@@ -915,7 +915,7 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
     uri.setConnection(
         conn_params.get("host", "localhost"),
         str(conn_params.get("port", 5432)),
-        conn_params.get("dbname", "wyre_ftth"),
+        conn_params.get("dbname", "farois_ftth"),
         conn_params.get("user", "ftth_editor"),
         password,
     )
@@ -1045,7 +1045,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
         conn = psycopg2.connect(
             host=conn_params.get("host", "localhost"),
             port=conn_params.get("port", 5432),
-            dbname=conn_params.get("dbname", "wyre_ftth"),
+            dbname=conn_params.get("dbname", "farois_ftth"),
             user=conn_params.get("user", "ftth_editor"),
             password=password,
         )

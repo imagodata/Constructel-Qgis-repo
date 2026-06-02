@@ -2,8 +2,11 @@
 name=Constructel Bridge
 qgisMinimumVersion=3.28
 description=Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.
-version=1.3.13
-changelog=v1.3.13 - Retrait couche Soudures (infra.structure_cable_splices) qui n'existe pas en BDD: suppression de la definition catalog, de l'inclusion dans _INFRA_BASE, et des relations splices_to_structure / splices_to_cable
+version=1.4.3
+changelog=v1.4.2 - Fix critique du fallback JSON: FilterMate stocke chaque cle de config sous un wrapper {"value": ...}, le fallback ecrivait la liste brute -> get_config retournait le defaut et le depot apparaissait comme non configure. Le fallback wrappe maintenant remote_repos et git_binary_path, en preservant les metadonnees (description, choices, ...) si deja presentes.
+    v1.4.1 - Fix: l'injection du remote FilterMate utilise maintenant l'API publique (filter_mate.extensions.registry.get_extension_registry + RemoteRepoManager.save_repos) afin que le depot apparaisse immediatement dans le gestionnaire de depots sans redemarrage. Fallback ecriture JSON directe + message "reload requis" si l'API n'est pas dispo (ex. FilterMate non encore charge).
+    v1.4.0 - Onboarding: nouvelle page "Partage FilterMate" qui injecte un remote git Constructel (http://192.168.160.31:9082/, branche master, target_collection "filtermate") dans EXTENSIONS.favorites_sharing.remote_repos de FilterMate/config.json. Installe aussi automatiquement Git portable (Windows) si aucun git n'est present, via portable_git_installer de FilterMate. Linux/Mac: detecte git systeme, log un avertissement si absent.
+    v1.3.13 - Retrait couche Soudures (infra.structure_cable_splices) qui n'existe pas en BDD: suppression de la definition catalog, de l'inclusion dans _INFRA_BASE, et des relations splices_to_structure / splices_to_cable
     v1.3.12 - Fix: requete BDD styles utilisait "styleName" (colonne inexistante) au lieu de stylename — les styles BDD ne se chargeaient pas et le plugin fallback vers QML embarques figes; simplification FilterExpression multi-edit sans @form_mode
     v1.3.11 - Ajout fonction d'expression wyre_selected_common(schema_table, field_name) pour filtrer dynamiquement les ValueRelation en multi-edition (formulaires structures et zone_distribution)
     v1.3.7 - Fix: utiliser importNamedStyle(QDomDocument) au lieu de fichier temp pour charger les styles DB, recreer les relations apres les styles pour binder les panels Documents/Splices
