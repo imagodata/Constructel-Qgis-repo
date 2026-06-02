@@ -3,7 +3,7 @@
 Constructel Bridge - Plugin principal.
 
 Responsabilites:
-  1. Configurer la connexion PostgreSQL wyre_ftth (role ftth_editor)
+  1. Configurer la connexion PostgreSQL farois_ftth (role ftth_editor)
   2. Identifier l'utilisateur QGIS et l'enregistrer dans ref.users
   3. Positionner app.current_user sur chaque connexion pour tracer les editions
   4. Intercepter les commits de couche pour tagger l'utilisateur

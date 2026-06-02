@@ -175,7 +175,29 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "and layout templates specific to the WYRE FTTH project.<br>"
                            "Internal server URL: <code>http://192.168.160.31:9081/</code></small>",
 
-        # -- Onboarding: Page 4 - External services --
+        # -- Onboarding: Page 4 - FilterMate Sharing --
+        "onboard.fm.title": "FilterMate — Shared favorites",
+        "onboard.fm.subtitle": "Constructel git server (push/pull of FilterMate filter favorites).",
+        "onboard.fm.installed": "<b>FilterMate is installed.</b><br>"
+                                "The Constructel git remote will be added to FilterMate's "
+                                "favorites_sharing extension.",
+        "onboard.fm.not_installed": "<b>FilterMate is not installed.</b><br>"
+                                    "Install it on the previous page or via "
+                                    "<i>Plugins > Manage and Install Plugins</i>, "
+                                    "then re-run onboarding.",
+        "onboard.fm.repo_name": "Repo name:",
+        "onboard.fm.repo_url": "Git URL:",
+        "onboard.fm.branch": "Branch:",
+        "onboard.fm.collection": "Target collection:",
+        "onboard.fm.auto_configure": "Configure this repo automatically",
+        "onboard.fm.note": "<small>Adds an entry under "
+                           "<code>EXTENSIONS.favorites_sharing.remote_repos</code> "
+                           "in <code>FilterMate/config.json</code>. Bundles will be pushed to "
+                           "<code>collections/filtermate/filter_mate/favorites/</code> "
+                           "in the bare repo. Authentication is left empty — set it via "
+                           "FilterMate's repo manager dialog if the server requires it.</small>",
+
+        # -- Onboarding: Page 5 - External services --
         "onboard.services.title": "External map services",
         "onboard.services.subtitle": "WMTS, XYZ and WFS connections added automatically to QGIS.",
         "onboard.services.note": "<small>These connections are registered in QGIS settings at plugin startup. "
@@ -200,7 +222,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Parcels, buildings and address points from the regional geoportal."
         ),
 
-        # -- Onboarding: Page 5 - Summary --
+        # -- Onboarding: Page 6 - Summary --
         "onboard.summary.title": "Configuration complete",
         "onboard.summary.subtitle": "Summary of actions performed.",
         "onboard.summary.header": "<b>Actions performed:</b><ul>",
@@ -220,6 +242,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.action.rs_updated": "Repository '{name}' updated: {url}",
         "onboard.action.rs_exists": "Repository '{name}' already configured",
         "onboard.action.rs_added": "Repository '{name}' added: {url}",
+        "onboard.action.fm_not_installed": "FilterMate not installed — favorites sharing not configured",
+        "onboard.action.fm_added": "FilterMate remote 'Constructel' added: {url}",
+        "onboard.action.fm_updated": "FilterMate remote 'Constructel' updated: {url}",
+        "onboard.action.fm_read_error": "FilterMate config read error: {error}",
+        "onboard.action.fm_write_error": "FilterMate config write error: {error}",
+        "onboard.action.fm_git_system": "Using system git: {path}",
+        "onboard.action.fm_git_portable_existing": "Using existing portable git: {path}",
+        "onboard.action.fm_git_missing_unix": "git not found in PATH — install via your package manager (e.g. apt install git)",
+        "onboard.action.fm_git_installer_missing": "FilterMate portable git installer not importable ({error})",
+        "onboard.action.fm_git_unsupported": "Portable git auto-install only supported on Windows",
+        "onboard.action.fm_git_downloading": "Downloading portable Git for FilterMate…",
+        "onboard.action.fm_git_downloading_pct": "Downloading portable Git for FilterMate… {pct}%",
+        "onboard.action.fm_git_installed": "Portable git installed: {path}",
+        "onboard.action.fm_git_install_failed": "Portable git install failed: {error}",
+        "onboard.action.fm_restart_needed": "Note: FilterMate must be reloaded (or QGIS restarted) for the new repo to appear in the repo manager.",
         "onboard.action.onboarding_done": "Onboarding marked as complete",
 
         # -- Wizard --
@@ -396,7 +433,29 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "et les modeles de mise en page specifiques au projet WYRE FTTH.<br>"
                            "URL du serveur interne: <code>http://192.168.160.31:9081/</code></small>",
 
-        # -- Onboarding: Page 4 - Services externes --
+        # -- Onboarding: Page 4 - Partage FilterMate --
+        "onboard.fm.title": "FilterMate — Favoris partages",
+        "onboard.fm.subtitle": "Serveur git Constructel (push/pull des favoris de filtre FilterMate).",
+        "onboard.fm.installed": "<b>FilterMate est installe.</b><br>"
+                                "Le depot git Constructel sera ajoute a l'extension "
+                                "favorites_sharing de FilterMate.",
+        "onboard.fm.not_installed": "<b>FilterMate n'est pas installe.</b><br>"
+                                    "Installez-le via la page precedente ou "
+                                    "<i>Extensions > Installer/Gerer les extensions</i>, "
+                                    "puis relancez l'onboarding.",
+        "onboard.fm.repo_name": "Nom du depot:",
+        "onboard.fm.repo_url": "URL git:",
+        "onboard.fm.branch": "Branche:",
+        "onboard.fm.collection": "Collection cible:",
+        "onboard.fm.auto_configure": "Configurer ce depot automatiquement",
+        "onboard.fm.note": "<small>Ajoute une entree sous "
+                           "<code>EXTENSIONS.favorites_sharing.remote_repos</code> "
+                           "dans <code>FilterMate/config.json</code>. Les bundles seront pousses dans "
+                           "<code>collections/filtermate/filter_mate/favorites/</code> "
+                           "du depot bare. L'authentification est laissee vide — configurez-la "
+                           "via le gestionnaire de depots de FilterMate si le serveur l'exige.</small>",
+
+        # -- Onboarding: Page 5 - Services externes --
         "onboard.services.title": "Services cartographiques externes",
         "onboard.services.subtitle": "Connexions WMTS, XYZ et WFS ajoutees automatiquement a QGIS.",
         "onboard.services.note": "<small>Ces connexions sont enregistrees dans les parametres QGIS au demarrage du plugin. "
@@ -421,7 +480,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Parcelles, batiments et points d'adresse du geoportail regional."
         ),
 
-        # -- Onboarding: Page 5 - Resume --
+        # -- Onboarding: Page 6 - Resume --
         "onboard.summary.title": "Configuration terminee",
         "onboard.summary.subtitle": "Resume des actions effectuees.",
         "onboard.summary.header": "<b>Actions effectuees:</b><ul>",
@@ -441,6 +500,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.action.rs_updated": "Depot '{name}' mis a jour: {url}",
         "onboard.action.rs_exists": "Depot '{name}' deja configure",
         "onboard.action.rs_added": "Depot '{name}' ajoute: {url}",
+        "onboard.action.fm_not_installed": "FilterMate non installe — partage de favoris non configure",
+        "onboard.action.fm_added": "Depot git FilterMate 'Constructel' ajoute: {url}",
+        "onboard.action.fm_updated": "Depot git FilterMate 'Constructel' mis a jour: {url}",
+        "onboard.action.fm_read_error": "Erreur lecture config FilterMate: {error}",
+        "onboard.action.fm_write_error": "Erreur ecriture config FilterMate: {error}",
+        "onboard.action.fm_git_system": "Git systeme detecte: {path}",
+        "onboard.action.fm_git_portable_existing": "Git portable deja installe: {path}",
+        "onboard.action.fm_git_missing_unix": "git introuvable dans le PATH — installez-le via votre gestionnaire de paquets (ex. apt install git)",
+        "onboard.action.fm_git_installer_missing": "Installeur git portable FilterMate non importable ({error})",
+        "onboard.action.fm_git_unsupported": "Installation auto de git portable disponible uniquement sous Windows",
+        "onboard.action.fm_git_downloading": "Telechargement de Git portable pour FilterMate…",
+        "onboard.action.fm_git_downloading_pct": "Telechargement de Git portable pour FilterMate… {pct}%",
+        "onboard.action.fm_git_installed": "Git portable installe: {path}",
+        "onboard.action.fm_git_install_failed": "Echec installation git portable: {error}",
+        "onboard.action.fm_restart_needed": "Note: FilterMate doit etre recharge (ou QGIS redemarre) pour que le nouveau depot apparaisse dans le gestionnaire.",
         "onboard.action.onboarding_done": "Onboarding marque comme termine",
 
         # -- Wizard --
@@ -617,7 +691,29 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "e modelos de layout especificos do projeto WYRE FTTH.<br>"
                            "URL do servidor interno: <code>http://192.168.160.31:9081/</code></small>",
 
-        # -- Onboarding: Page 4 - Servicos externos --
+        # -- Onboarding: Page 4 - Partilha FilterMate --
+        "onboard.fm.title": "FilterMate — Favoritos partilhados",
+        "onboard.fm.subtitle": "Servidor git Constructel (push/pull dos favoritos de filtro FilterMate).",
+        "onboard.fm.installed": "<b>FilterMate esta instalado.</b><br>"
+                                "O repositorio git Constructel sera adicionado a extensao "
+                                "favorites_sharing do FilterMate.",
+        "onboard.fm.not_installed": "<b>FilterMate nao esta instalado.</b><br>"
+                                    "Instale-o na pagina anterior ou via "
+                                    "<i>Extensoes > Instalar/Gerir Extensoes</i>, "
+                                    "depois volte a executar a configuracao inicial.",
+        "onboard.fm.repo_name": "Nome do repositorio:",
+        "onboard.fm.repo_url": "URL git:",
+        "onboard.fm.branch": "Ramo:",
+        "onboard.fm.collection": "Colecao alvo:",
+        "onboard.fm.auto_configure": "Configurar este repositorio automaticamente",
+        "onboard.fm.note": "<small>Adiciona uma entrada em "
+                           "<code>EXTENSIONS.favorites_sharing.remote_repos</code> "
+                           "no ficheiro <code>FilterMate/config.json</code>. Os bundles serao publicados em "
+                           "<code>collections/filtermate/filter_mate/favorites/</code> "
+                           "no repositorio bare. A autenticacao fica vazia — configure-a "
+                           "via o gestor de repositorios do FilterMate se o servidor exigir.</small>",
+
+        # -- Onboarding: Page 5 - Servicos externos --
         "onboard.services.title": "Servicos cartograficos externos",
         "onboard.services.subtitle": "Ligacoes WMTS, XYZ e WFS adicionadas automaticamente ao QGIS.",
         "onboard.services.note": "<small>Estas ligacoes sao registadas nas definicoes do QGIS no arranque do plugin. "
@@ -642,7 +738,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Parcelas, edificios e pontos de endereco do geoportal regional."
         ),
 
-        # -- Onboarding: Page 5 - Resumo --
+        # -- Onboarding: Page 6 - Resumo --
         "onboard.summary.title": "Configuracao concluida",
         "onboard.summary.subtitle": "Resumo das acoes realizadas.",
         "onboard.summary.header": "<b>Acoes realizadas:</b><ul>",
@@ -662,6 +758,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.action.rs_updated": "Repositorio '{name}' atualizado: {url}",
         "onboard.action.rs_exists": "Repositorio '{name}' ja configurado",
         "onboard.action.rs_added": "Repositorio '{name}' adicionado: {url}",
+        "onboard.action.fm_not_installed": "FilterMate nao instalado — partilha de favoritos nao configurada",
+        "onboard.action.fm_added": "Repositorio git FilterMate 'Constructel' adicionado: {url}",
+        "onboard.action.fm_updated": "Repositorio git FilterMate 'Constructel' atualizado: {url}",
+        "onboard.action.fm_read_error": "Erro de leitura da config FilterMate: {error}",
+        "onboard.action.fm_write_error": "Erro de escrita da config FilterMate: {error}",
+        "onboard.action.fm_git_system": "Git de sistema detetado: {path}",
+        "onboard.action.fm_git_portable_existing": "Git portatil ja instalado: {path}",
+        "onboard.action.fm_git_missing_unix": "git nao encontrado no PATH — instale via o gestor de pacotes (ex. apt install git)",
+        "onboard.action.fm_git_installer_missing": "Instalador git portatil do FilterMate nao importavel ({error})",
+        "onboard.action.fm_git_unsupported": "Instalacao automatica do git portatil disponivel apenas em Windows",
+        "onboard.action.fm_git_downloading": "A descarregar Git portatil para o FilterMate…",
+        "onboard.action.fm_git_downloading_pct": "A descarregar Git portatil para o FilterMate… {pct}%",
+        "onboard.action.fm_git_installed": "Git portatil instalado: {path}",
+        "onboard.action.fm_git_install_failed": "Falha na instalacao do git portatil: {error}",
+        "onboard.action.fm_restart_needed": "Nota: o FilterMate deve ser recarregado (ou o QGIS reiniciado) para o novo repositorio aparecer no gestor.",
         "onboard.action.onboarding_done": "Configuracao inicial marcada como concluida",
 
         # -- Wizard --

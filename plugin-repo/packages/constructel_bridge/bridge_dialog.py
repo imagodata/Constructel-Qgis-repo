@@ -23,7 +23,7 @@ from .i18n import tr
 class ConstructelConnectDialog(QDialog):
     """Dialogue simple pour saisir le mot de passe ftth_editor."""
 
-    def __init__(self, parent=None, host="localhost", port=5432, dbname="wyre_ftth", default_password=""):
+    def __init__(self, parent=None, host="localhost", port=5432, dbname="farois_ftth", default_password=""):
         super().__init__(parent)
         self.setWindowTitle(tr("dialog.title"))
         self.setMinimumWidth(380)
