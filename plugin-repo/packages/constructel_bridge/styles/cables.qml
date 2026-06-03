@@ -751,7 +751,7 @@
             <Option type="int" value="2" name="CompleterMatchFlags"/>
             <Option type="invalid" name="Description"/>
             <Option type="bool" value="false" name="DisplayGroupName"/>
-            <Option type="QString" value="&quot;category&quot; = 'status_cables'" name="FilterExpression"/>
+            <Option type="QString" value="&quot;category&quot; = 'status_cables' AND &quot;sub_type&quot; = current_value('pose_type')" name="FilterExpression"/>
             <Option type="QString" value="sort_order" name="Group"/>
             <Option type="QString" value="code" name="Key"/>
             <Option type="QString" value="" name="Layer"/>

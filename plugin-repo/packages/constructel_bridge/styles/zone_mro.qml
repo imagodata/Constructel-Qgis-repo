@@ -1,5 +1,5 @@
 <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis maxScale="1" labelsEnabled="1" hasScaleBasedVisibilityFlag="1" autoRefreshTime="0" simplifyDrawingTol="1" autoRefreshMode="Disabled" simplifyLocal="1" version="3.44.6-Solothurn" symbologyReferenceScale="-1" styleCategories="AllStyleCategories" simplifyMaxScale="1" simplifyDrawingHints="1" simplifyAlgorithm="0" minScale="16000" readOnly="0">
+<qgis maxScale="1" labelsEnabled="1" hasScaleBasedVisibilityFlag="1" autoRefreshTime="0" simplifyDrawingTol="1" autoRefreshMode="Disabled" simplifyLocal="1" version="3.44.6-Solothurn" symbologyReferenceScale="-1" styleCategories="AllStyleCategories" simplifyMaxScale="1" simplifyDrawingHints="1" simplifyAlgorithm="0" minScale="500000" readOnly="0">
   <flags>
     <Identifiable>1</Identifiable>
     <Removable>1</Removable>
