@@ -2,8 +2,9 @@
 name=Constructel Bridge
 qgisMinimumVersion=3.28
 description=Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.
-version=1.4.4
-changelog=v1.4.2 - Fix critique du fallback JSON: FilterMate stocke chaque cle de config sous un wrapper {"value": ...}, le fallback ecrivait la liste brute -> get_config retournait le defaut et le depot apparaissait comme non configure. Le fallback wrappe maintenant remote_repos et git_binary_path, en preservant les metadonnees (description, choices, ...) si deja presentes.
+version=1.4.5
+changelog=v1.4.5 - style(qgis): sync palettes structures/cables/ducts avec le dashboard Farois (BLOWN cyan 0,188,212; facade orange; souterrain vert/cyan) -- QML complets PR #424/#429/#430.
+    v1.4.2 - Fix critique du fallback JSON: FilterMate stocke chaque cle de config sous un wrapper {"value": ...}, le fallback ecrivait la liste brute -> get_config retournait le defaut et le depot apparaissait comme non configure. Le fallback wrappe maintenant remote_repos et git_binary_path, en preservant les metadonnees (description, choices, ...) si deja presentes.
     v1.4.1 - Fix: l'injection du remote FilterMate utilise maintenant l'API publique (filter_mate.extensions.registry.get_extension_registry + RemoteRepoManager.save_repos) afin que le depot apparaisse immediatement dans le gestionnaire de depots sans redemarrage. Fallback ecriture JSON directe + message "reload requis" si l'API n'est pas dispo (ex. FilterMate non encore charge).
     v1.4.0 - Onboarding: nouvelle page "Partage FilterMate" qui injecte un remote git Constructel (http://192.168.160.31:9082/, branche master, target_collection "filtermate") dans EXTENSIONS.favorites_sharing.remote_repos de FilterMate/config.json. Installe aussi automatiquement Git portable (Windows) si aucun git n'est present, via portable_git_installer de FilterMate. Linux/Mac: detecte git systeme, log un avertissement si absent.
     v1.3.13 - Retrait couche Soudures (infra.structure_cable_splices) qui n'existe pas en BDD: suppression de la definition catalog, de l'inclusion dans _INFRA_BASE, et des relations splices_to_structure / splices_to_cable
