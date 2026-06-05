@@ -151,7 +151,12 @@
         <rule label="CAB — Partially Spliced" symbol="1" key="{cab-partial}" filter="&quot;status&quot; = 'PARTIALLY_SPLICED'"/>
         <rule label="CAB — Spliced" symbol="2" key="{cab-spliced}" filter="&quot;status&quot; = 'SPLICED'"/>
       </rule>
-      <rule scalemaxdenom="1000" label="Manhole" key="{d08bc7ff-1aa7-4f8c-9a3d-94f4fa9b5fd5}" filter="&quot;structure_type&quot; = 'Manhole'" scalemindenom="1">
+      <!-- PR #301 (2026-05-28) : Manhole -> PDP / DP. Filtre etendu IN
+           ('PDP','DP','Manhole') pour conserver le rendu sur le legacy Manhole
+           (deprecie, 0 row apres backfill mig 217). Distinction visuelle PDP
+           (rouge soutenu #d62728) vs DP (rouge clair #fb6a4a) materialisee
+           cote MapHero webapp / legacy JS. Symboles QML conserves identiques. -->
+      <rule scalemaxdenom="1000" label="PDP / DP / Manhole" key="{d08bc7ff-1aa7-4f8c-9a3d-94f4fa9b5fd5}" filter="&quot;structure_type&quot; IN ('PDP', 'DP', 'Manhole')" scalemindenom="1">
         <rule label="MH — TODO" symbol="3" key="{ebc1448b-7cae-47ea-be9b-c8c38b37e06c}" filter="&quot;status&quot; = 'TODO' OR &quot;status&quot; IS NULL"/>
         <rule label="MH — Partially Spliced" symbol="4" key="{24941827-1c83-48b2-aafd-d233c4c7e4b5}" filter="&quot;status&quot; = 'PARTIALLY_SPLICED'"/>
         <rule label="MH — Spliced" symbol="5" key="{ab222d44-742d-4429-81d0-e8009cec81ef}" filter="&quot;status&quot; = 'SPLICED'"/>
@@ -170,7 +175,8 @@
         <rule label="POC — SP" symbol="14" key="{poc-sp}" filter="&quot;status&quot; = 'SP'"/>
         <rule label="POC — Spliced" symbol="15" key="{poc-spliced}" filter="&quot;status&quot; = 'SPLICED'"/>
         <rule label="POC — MP" symbol="16" key="{poc-mp}" filter="&quot;status&quot; = 'MP'"/>
-        <rule label="POC — Measured" symbol="17" key="{poc-measured}" filter="&quot;status&quot; IN ('MEASURED', 'AS_BUILT')"/>
+        <rule label="POC — Measured" symbol="17" key="{poc-measured}" filter="&quot;status&quot; = 'MEASURED'"/>
+        <rule label="POC — As-Built" symbol="21" key="{poc-asbuilt}" filter="&quot;status&quot; = 'AS_BUILT'"/>
       </rule>
       <rule scalemaxdenom="2000" label="Access Point" symbol="18" key="{070827f5-d51f-4cb8-ae0a-e14bf8452f58}" filter="&quot;structure_type&quot; = 'Access Point'" scalemindenom="1"/>
       <rule scalemaxdenom="1000" label="Junction Point" symbol="19" key="{f3781b2f-a73f-459d-884c-d72b4e025ae8}" filter="&quot;structure_type&quot; = 'Junction Point'" scalemindenom="1"/>
@@ -196,7 +202,7 @@
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="158,158,158,255,rgb:0.6196078,0.6196078,0.6196078,1"/>
             <Option name="outline_style" type="QString" value="dash"/>
             <Option name="outline_width" type="QString" value="0.4"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -219,14 +225,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="0"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="color" type="QString" value="158,158,158,255,rgb:0.6196078,0.6196078,0.6196078,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="circle"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="158,158,158,255,rgb:0.6196078,0.6196078,0.6196078,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -265,7 +271,7 @@
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="31,120,180,255,rgb:0.1219959,0.4710002,0.7060044,1"/>
             <Option name="outline_style" type="QString" value="dash"/>
             <Option name="outline_width" type="QString" value="0.4"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -412,7 +418,7 @@
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="251,106,74,255,rgb:0.9843137,0.4156863,0.2901961,1"/>
             <Option name="outline_style" type="QString" value="dash"/>
             <Option name="outline_width" type="QString" value="0.4"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -483,14 +489,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="90"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="color" type="QString" value="31,120,180,255,rgb:0.1219959,0.4710002,0.7060044,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="hexagon"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="180,20,22,255,rgb:0.7060044,0.0780041,0.0859998,1"/>
+            <Option name="outline_color" type="QString" value="20,80,140,255,rgb:0.0784314,0.3137255,0.5490196,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0.2"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -687,6 +693,45 @@
           </data_defined_properties>
         </layer>
       </symbol>
+      <symbol is_animated="0" alpha="1" name="21" type="marker" force_rhr="0" clip_to_extent="1" frame_rate="10">
+        <data_defined_properties>
+          <Option type="Map">
+            <Option name="name" type="QString" value=""/>
+            <Option name="properties"/>
+            <Option name="type" type="QString" value="collection"/>
+          </Option>
+        </data_defined_properties>
+        <layer locked="0" pass="1" enabled="1" id="{poc-asbuilt-sym}" class="SimpleMarker">
+          <Option type="Map">
+            <Option name="angle" type="QString" value="90"/>
+            <Option name="cap_style" type="QString" value="square"/>
+            <Option name="color" type="QString" value="51,160,44,255,rgb:0.2,0.627451,0.172549,1"/>
+            <Option name="horizontal_anchor_point" type="QString" value="1"/>
+            <Option name="joinstyle" type="QString" value="bevel"/>
+            <Option name="name" type="QString" value="hexagon"/>
+            <Option name="offset" type="QString" value="0,0"/>
+            <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
+            <Option name="offset_unit" type="QString" value="MM"/>
+            <Option name="outline_color" type="QString" value="39,124,34,255,rgb:0.1529412,0.4862745,0.1333333,1"/>
+            <Option name="outline_style" type="QString" value="solid"/>
+            <Option name="outline_width" type="QString" value="0.2"/>
+            <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
+            <Option name="outline_width_unit" type="QString" value="MM"/>
+            <Option name="scale_method" type="QString" value="diameter"/>
+            <Option name="size" type="QString" value="4"/>
+            <Option name="size_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
+            <Option name="size_unit" type="QString" value="MM"/>
+            <Option name="vertical_anchor_point" type="QString" value="1"/>
+          </Option>
+          <data_defined_properties>
+            <Option type="Map">
+              <Option name="name" type="QString" value=""/>
+              <Option name="properties"/>
+              <Option name="type" type="QString" value="collection"/>
+            </Option>
+          </data_defined_properties>
+        </layer>
+      </symbol>
       <symbol is_animated="0" alpha="1" name="18" type="marker" force_rhr="0" clip_to_extent="1" frame_rate="10">
         <data_defined_properties>
           <Option type="Map">
@@ -777,14 +822,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="0"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="color" type="QString" value="31,120,180,255,rgb:0.1219959,0.4710002,0.7060044,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="diamond"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="180,20,22,255,rgb:0.7060044,0.0780041,0.0859998,1"/>
+            <Option name="outline_color" type="QString" value="20,80,140,255,rgb:0.0784314,0.3137255,0.5490196,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0.2"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -862,7 +907,7 @@
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="158,158,158,255,rgb:0.6196078,0.6196078,0.6196078,1"/>
             <Option name="outline_style" type="QString" value="dash"/>
             <Option name="outline_width" type="QString" value="0.4"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -885,14 +930,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="0"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="color" type="QString" value="158,158,158,255,rgb:0.6196078,0.6196078,0.6196078,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="circle"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="158,158,158,255,rgb:0.6196078,0.6196078,0.6196078,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -931,7 +976,7 @@
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="31,120,180,255,rgb:0.1219959,0.4710002,0.7060044,1"/>
             <Option name="outline_style" type="QString" value="dash"/>
             <Option name="outline_width" type="QString" value="0.4"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -963,14 +1008,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="0"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="color" type="QString" value="31,120,180,255,rgb:0.1219959,0.4710002,0.7060044,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="pentagon"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="180,20,22,255,rgb:0.7060044,0.0780041,0.0859998,1"/>
+            <Option name="outline_color" type="QString" value="20,80,140,255,rgb:0.0784314,0.3137255,0.5490196,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0.2"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -1009,7 +1054,7 @@
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="outline_color" type="QString" value="251,106,74,255,rgb:0.9843137,0.4156863,0.2901961,1"/>
             <Option name="outline_style" type="QString" value="dash"/>
             <Option name="outline_width" type="QString" value="0.4"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -1080,14 +1125,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="0"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="227,26,28,255,rgb:0.8899977,0.1020066,0.1100023,1"/>
+            <Option name="color" type="QString" value="31,120,180,255,rgb:0.1219959,0.4710002,0.7060044,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="circle"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="180,20,22,255,rgb:0.7060044,0.0780041,0.0859998,1"/>
+            <Option name="outline_color" type="QString" value="20,80,140,255,rgb:0.0784314,0.3137255,0.5490196,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0.2"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
@@ -2235,7 +2280,7 @@ def my_form_open(dialog, layer, feature):
         </editor_configuration>
       </attributeEditorRelation>
     </attributeEditorContainer>
-    <attributeEditorContainer showLabel="1" collapsed="0" columnCount="1" name="🔗 Splices" collapsedExpression="" type="Tab" collapsedExpressionEnabled="0" visibilityExpression="&quot;structure_type&quot; IN ('Manhole', 'Cabinet')" verticalStretch="0" visibilityExpressionEnabled="1" horizontalStretch="0" groupBox="0">
+    <attributeEditorContainer showLabel="1" collapsed="0" columnCount="1" name="🔗 Splices" collapsedExpression="" type="Tab" collapsedExpressionEnabled="0" visibilityExpression="&quot;structure_type&quot; IN ('PDP', 'DP', 'Manhole', 'Cabinet')" verticalStretch="0" visibilityExpressionEnabled="1" horizontalStretch="0" groupBox="0">
       <labelStyle overrideLabelFont="0" overrideLabelColor="0" labelColor="">
         <labelFont description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" italic="0" strikethrough="0" underline="0" style="" bold="0"/>
       </labelStyle>
@@ -2386,6 +2431,8 @@ def my_form_open(dialog, layer, feature):
     WHEN "structure_type" = 'Access Point' THEN '📡'&#xd;
     WHEN "structure_type" = 'Drop Connection Point' THEN '🔌'&#xd;
     WHEN "structure_type" = 'POC facade' THEN '🏠'&#xd;
+    WHEN "structure_type" = 'PDP' THEN '🟥'&#xd;
+    WHEN "structure_type" = 'DP' THEN '🟧'&#xd;
     WHEN "structure_type" = 'Manhole' THEN '🕳️'&#xd;
     WHEN "structure_type" = 'POC underground' THEN '⬇️'&#xd;
     WHEN "structure_type" = 'Virtual' THEN '👻'&#xd;
