@@ -146,13 +146,12 @@
   </elevation>
   <renderer-v2 symbollevels="1" type="RuleRenderer" referencescale="-1" forceraster="0" enableorderby="0">
     <rules key="{root}">
+      <!-- Refonte 246 : duct = genie civil, statuts TODO -> CP -> CONSTRUCTED -> AS_BUILT.
+           BP/BLOWN n'existent PLUS sur duct (soufflage = cable/subduct UG). -->
       <rule key="{todo-ducts-grey}" label="⚪ TODO" symbol="7" filter="&quot;status&quot; = 'TODO'"/>
-      <rule key="{7b45bc06-1ebc-4932-9228-35dfee07b886}" label="CP : 0 - 5000" symbol="0" filter="&quot;status&quot; = 'CP'" scalemaxdenom="3000"/>
-      <rule scalemindenom="3000" key="{74aa115a-d61b-4112-bf62-eea0067d2dfb}" label="CP : 5000 - 0" symbol="1" filter="&quot;status&quot; = 'CP'" scalemaxdenom="6000"/>
-      <rule key="{ug-constructed}" label="🔵 Constructed" symbol="2" filter="&quot;status&quot; = 'CONSTRUCTED'"/>
-      <rule key="{292078f7-8d81-40f6-9b3c-9ebee047fb0c}" label="🟡 BP" symbol="3" filter="&quot;status&quot; = 'BP'" scalemaxdenom="3000"/>
-      <rule scalemindenom="3000" key="{ug-bp}" label="🟡 BP" symbol="4" filter="&quot;status&quot; = 'BP'" scalemaxdenom="6000"/>
-      <rule key="{ug-blown}" label="💨 Blown" symbol="5" filter="&quot;status&quot; = 'BLOWN'"/>
+      <rule key="{7b45bc06-1ebc-4932-9228-35dfee07b886}" label="CP : 0 - 5000 (planifie)" symbol="0" filter="&quot;status&quot; = 'CP'" scalemaxdenom="3000"/>
+      <rule scalemindenom="3000" key="{74aa115a-d61b-4112-bf62-eea0067d2dfb}" label="CP : 5000 - 0 (planifie)" symbol="1" filter="&quot;status&quot; = 'CP'" scalemaxdenom="6000"/>
+      <rule key="{ug-constructed}" label="🔵 Constructed (pose)" symbol="2" filter="&quot;status&quot; = 'CONSTRUCTED'"/>
       <rule key="{ug-asbuilt}" label="✅ As-Built" symbol="6" filter="&quot;status&quot; = 'AS_BUILT'"/>
     </rules>
     <symbols>
@@ -1299,7 +1298,7 @@
     <default applyOnUpdate="0" expression="" field="end_point_id"/>
     <default applyOnUpdate="0" expression="" field="length_m"/>
     <default applyOnUpdate="0" expression="" field="subduct_count"/>
-    <default applyOnUpdate="0" expression="'CP'" field="status"/>
+    <default applyOnUpdate="0" expression="'TODO'" field="status"/>
     <default applyOnUpdate="0" expression="" field="transition_source"/>
     <default applyOnUpdate="0" expression="" field="planned_date"/>
     <default applyOnUpdate="0" expression="" field="completion_date"/>

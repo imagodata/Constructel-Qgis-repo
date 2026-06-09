@@ -146,10 +146,11 @@
   </elevation>
   <renderer-v2 type="RuleRenderer" forceraster="0" referencescale="-1" symbollevels="0" enableorderby="0">
     <rules key="{root}">
-      <rule key="{cp}" label="📋 CP" symbol="0" filter="&quot;status&quot; = 'CP'"/>
-      <rule key="{constructed}" label="🔵 Constructed" symbol="1" filter="&quot;status&quot; = 'CONSTRUCTED'"/>
-      <rule key="{bp}" label="🟡 BP" symbol="2" filter="&quot;status&quot; = 'BP'"/>
-      <rule key="{blown}" label="💨 Blown" symbol="3" filter="&quot;status&quot; = 'BLOWN'"/>
+      <!-- Refonte 246 : subduct aligne sur le cable UG porteur.
+           Statuts TODO -> BP -> BLOWN -> AS_BUILT. CP/CONSTRUCTED retires (UG ne les a plus). -->
+      <rule key="{todo}" label="⚪ TODO" symbol="5" filter="&quot;status&quot; = 'TODO'"/>
+      <rule key="{bp}" label="🟡 BP (soufflage planifie)" symbol="2" filter="&quot;status&quot; = 'BP'"/>
+      <rule key="{blown}" label="💨 Blown (souffle)" symbol="3" filter="&quot;status&quot; = 'BLOWN'"/>
       <rule key="{asbuilt}" label="✅ As-Built" symbol="4" filter="&quot;status&quot; = 'AS_BUILT'"/>
       <rule key="{other}" label="❓ Other" symbol="5" filter="ELSE"/>
     </rules>
@@ -315,7 +316,7 @@
             <Option type="QString" value="MM" name="dash_pattern_offset_unit"/>
             <Option type="QString" value="0" name="draw_inside_polygon"/>
             <Option type="QString" value="round" name="joinstyle"/>
-            <Option type="QString" value="255,235,59,255,rgb:1,0.9215686,0.2313725,1" name="line_color"/>
+            <Option type="QString" value="0,188,212,255,rgb:0,0.7372549,0.8313725,1" name="line_color"/>
             <Option type="QString" value="solid" name="line_style"/>
             <Option type="QString" value="1" name="line_width"/>
             <Option type="QString" value="MM" name="line_width_unit"/>
@@ -362,7 +363,7 @@
             <Option type="QString" value="MM" name="dash_pattern_offset_unit"/>
             <Option type="QString" value="0" name="draw_inside_polygon"/>
             <Option type="QString" value="round" name="joinstyle"/>
-            <Option type="QString" value="46,125,50,255,rgb:0.1803922,0.4901961,0.1960784,1" name="line_color"/>
+            <Option type="QString" value="0,131,143,255,rgb:0,0.5137255,0.5607843,1" name="line_color"/>
             <Option type="QString" value="solid" name="line_style"/>
             <Option type="QString" value="1" name="line_width"/>
             <Option type="QString" value="MM" name="line_width_unit"/>
@@ -874,7 +875,7 @@
     <default expression="" field="zone_mro_id" applyOnUpdate="0"/>
     <default expression="" field="marlin_id" applyOnUpdate="0"/>
     <default expression="" field="model" applyOnUpdate="0"/>
-    <default expression="'CP'" field="status" applyOnUpdate="0"/>
+    <default expression="'TODO'" field="status" applyOnUpdate="0"/>
     <default expression="" field="cable_id" applyOnUpdate="0"/>
     <default expression="" field="start_structure_id" applyOnUpdate="0"/>
     <default expression="" field="end_structure_id" applyOnUpdate="0"/>
