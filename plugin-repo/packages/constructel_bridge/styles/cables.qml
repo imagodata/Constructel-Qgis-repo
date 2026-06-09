@@ -146,15 +146,15 @@
   </elevation>
   <renderer-v2 type="RuleRenderer" forceraster="0" referencescale="-1" symbollevels="0" enableorderby="0">
     <rules key="{root}">
+      <!-- FACADE : TODO -> CP -> CONSTRUCTED -> AS_BUILT (rampe orange par avancement) -->
       <rule key="{fac-todo}" label="FAC - TODO" symbol="4" filter="&quot;pose_type&quot; = 'FACADE' AND &quot;status&quot; = 'TODO'"/>
-      <rule key="{ug-todo}" label="UG - TODO" symbol="5" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'TODO'"/>
-      <rule key="{fac-cp}" label="FAC - CP" symbol="0" filter="&quot;pose_type&quot; = 'FACADE' AND &quot;status&quot; = 'CP'"/>
-      <rule key="{fac-constructed}" label="FAC - Constructed" symbol="1" filter="&quot;pose_type&quot; = 'FACADE' AND &quot;status&quot; = 'CONSTRUCTED'"/>
-      <rule key="{ug-cp}" label="UG - CP" symbol="2" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'CP'"/>
-      <rule key="{ug-constructed}" label="UG - Constructed" symbol="3" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'CONSTRUCTED'"/>
+      <rule key="{fac-cp}" label="FAC - CP (planifie)" symbol="0" filter="&quot;pose_type&quot; = 'FACADE' AND &quot;status&quot; = 'CP'"/>
+      <rule key="{fac-constructed}" label="FAC - Constructed (tire)" symbol="1" filter="&quot;pose_type&quot; = 'FACADE' AND &quot;status&quot; = 'CONSTRUCTED'"/>
       <rule key="{fac-asbuilt}" label="FAC - As-Built" symbol="6" filter="&quot;pose_type&quot; = 'FACADE' AND &quot;status&quot; = 'AS_BUILT'"/>
-      <rule key="{ug-bp}" label="UG - BP" symbol="7" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'BP'"/>
-      <rule key="{ug-blown}" label="UG - Blown" symbol="8" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'BLOWN'"/>
+      <!-- UNDERGROUND : TODO -> BP -> BLOWN -> AS_BUILT (refonte 246 : plus de CP/CONSTRUCTED en UG) -->
+      <rule key="{ug-todo}" label="UG - TODO" symbol="5" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'TODO'"/>
+      <rule key="{ug-bp}" label="UG - BP (soufflage planifie)" symbol="7" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'BP'"/>
+      <rule key="{ug-blown}" label="UG - Blown (souffle)" symbol="8" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'BLOWN'"/>
       <rule key="{ug-asbuilt}" label="UG - As-Built" symbol="9" filter="&quot;pose_type&quot; = 'UNDERGROUND' AND &quot;status&quot; = 'AS_BUILT'"/>
     </rules>
     <symbols>
@@ -1222,7 +1222,7 @@
     <default expression="" field="end_point_id" applyOnUpdate="0"/>
     <default expression="" field="length_m" applyOnUpdate="0"/>
     <default expression="" field="pose_type" applyOnUpdate="0"/>
-    <default expression="'CP'" field="status" applyOnUpdate="0"/>
+    <default expression="'TODO'" field="status" applyOnUpdate="0"/>
     <default expression="" field="transition_source" applyOnUpdate="0"/>
     <default expression="" field="blowing_date" applyOnUpdate="0"/>
     <default expression="" field="measurement_date" applyOnUpdate="0"/>
