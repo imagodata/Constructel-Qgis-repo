@@ -1221,13 +1221,15 @@
   <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
-    <actionsetting name="Ouvrir dossier SharePoint" shortTitle="SharePoint" icon="mIconFolder.svg" capture="0" isEnabledOnlyWhenEditable="0" notificationMessage="" type="5" action="" id="{77eaed48-8020-47db-8786-87ff513310c8}">
+    <actionsetting name="Ouvrir dossier SharePoint" shortTitle="SharePoint" icon="mIconFolder.svg" capture="0" isEnabledOnlyWhenEditable="0" notificationMessage="" type="5" id="{77eaed48-8020-47db-8786-87ff513310c8}">
       <actionScope id="Feature"/>
       <actionScope id="Canvas"/>
+      <expression>[% coalesce("doc_folder_url", "folder_url", 'https://constructelbelgique.sharepoint.com/sites/OPERATIONS/FTTH%20Documents/Wyre/MROs/' || "mro_code" || '/' || replace("name", ' ', '%20')) %]</expression>
     </actionsetting>
-    <actionsetting name="Ouvrir PDF principal" shortTitle="PDF" icon="mIconFile.svg" capture="0" isEnabledOnlyWhenEditable="0" notificationMessage="" type="5" action="" id="{42cac845-4340-4721-bb75-f54bff05fc66}">
+    <actionsetting name="Ouvrir PDF principal" shortTitle="PDF" icon="mIconFile.svg" capture="0" isEnabledOnlyWhenEditable="0" notificationMessage="" type="5" id="{42cac845-4340-4721-bb75-f54bff05fc66}">
       <actionScope id="Feature"/>
       <actionScope id="Canvas"/>
+      <expression>[% "primary_pdf_url" %]</expression>
     </actionsetting>
   </attributeactions>
   <attributetableconfig actionWidgetStyle="dropDown" sortExpression="" sortOrder="0">

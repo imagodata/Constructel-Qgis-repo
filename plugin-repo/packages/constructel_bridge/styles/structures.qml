@@ -705,14 +705,14 @@
           <Option type="Map">
             <Option name="angle" type="QString" value="90"/>
             <Option name="cap_style" type="QString" value="square"/>
-            <Option name="color" type="QString" value="51,160,44,255,rgb:0.2,0.627451,0.172549,1"/>
+            <Option name="color" type="QString" value="8,81,156,255,rgb:0.03137255,0.31764707,0.6117647,1"/>
             <Option name="horizontal_anchor_point" type="QString" value="1"/>
             <Option name="joinstyle" type="QString" value="bevel"/>
             <Option name="name" type="QString" value="hexagon"/>
             <Option name="offset" type="QString" value="0,0"/>
             <Option name="offset_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>
             <Option name="offset_unit" type="QString" value="MM"/>
-            <Option name="outline_color" type="QString" value="39,124,34,255,rgb:0.1529412,0.4862745,0.1333333,1"/>
+            <Option name="outline_color" type="QString" value="6,61,117,255,rgb:0.023529412,0.23921569,0.45882353,1"/>
             <Option name="outline_style" type="QString" value="solid"/>
             <Option name="outline_width" type="QString" value="0.2"/>
             <Option name="outline_width_map_unit_scale" type="QString" value="3x:0,0,0,0,0,0"/>

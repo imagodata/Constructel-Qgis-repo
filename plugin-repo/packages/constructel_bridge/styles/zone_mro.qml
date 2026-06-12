@@ -446,7 +446,7 @@
       </text-style>
       <text-format wrapChar="" decimals="3" plussign="0" formatNumbers="0" autoWrapLength="0" rightDirectionSymbol=">" reverseDirectionSymbol="0" placeDirectionSymbol="0" addDirectionSymbol="0" useMaxLineLengthForAutoWrap="1" multilineAlign="0" leftDirectionSymbol="&lt;"/>
       <placement fitInPolygonOnly="1" rotationAngle="0" lineAnchorClipping="0" centroidWhole="0" polygonPlacementFlags="2" labelOffsetMapUnitScale="3x:0,0,0,0,0,0" lineAnchorPercent="0.5" dist="0" maxCurvedCharAngleIn="25" placement="0" xOffset="0" repeatDistanceUnits="MM" lineAnchorTextPoint="CenterOfText" layerType="PolygonGeometry" quadOffset="4" offsetUnits="MapUnit" allowDegraded="0" maximumDistanceMapUnitScale="3x:0,0,0,0,0,0" prioritization="PreferCloser" predefinedPositionOrder="TR,TL,BR,BL,R,L,TSR,BSR" distUnits="MM" overrunDistanceMapUnitScale="3x:0,0,0,0,0,0" geometryGeneratorEnabled="0" geometryGeneratorType="PointGeometry" geometryGenerator="" overrunDistanceUnit="MM" preserveRotation="1" rotationUnit="AngleDegrees" maxCurvedCharAngleOut="-25" overlapHandling="PreventOverlap" offsetType="0" placementFlags="0" distMapUnitScale="3x:0,0,0,0,0,0" overrunDistance="0" repeatDistanceMapUnitScale="3x:0,0,0,0,0,0" yOffset="0" centroidInside="1" maximumDistance="0" maximumDistanceUnit="MM" repeatDistance="0" lineAnchorType="0" priority="8"/>
-      <rendering scaleMax="16000" obstacle="1" fontMaxPixelSize="10000" drawLabels="1" limitNumLabels="0" maxNumLabels="2000" unplacedVisibility="0" fontMinPixelSize="3" minFeatureSize="0" scaleVisibility="1" scaleMin="4001" obstacleType="1" obstacleFactor="1" upsidedownLabels="0" zIndex="0" mergeLines="0" labelPerPart="0" fontLimitPixelSize="0"/>
+      <rendering scaleMax="25000" obstacle="1" fontMaxPixelSize="10000" drawLabels="1" limitNumLabels="0" maxNumLabels="2000" unplacedVisibility="0" fontMinPixelSize="3" minFeatureSize="0" scaleVisibility="1" scaleMin="4001" obstacleType="1" obstacleFactor="1" upsidedownLabels="0" zIndex="0" mergeLines="0" labelPerPart="0" fontLimitPixelSize="0"/>
       <dd_properties>
         <Option type="Map">
           <Option name="name" type="QString" value=""/>
@@ -649,10 +649,10 @@
   <legend showLabelLegend="0" type="default-vector"/>
   <referencedLayers/>
   <referencingLayers>
-    <relation name="docs_element_zone_mro" referencingLayer="v_element_documents_list_4fca627a_c007_4ea1_b089_3c2acccad096" layerId="v_element_documents_list_4fca627a_c007_4ea1_b089_3c2acccad096" layerName="v_element_documents_list" dataSource="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;" providerKey="postgres" id="docs_element_zone_mro" referencedLayer="zone_mro_358e74a1_211b_4d5d_8e30_0c0b37e8de11" strength="Association">
+    <relation name="docs_element_zone_mro" referencingLayer="v_element_documents_list_f6183a1a_813f_4c32_a40f_0534603c7759" layerId="v_element_documents_list_f6183a1a_813f_4c32_a40f_0534603c7759" layerName="v_element_documents_list" dataSource="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='link_id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;docs&quot;.&quot;v_element_documents_list&quot;" providerKey="postgres" id="docs_element_zone_mro" referencedLayer="zone_mro_6b1ba9b4_ac9d_4167_a4bd_eee28c3fbfae" strength="Association">
       <fieldRef referencingField="element_id" referencedField="id"/>
     </relation>
-    <relation name="zone_pop_to_mro" referencingLayer="zone_pop_a56f86aa_c4af_46d5_b112_687ec67a3fdc" layerId="zone_pop_a56f86aa_c4af_46d5_b112_687ec67a3fdc" layerName="Zones POP" dataSource="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" providerKey="postgres" id="zone_pop_to_mro" referencedLayer="zone_mro_358e74a1_211b_4d5d_8e30_0c0b37e8de11" strength="Association">
+    <relation name="zone_pop_to_mro" referencingLayer="zone_pop_b7eb5ffa_6046_4267_ad69_d3b7d5ccd4b6" layerId="zone_pop_b7eb5ffa_6046_4267_ad69_d3b7d5ccd4b6" layerName="Zones POP" dataSource="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;infra&quot;.&quot;zone_pop&quot; (geom)" providerKey="postgres" id="zone_pop_to_mro" referencedLayer="zone_mro_6b1ba9b4_ac9d_4167_a4bd_eee28c3fbfae" strength="Association">
       <fieldRef referencingField="zone_mro_id" referencedField="id"/>
     </relation>
   </referencingLayers>
@@ -854,6 +854,16 @@
   <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
+    <actionsetting type="5" id="{action-open-doc-folder}" name="Ouvrir dossier SharePoint" shortTitle="SharePoint" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFolder.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% coalesce("doc_folder_url", "folder_url", 'https://constructelbelgique.sharepoint.com/sites/OPERATIONS/FTTH%20Documents/Wyre/MROs/' || replace("name", ' ', '%20')) %]</expression>
+    </actionsetting>
+    <actionsetting type="5" id="{action-open-primary-pdf}" name="Ouvrir PDF principal" shortTitle="PDF" isEnabledOnlyWhenEditable="0" capture="0" icon="mIconFile.svg" notificationMessage="">
+      <actionScope id="Feature"/>
+      <actionScope id="Canvas"/>
+      <expression>[% "primary_pdf_url" %]</expression>
+    </actionsetting>
   </attributeactions>
   <attributetableconfig actionWidgetStyle="dropDown" sortExpression="" sortOrder="0">
     <columns>

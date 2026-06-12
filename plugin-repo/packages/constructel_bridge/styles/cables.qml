@@ -507,7 +507,7 @@
             <Option type="QString" value="MM" name="dash_pattern_offset_unit"/>
             <Option type="QString" value="0" name="draw_inside_polygon"/>
             <Option type="QString" value="round" name="joinstyle"/>
-            <Option type="QString" value="255,193,7,255,rgb:1,0.7568627,0.02745098,1" name="line_color"/>
+            <Option type="QString" value="77,208,225,255,rgb:0.3019608,0.8156863,0.8823529,1" name="line_color"/>
             <Option type="QString" value="dash" name="line_style"/>
             <Option type="QString" value="1" name="line_width"/>
             <Option type="QString" value="MM" name="line_width_unit"/>
