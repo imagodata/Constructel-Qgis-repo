@@ -523,19 +523,27 @@ class ConstructelBridgePlugin:
         _precache_pg_credentials()
 
         # Enregistrer la connexion `be` (bureau d'etudes, schema public),
-        # AVEC authcfg (comme le fait deja `wyre` a chaque auto-connexion
-        # silencieuse au demarrage, cf. _connect() -> _setup_qgis_pg_connection
-        # (..., use_authcfg=True)) : sans reference authcfg stockee, le
-        # bouton "Tester la connexion" et le parcours du navigateur QGIS
-        # pour `be` n'utilisent PAS le meme chemin que le chargement de
-        # couche et ne beneficient donc pas de l'interception
-        # _BridgeCredentials — l'utilisateur se retrouve avec une invite
-        # de mot de passe bloquante (constate en test reel). Utiliser
-        # authcfg n'introduit PAS une nouvelle categorie d'invite : `wyre`
-        # declenche deja _ensure_auth_manager_ready() (et donc l'eventuel
-        # mot de passe maitre QGIS) via son propre auto-connect a chaque
-        # demarrage du plugin ; une fois le gestionnaire d'authentification
-        # deverrouille pour `wyre`, `be` en beneficie silencieusement.
+        # AVEC authcfg : sans reference authcfg stockee, le bouton "Tester
+        # la connexion" et le parcours du navigateur QGIS pour `be`
+        # n'utilisent PAS le meme chemin que le chargement de couche et ne
+        # beneficient donc pas de l'interception _BridgeCredentials —
+        # l'utilisateur se retrouve avec une invite de mot de passe
+        # bloquante (constate en test reel).
+        #
+        # Ce bloc s'execute AVANT self._auto_connect() (plus bas dans
+        # initGui) : c'est donc `be`, pas `wyre`, qui declenche en premier
+        # _ensure_auth_manager_ready() a chaque demarrage du plugin. Sur un
+        # poste ou le mot de passe maitre QGIS est deja configure (le cas
+        # normal des que `wyre` a reussi une connexion authcfg au moins une
+        # fois), setMasterPassword(True) ne re-affiche PAS de dialogue :
+        # aucune regression. Cas limite assume : premiere installation +
+        # base injoignable des le premier demarrage -> `be` (contrairement
+        # a l'auto-connexion `wyre`, qui reste use_authcfg=False sur son
+        # propre chemin d'echec) peut alors declencher la creation du mot
+        # de passe maitre plus tot que necessaire. Juge acceptable : rare,
+        # et l'utilisateur devra de toute facon configurer ce mot de passe
+        # maitre des que `wyre` se connectera avec succes.
+        #
         # `be` n'a toujours pas besoin du flux _connect complet (psycopg2,
         # ref.users, onboarding) : c'est une connexion de consultation.
         if BE_ENABLED:
@@ -663,9 +671,24 @@ class ConstructelBridgePlugin:
             self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.Warning)
 
     def _strip_authcfg_from_dom(self, doc):
-        """Parcourt le DOM du projet et retire les authcfg des datasources PG."""
+        """Parcourt le DOM du projet et retire les authcfg des datasources PG.
+
+        Miroir cote ECRITURE de _fix_layer_credentials (cote lecture) :
+        meme raisonnement known_identities (preserver l'identite be plutot
+        que tout basculer vers wyre) et meme garde d'hote (ne jamais
+        injecter nos identifiants dans la datasource d'un serveur tiers).
+        Corrige au passage un bug de l'ancienne version : le test
+        `f"user='{DEFAULT_USER}'" not in ds` ne detectait pas un user=
+        EXISTANT different (ex. bureau_etudes), ce qui ajoutait un second
+        attribut user= en double dans la datasource au lieu de remplacer
+        le premier.
+        """
         import re
         password = getattr(self, "_password", None) or _DEFAULT_PW
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+        if BE_ENABLED:
+            known_identities[BE_USER] = (BE_USER, _BE_PW)
+
         layers = doc.elementsByTagName("maplayer")
         cleaned = 0
         for i in range(layers.count()):
@@ -680,13 +703,27 @@ class ConstructelBridgePlugin:
             ds = ds_node.text()
             if "authcfg=" not in ds:
                 continue
-            # Retirer authcfg=xxx et injecter user/password en clair
+            # Ne jamais injecter nos identifiants dans la datasource d'un
+            # serveur PG tiers.
+            if DEFAULT_HOST not in ds and BE_HOST not in ds:
+                continue
+
+            # Determiner l'identite a preserver depuis le user='...'
+            # existant AVANT de le retirer -- repli sur wyre si absent ou
+            # inconnu (meme comportement que _fix_layer_credentials).
+            user_match = re.search(r"user='([^']*)'", ds)
+            current_user = user_match.group(1) if user_match else None
+            target_user, target_password = known_identities.get(
+                current_user, (DEFAULT_USER, password)
+            )
+
+            # Retirer authcfg=xxx ainsi que tout user=/password= existant,
+            # puis reinjecter l'identite cible en clair -- evite toute
+            # duplication d'attribut.
             ds = re.sub(r"\bauthcfg=\w+", "", ds)
-            # Ajouter user/password s'ils ne sont pas deja presents
-            if f"user='{DEFAULT_USER}'" not in ds:
-                ds += f" user='{DEFAULT_USER}'"
-            if "password=" not in ds:
-                ds += f" password='{password}'"
+            ds = re.sub(r"\buser='[^']*'", "", ds)
+            ds = re.sub(r"\bpassword='[^']*'", "", ds)
+            ds += f" user='{target_user}' password='{target_password}'"
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             # Remplacer le contenu du noeud
             while ds_node.hasChildNodes():
@@ -973,6 +1010,18 @@ class ConstructelBridgePlugin:
         layer.providerType() et layer.source() directement.
         """
         password = getattr(self, "_password", None) or _DEFAULT_PW
+        # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
+        # historique) et be (BE_USER, bureau d'etudes, si active). Sans
+        # cette distinction, toute couche `be` (username=bureau_etudes)
+        # etait auparavant reecrite de force vers wyre a chaque ouverture
+        # de projet -- cassant le cloisonnement schema public de `be` et
+        # embarquant le mot de passe wyre en clair dans le .qgz d'un
+        # utilisateur externe (bureau d'etudes). Hisse hors de la boucle :
+        # invariant, pas la peine de le reconstruire par couche.
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+        if BE_ENABLED:
+            known_identities[BE_USER] = (BE_USER, _BE_PW)
+
         project = QgsProject.instance()
         fixed = 0
         still_bad = 0
@@ -990,17 +1039,12 @@ class ConstructelBridgePlugin:
             else:
                 uri = QgsDataSourceUri(layer.source())
 
-            # Toujours utiliser des credentials en clair pour la portabilite.
-            # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
-            # historique) et be (BE_USER, bureau d'etudes, si active). Sans
-            # cette distinction, toute couche `be` (username=bureau_etudes)
-            # etait auparavant reecrite de force vers wyre a chaque
-            # ouverture de projet -- cassant le cloisonnement schema public
-            # de `be` et embarquant le mot de passe wyre en clair dans le
-            # .qgz d'un utilisateur externe (bureau d'etudes).
-            known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
-            if BE_ENABLED:
-                known_identities[BE_USER] = (BE_USER, _BE_PW)
+            # Ne jamais injecter nos identifiants dans la datasource d'un
+            # serveur PG TIERS -- seules les couches pointant sur notre
+            # propre serveur (wyre/be, meme host aujourd'hui) sont
+            # concernees par cette normalisation de portabilite.
+            if uri.host() not in (DEFAULT_HOST, BE_HOST):
+                continue
 
             old_authcfg = uri.authConfigId()
             current_user = uri.username()
