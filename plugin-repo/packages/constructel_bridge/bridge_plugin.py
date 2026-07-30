@@ -518,6 +518,27 @@ class ConstructelBridgePlugin:
         # au demarrage (projets recents, browser, etc.).
         _precache_pg_credentials()
 
+        # Enregistrer la connexion `be` (bureau d'etudes, schema public).
+        # SANS authcfg : _store_password_encrypted appellerait
+        # _ensure_auth_manager_ready(), qui declenche le dialogue de mot de
+        # passe maitre QGIS des le demarrage. Le mot de passe est fourni a
+        # la volee par _BridgeCredentials et par le cache pre-rempli
+        # ci-dessus. `be` n'a pas besoin du flux _connect complet (psycopg2,
+        # ref.users, onboarding) : c'est une connexion de consultation.
+        if BE_ENABLED:
+            try:
+                self._setup_qgis_pg_connection(_BE_PW, use_authcfg=False, conn="be")
+            except Exception as exc:
+                QgsMessageLog.logMessage(
+                    f"BE connection setup failed: {exc}", TAG, level=Qgis.Warning,
+                )
+        else:
+            QgsMessageLog.logMessage(
+                "Connexion 'be' non configuree "
+                "(bloc absent ou invalide dans credentials.json)",
+                TAG, level=Qgis.Info,
+            )
+
         # Supprimer le dialogue "Traiter les couches inutilisables" —
         # les couches avec un authcfg inconnu seront reparees apres
         # le chargement dans _on_project_read.
