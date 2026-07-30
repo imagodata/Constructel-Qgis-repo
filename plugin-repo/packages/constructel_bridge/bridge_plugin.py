@@ -45,6 +45,19 @@ from .bridge_expressions import register_expressions, unregister_expressions
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
+AUTH_CFG_NAME_BE = "constructel_bridge_be_pw"
+
+# Cle de settings ou est memorise l'ID de configuration Auth Manager, par
+# connexion. `wyre` CONSERVE la cle historique : la changer orphaniserait
+# les configurations Auth Manager deja stockees sur les postes existants.
+_AUTH_CFG_ID_KEYS = {
+    "wyre": "constructel_bridge/auth_cfg_id",
+    "be": "constructel_bridge/auth_cfg_id_be",
+}
+_AUTH_CFG_NAMES = {
+    "wyre": AUTH_CFG_NAME,
+    "be": AUTH_CFG_NAME_BE,
+}
 
 # ---------------------------------------------------------------------------
 # Credentials — loaded from credentials.json next to this file
@@ -278,8 +291,12 @@ def _ensure_auth_manager_ready() -> bool:
     return False
 
 
-def _store_password_encrypted(password: str) -> bool:
+def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
     """Store the password in QGIS Auth Manager (encrypted SQLite DB).
+
+    *conn* est une cle de ``_PG_CONNECTIONS`` : chaque connexion a sa
+    propre configuration Auth Manager et sa propre cle de settings, sinon
+    `be` ecraserait celle de `wyre` (et inversement).
 
     Returns True on success.
     """
@@ -290,8 +307,9 @@ def _store_password_encrypted(password: str) -> bool:
         )
         return False
     auth_mgr = QgsApplication.authManager()
+    settings_key = _AUTH_CFG_ID_KEYS[conn]
     # Look for an existing config with our name
-    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    cfg_id = QgsSettings().value(settings_key, "")
     if cfg_id and cfg_id in auth_mgr.configIds():
         # Update existing config
         config = QgsAuthMethodConfig()
@@ -301,18 +319,18 @@ def _store_password_encrypted(password: str) -> bool:
     else:
         # Create new config
         config = QgsAuthMethodConfig("Basic")
-        config.setName(AUTH_CFG_NAME)
-        config.setConfig("username", DEFAULT_USER)
+        config.setName(_AUTH_CFG_NAMES[conn])
+        config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
         config.setConfig("password", password)
         ok = auth_mgr.storeAuthenticationConfig(config)
         if ok:
-            QgsSettings().setValue("constructel_bridge/auth_cfg_id", config.id())
+            QgsSettings().setValue(settings_key, config.id())
     # Remove legacy plaintext password if present
     QgsSettings().remove("constructel_bridge/password")
     return ok
 
 
-def _retrieve_password_encrypted() -> str:
+def _retrieve_password_encrypted(conn: str = "wyre") -> str:
     """Retrieve the password from QGIS Auth Manager.
 
     Returns the password string, or empty string if not found.
@@ -320,26 +338,31 @@ def _retrieve_password_encrypted() -> str:
     if not _ensure_auth_manager_ready():
         return ""
     auth_mgr = QgsApplication.authManager()
-    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    cfg_id = QgsSettings().value(_AUTH_CFG_ID_KEYS[conn], "")
     if not cfg_id or cfg_id not in auth_mgr.configIds():
-        # Fallback: check legacy plaintext storage and migrate
-        legacy_pw = QgsSettings().value("constructel_bridge/password", "")
-        if legacy_pw:
-            _store_password_encrypted(legacy_pw)
-            return legacy_pw
+        # Fallback: check legacy plaintext storage and migrate.
+        # RESERVE a `wyre` : la cle historique constructel_bridge/password
+        # ne contient que le mot de passe de la connexion d'origine ; la
+        # renvoyer pour `be` fournirait un mot de passe faux.
+        if conn == "wyre":
+            legacy_pw = QgsSettings().value("constructel_bridge/password", "")
+            if legacy_pw:
+                _store_password_encrypted(legacy_pw, conn)
+                return legacy_pw
         return ""
     config = QgsAuthMethodConfig()
     auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
     return config.config("password", "")
 
 
-def _remove_stored_password():
+def _remove_stored_password(conn: str = "wyre"):
     """Remove the stored password from Auth Manager and legacy settings."""
     auth_mgr = QgsApplication.authManager()
-    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    settings_key = _AUTH_CFG_ID_KEYS[conn]
+    cfg_id = QgsSettings().value(settings_key, "")
     if cfg_id and cfg_id in auth_mgr.configIds():
         auth_mgr.removeAuthenticationConfig(cfg_id)
-    QgsSettings().remove("constructel_bridge/auth_cfg_id")
+    QgsSettings().remove(settings_key)
     QgsSettings().remove("constructel_bridge/password")
 
 
