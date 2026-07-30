@@ -358,6 +358,16 @@ class ConstructelBridgePlugin:
                 f"External services setup failed: {exc}", TAG, level=Qgis.Warning,
             )
 
+        # Pre-provisionner la dependance pip `extract-msg` utilisee par le
+        # script Processing de geocodage .msg (diffuse via Resource Sharing).
+        # Best-effort: ne doit jamais interrompre le chargement du plugin.
+        try:
+            self._ensure_extract_msg_available()
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                f"extract-msg pre-provisioning failed: {exc}", TAG, level=Qgis.Warning,
+            )
+
         # Intercepter les demandes de credentials QGIS pour fournir
         # automatiquement le mot de passe de notre base PG.
         # Cela evite le dialogue "Saisir les identifiants" quand un
@@ -1120,6 +1130,115 @@ class ConstructelBridgePlugin:
             )
         else:
             self._log("All external services already configured")
+
+    @staticmethod
+    def _resolve_python_executable():
+        """Resout le chemin du VRAI interpreteur Python embarque par QGIS.
+
+        Sur QGIS Windows, sys.executable pointe vers qgis-bin.exe (l'appli hote
+        qui embarque Python), PAS vers un python.exe autonome. Le passer tel
+        quel a pip via subprocess fait interpreter par QGIS les arguments
+        "-m", "pip", ... comme des sources de donnees a ouvrir
+        ("Invalid Data Source"). On resout donc l'interpreteur reel:
+
+          - Windows: python3.exe / python.exe dans sys.exec_prefix puis
+            sys.prefix (ex. C:/Program Files/QGIS 3.34/apps/Python312/).
+          - Linux/Mac: sys.executable est generalement deja un interpreteur
+            valide; repli sur <prefix>/bin/python3 puis shutil.which().
+
+        Retourne un chemin verifie via os.path.isfile, ou None si aucun
+        interpreteur valide n'est trouve (l'appelant s'abstient alors de pip).
+        """
+        import sys
+        import shutil
+
+        candidates = []
+        if sys.platform.startswith("win"):
+            for base in (sys.exec_prefix, sys.prefix):
+                if not base:
+                    continue
+                candidates.append(os.path.join(base, "python3.exe"))
+                candidates.append(os.path.join(base, "python.exe"))
+        else:
+            exe = sys.executable
+            if exe and os.path.basename(exe).lower().startswith("python"):
+                candidates.append(exe)
+            for base in (sys.exec_prefix, sys.prefix):
+                if not base:
+                    continue
+                candidates.append(os.path.join(base, "bin", "python3"))
+                candidates.append(os.path.join(base, "bin", "python"))
+            for name in ("python3", "python"):
+                found = shutil.which(name)
+                if found:
+                    candidates.append(found)
+
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def _ensure_extract_msg_available(self):
+        """Pre-provisionne la dependance pip `extract-msg` (best-effort).
+
+        Utilisee par le script Processing de geocodage As-Built (.msg),
+        diffuse separement via QGIS Resource Sharing. Cette methode tente
+        une installation pip silencieuse au demarrage du plugin pour que
+        la dependance soit deja presente le jour ou l'utilisateur installe
+        ce script.
+
+        Contrat: cette methode ne doit JAMAIS laisser remonter d'exception.
+        """
+        try:
+            try:
+                import extract_msg  # noqa: F401
+                self._log("Dependance 'extract-msg' deja disponible")
+                return
+            except ImportError:
+                pass
+
+            self._log("Dependance 'extract-msg' absente — tentative d'installation pip…")
+            import subprocess
+
+            python_exe = self._resolve_python_executable()
+            if not python_exe:
+                self._log(
+                    "Interpreteur Python introuvable: installation automatique de "
+                    "'extract-msg' ignoree. Installation manuelle requise: "
+                    "python -m pip install extract-msg",
+                    level=Qgis.Warning,
+                )
+                return
+
+            result = subprocess.run(
+                [python_exe, "-m", "pip", "install", "extract-msg"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                self._log(
+                    "Echec de l'installation pip de 'extract-msg' "
+                    f"(code {result.returncode}): {(result.stderr or '').strip()[:500]}",
+                    level=Qgis.Warning,
+                )
+                return
+
+            import importlib
+            importlib.invalidate_caches()
+            try:
+                import extract_msg  # noqa: F401
+                self._log("Dependance 'extract-msg' installee avec succes")
+            except ImportError:
+                self._log(
+                    "pip a reussi mais 'extract-msg' reste introuvable — "
+                    "un redemarrage de QGIS peut etre necessaire",
+                    level=Qgis.Warning,
+                )
+        except Exception as exc:
+            self._log(
+                f"Pre-provisionnement de 'extract-msg' ignore ({exc})",
+                level=Qgis.Warning,
+            )
 
     # =====================================================================
     # Hook sur les couches — tagging des commits

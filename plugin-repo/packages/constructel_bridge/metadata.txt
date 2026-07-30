@@ -2,8 +2,10 @@
 name=Constructel Bridge
 qgisMinimumVersion=3.28
 description=Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.
-version=1.4.8
-changelog=v1.4.8 - style(qgis): sync styles depuis Farois (main 92190d0a) - cables UG BP ambre -> cyan #4DD0E1 (#536) ; couleurs AS_BUILT revisees ducts (vert fonce) et structures (bleu) (#514) ; actions "Ouvrir dossier SharePoint" / "Ouvrir PDF principal" sur zones POP et MRO ; labels MRO visibles des le 1:25000.
+version=1.4.10
+changelog=v1.4.10 - fix(plugin): correction critique - l'auto-install extract-msg (1.4.9) utilisait sys.executable (qgis-bin.exe sur Windows) au lieu du vrai interpreteur Python, causant des erreurs "Invalid Data Source" au demarrage et un install qui ne fonctionnait jamais. Resolution robuste via sys.exec_prefix/sys.prefix avec fallback securise (fonction _resolve_python_executable).
+    v1.4.9 - feat(plugin): pre-provisionnement best-effort de la dependance pip 'extract-msg' au demarrage (initGui). Installation pip silencieuse pour que le script Processing de geocodage As-Built (.msg, diffuse via QGIS Resource Sharing) fonctionne des son installation. Contrat best-effort : n'interrompt jamais le chargement du plugin, echecs logges dans l'onglet Constructel Bridge.
+    v1.4.8 - style(qgis): sync styles depuis Farois (main 92190d0a) - cables UG BP ambre -> cyan #4DD0E1 (#536) ; couleurs AS_BUILT revisees ducts (vert fonce) et structures (bleu) (#514) ; actions "Ouvrir dossier SharePoint" / "Ouvrir PDF principal" sur zones POP et MRO ; labels MRO visibles des le 1:25000.
     v1.4.7 - style(qgis): refonte statuts cables/ducts/subducts (migration 246). CABLE/FACADE = TODO/CP/CONSTRUCTED/AS_BUILT ; CABLE/UNDERGROUND = TODO/BP/BLOWN/AS_BUILT ; DUCT = TODO/CP/CONSTRUCTED/AS_BUILT ; SUBDUCT = TODO/BP/BLOWN/AS_BUILT. Default de saisie = TODO. Sync depuis Farois styles/ (PR #469).
     v1.4.6 - style(qgis): cables UG statuts BP/BLOWN/AS_BUILT + facade AS_BUILT (alignement Farois map / ref.element_type_statuses).
     v1.4.5 - style(qgis): sync palettes structures/cables/ducts avec le dashboard Farois (BLOWN cyan 0,188,212; facade orange; souterrain vert/cyan) -- QML complets PR #424/#429/#430.
