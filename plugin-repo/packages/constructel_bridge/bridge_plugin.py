@@ -133,6 +133,10 @@ _PG_CONNECTIONS = {
         "sslmode": DEFAULT_SSLMODE,
         "schemas": "infra,osiris",
         "schema": "infra",
+        # Restriction multi-schema (infra+osiris) : la case "Seulement le
+        # schema 'public'" du dialogue QGIS ne s'applique qu'a UN schema,
+        # donc hors de propos ici.
+        "public_only": False,
     },
     "be": {
         "name": "be",
@@ -143,6 +147,12 @@ _PG_CONNECTIONS = {
         "sslmode": BE_SSLMODE,
         "schemas": "public",
         "schema": "public",
+        # `be` ne doit exposer QUE le schema public. Contrairement a `wyre`
+        # (2 schemas), c'est un cas a un seul schema : en plus de la cle
+        # `schemas` (liste de restriction), QGIS a une case a cocher
+        # dediee "Seulement le schema 'public'" (cle de settings
+        # `publicOnly`) -- l'activer specifiquement pour `be`.
+        "public_only": True,
     },
 }
 
@@ -1244,7 +1254,7 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/allowGeometrylessTables", False)
         settings.setValue(f"{base}/geometryColumnsOnly", True)
         settings.setValue(f"{base}/dontResolveType", False)
-        settings.setValue(f"{base}/publicOnly", False)
+        settings.setValue(f"{base}/publicOnly", params.get("public_only", False))
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
         settings.setValue(f"{base}/schemas", params["schemas"])
