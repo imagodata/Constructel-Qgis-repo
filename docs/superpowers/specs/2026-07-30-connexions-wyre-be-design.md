@@ -21,7 +21,7 @@ chantier 2 dépend directement de la connexion `be` et de la table créées ici.
 
 ## Objectif
 
-1. Renommer la connexion existante (liée à l'opérateur wyre_ftth) en **`wyre`**
+1. Renommer la connexion existante (liée à l'opérateur farois_ftth) en **`wyre`**
    — comportement identique à l'existant, seul le libellé change.
 2. Ajouter une seconde connexion nommée **`be`** (bureau d'études), limitée au
    schéma `public`, utilisable en usage mixte : accès QGIS interactif pour une
@@ -69,7 +69,7 @@ ajoutés pour `be`.
 plat actuel — il faudra le restructurer manuellement (ou via un petit script de
 migration) sur chaque poste/serveur au moment du déploiement de cette version.
 
-### Base de données (`wyre_ftth`)
+### Base de données (`farois_ftth`)
 
 Nouveau rôle Postgres `bureau_etudes` :
 
