@@ -146,13 +146,17 @@ LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
 # ---------------------------------------------------------------------------
 
 class _BridgeCredentials(QgsCredentials):
-    """Fournit automatiquement les credentials pour la base WYRE FTTH.
+    """Fournit automatiquement les credentials pour nos connexions PG.
 
     Quand un projet contient des couches avec un authcfg d'un autre
     utilisateur, QGIS affiche un dialogue de saisie pour chaque couche.
     Ce handler intercepte ces demandes et fournit le mot de passe
     automatiquement si le realm correspond a notre serveur PG.
     Pour les autres realms, il delegue au handler original (dialogue).
+
+    `wyre` et `be` pointent sur le MEME host et la MEME base : le realm
+    seul ne les distingue pas, la discrimination se fait sur le nom
+    d'utilisateur (cf. _credentials_for).
     """
 
     def __init__(self, fallback):
@@ -164,19 +168,39 @@ class _BridgeCredentials(QgsCredentials):
     def update_password(self, password: str):
         self._password = password
 
+    def _credentials_for(self, realm, username):
+        """Resout le couple (utilisateur, mot de passe) pour un realm.
+
+        `be` est teste EN PREMIER car c'est le cas le plus specifique : il
+        n'est reconnu que si l'utilisateur du bureau d'etudes apparait
+        explicitement, soit dans le realm (`user='...'` que QGIS y insere
+        quand la connexion memorise son nom d'utilisateur), soit dans
+        l'argument *username*. Tout autre realm de notre serveur retombe
+        sur `wyre` — comportement historique preserve a l'identique.
+
+        Retourne None si le realm ne nous concerne pas.
+        """
+        if BE_ENABLED and (f"user='{BE_USER}'" in realm or username == BE_USER):
+            return BE_USER, _BE_PW
+        if DEFAULT_HOST in realm:
+            return self._username, self._password
+        return None
+
     def request(self, realm, username, password, message=""):
         QgsMessageLog.logMessage(
             f"Credentials request intercepted — realm={realm!r}",
             TAG, level=Qgis.Info,
         )
-        if DEFAULT_HOST in realm:
+        creds = self._credentials_for(realm, username)
+        if creds is not None:
+            user, pwd = creds
             QgsMessageLog.logMessage(
-                "Auto-providing credentials for WYRE FTTH",
+                f"Auto-providing credentials for {user}",
                 TAG, level=Qgis.Info,
             )
             # Also cache via put() so subsequent get() calls skip request()
-            self.put(realm, self._username, self._password)
-            return True, self._username, self._password
+            self.put(realm, user, pwd)
+            return True, user, pwd
         # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
         if self._fallback:
             return self._fallback.request(realm, username, password, message)
@@ -216,6 +240,18 @@ def _precache_pg_credentials():
         DEFAULT_HOST,
     ):
         creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
+
+    if not BE_ENABLED:
+        return
+    # `be` partage host + base avec `wyre` : SEULES les variantes de realm
+    # qui portent user='...' sont pre-cachees. Pre-cacher une variante sans
+    # utilisateur ecraserait le cache de `wyre` avec le mot de passe du
+    # bureau d'etudes et casserait la connexion principale.
+    for realm in (
+        f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} user='{BE_USER}'",
+        f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} sslmode={BE_SSLMODE} user='{BE_USER}'",
+    ):
+        creds.put(realm, BE_USER, _BE_PW)
 
 
 def _ensure_auth_manager_ready() -> bool:
