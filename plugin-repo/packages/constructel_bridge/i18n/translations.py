@@ -60,7 +60,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "hook.exec_error": "executeSql unavailable ({error})",
 
         # -- QGIS PG connection --
-        "pg.configured": "QGIS connection 'constructel_bridge' configured",
+        "pg.configured": "QGIS connection '{name}' configured",
         "pg.already_configured": "QGIS connection 'constructel_bridge' already set up — skipped",
 
         # -- External services --
@@ -316,7 +316,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "hook.exec_error": "executeSql indisponible ({error})",
 
         # -- QGIS PG connection --
-        "pg.configured": "Connexion QGIS 'constructel_bridge' configuree",
+        "pg.configured": "Connexion QGIS '{name}' configuree",
         "pg.already_configured": "Connexion QGIS 'constructel_bridge' deja en place — ignoree",
 
         # -- External services --
@@ -574,7 +574,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "hook.exec_error": "executeSql indisponivel ({error})",
 
         # -- QGIS PG connection --
-        "pg.configured": "Ligacao QGIS 'constructel_bridge' configurada",
+        "pg.configured": "Ligacao QGIS '{name}' configurada",
         "pg.already_configured": "Ligacao QGIS 'constructel_bridge' ja configurada — ignorada",
 
         # -- External services --

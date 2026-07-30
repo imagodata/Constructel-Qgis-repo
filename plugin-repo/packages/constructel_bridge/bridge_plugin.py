@@ -105,6 +105,39 @@ BE_ENABLED = (
     and BE_USER != DEFAULT_USER
 )
 
+# Connexions PostgreSQL enregistrees dans les settings QGIS (panneau
+# Parcourir / Gestionnaire de sources de donnees).
+#   name    : nom affiche = cle sous PostgreSQL/connections/<name>
+#   schemas : valeur du champ "Restreindre aux schemas"
+#   schema  : schema par defaut
+_PG_CONNECTIONS = {
+    "wyre": {
+        "name": "wyre",
+        "host": DEFAULT_HOST,
+        "port": DEFAULT_PORT,
+        "dbname": DEFAULT_DBNAME,
+        "user": DEFAULT_USER,
+        "sslmode": DEFAULT_SSLMODE,
+        "schemas": "infra,osiris",
+        "schema": "infra",
+    },
+    "be": {
+        "name": "be",
+        "host": BE_HOST,
+        "port": BE_PORT,
+        "dbname": BE_DBNAME,
+        "user": BE_USER,
+        "sslmode": BE_SSLMODE,
+        "schemas": "public",
+        "schema": "public",
+    },
+}
+
+# Nom de la connexion QGIS avant la v1.5.0. Retire des settings a chaque
+# enregistrement : sans ca, le navigateur QGIS afficherait a la fois
+# l'ancienne entree et la nouvelle apres mise a jour du plugin.
+_LEGACY_PG_CONNECTION = "PostgreSQL/connections/constructel_bridge"
+
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
 
 
@@ -1021,23 +1054,30 @@ class ConstructelBridgePlugin:
                 ),
             )
 
-    def _setup_qgis_pg_connection(self, password: str, use_authcfg: bool = False):
-        """Enregistre la connexion PostgreSQL dans les settings QGIS.
+    def _setup_qgis_pg_connection(self, password: str, use_authcfg: bool = False,
+                                  conn: str = "wyre"):
+        """Enregistre une connexion PostgreSQL dans les settings QGIS.
 
         Always writes all values to ensure consistency and fix any
         leftover misconfiguration from previous plugin versions.
+
+        *conn* est une cle de ``_PG_CONNECTIONS`` ("wyre" ou "be") : elle
+        determine le nom affiche, les parametres serveur et les schemas
+        exposes.  Le defaut "wyre" preserve le comportement des appelants
+        historiques (_connect).
 
         When *use_authcfg* is True, stores credentials in Auth Manager
         and references the authcfg ID instead of storing the password
         in plaintext (equivalent to "Convertir en configuration").
         """
+        params = _PG_CONNECTIONS[conn]
         settings = QgsSettings()
-        base = "PostgreSQL/connections/constructel_bridge"
+        base = f"PostgreSQL/connections/{params['name']}"
 
-        settings.setValue(f"{base}/host", DEFAULT_HOST)
-        settings.setValue(f"{base}/port", str(DEFAULT_PORT))
-        settings.setValue(f"{base}/database", DEFAULT_DBNAME)
-        settings.setValue(f"{base}/username", DEFAULT_USER)
+        settings.setValue(f"{base}/host", params["host"])
+        settings.setValue(f"{base}/port", str(params["port"]))
+        settings.setValue(f"{base}/database", params["dbname"])
+        settings.setValue(f"{base}/username", params["user"])
         settings.setValue(f"{base}/sslmode", "3")
         settings.setValue(f"{base}/estimatedMetadata", True)
         settings.setValue(f"{base}/allowGeometrylessTables", False)
@@ -1046,21 +1086,24 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/publicOnly", False)
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
-        settings.setValue(f"{base}/schemas", "infra,osiris")
-        settings.setValue(f"{base}/schema", "infra")
+        settings.setValue(f"{base}/schemas", params["schemas"])
+        settings.setValue(f"{base}/schema", params["schema"])
 
         if use_authcfg:
             # Store credentials in Auth Manager (encrypted)
-            store_ok = _store_password_encrypted(password)
-            auth_cfg_id = settings.value("constructel_bridge/auth_cfg_id", "")
+            store_ok = _store_password_encrypted(password, conn)
+            auth_cfg_id = settings.value(_AUTH_CFG_ID_KEYS[conn], "")
             if store_ok and auth_cfg_id:
                 settings.setValue(f"{base}/authcfg", auth_cfg_id)
-                self._log("PG connection configured with authcfg (encrypted).")
+                self._log(
+                    f"PG connection '{params['name']}' configured with authcfg (encrypted)."
+                )
             else:
                 # Auth Manager not ready — clear any stale authcfg
                 settings.remove(f"{base}/authcfg")
                 self._log(
-                    "Auth Manager unavailable, PG connection uses saved password.",
+                    f"Auth Manager unavailable, PG connection '{params['name']}' "
+                    "uses saved password.",
                     Qgis.Warning,
                 )
         else:
@@ -1072,7 +1115,10 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/savePassword", False)
         settings.remove(f"{base}/password")
 
-        self._log(tr("pg.configured"))
+        # Renommage v1.5.0 : retirer l'entree historique "constructel_bridge".
+        settings.remove(_LEGACY_PG_CONNECTION)
+
+        self._log(tr("pg.configured", name=params["name"]))
 
     # =====================================================================
     # Connexions externes — WMTS / XYZ / WFS
