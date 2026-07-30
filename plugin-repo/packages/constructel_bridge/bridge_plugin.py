@@ -192,17 +192,21 @@ class _BridgeCredentials(QgsCredentials):
         sur `wyre` — comportement historique preserve a l'identique.
 
         Le repli sur simple correspondance de *username* est ANCRE sur
-        DEFAULT_HOST : `_BridgeCredentials` est installe comme le singleton
-        QgsCredentials actif pour toute la session QGIS, donc sans cet
-        ancrage une demande d'authentification vers un serveur PG TIERS ou
-        le username serait egalement `bureau_etudes` recevrait par erreur
-        le mot de passe `be` — fuite de credentials vers un serveur
-        externe. `wyre` et `be` partageant le meme host, cet ancrage ne
-        casse aucun cas legitime de `be`.
+        BE_HOST (pas DEFAULT_HOST) : `_BridgeCredentials` est installe
+        comme le singleton QgsCredentials actif pour toute la session
+        QGIS, donc sans cet ancrage une demande d'authentification vers
+        un serveur PG TIERS ou le username serait egalement
+        `bureau_etudes` recevrait par erreur le mot de passe `be` —
+        fuite de credentials vers un serveur externe. On ancre sur
+        BE_HOST (pas DEFAULT_HOST) car credentials.json expose des
+        overrides BE_DB_HOST/BE_DB_NAME independants de wyre : si `be`
+        est un jour reconfigure sur un autre serveur, l'ancrage doit
+        suivre SA propre configuration, pas celle de `wyre`. Aujourd'hui
+        BE_HOST == DEFAULT_HOST donc le comportement est identique.
 
         Retourne None si le realm ne nous concerne pas.
         """
-        if BE_ENABLED and DEFAULT_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
+        if BE_ENABLED and BE_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
             return BE_USER, _BE_PW
         if DEFAULT_HOST in realm:
             return self._username, self._password
@@ -518,16 +522,25 @@ class ConstructelBridgePlugin:
         # au demarrage (projets recents, browser, etc.).
         _precache_pg_credentials()
 
-        # Enregistrer la connexion `be` (bureau d'etudes, schema public).
-        # SANS authcfg : _store_password_encrypted appellerait
-        # _ensure_auth_manager_ready(), qui declenche le dialogue de mot de
-        # passe maitre QGIS des le demarrage. Le mot de passe est fourni a
-        # la volee par _BridgeCredentials et par le cache pre-rempli
-        # ci-dessus. `be` n'a pas besoin du flux _connect complet (psycopg2,
+        # Enregistrer la connexion `be` (bureau d'etudes, schema public),
+        # AVEC authcfg (comme le fait deja `wyre` a chaque auto-connexion
+        # silencieuse au demarrage, cf. _connect() -> _setup_qgis_pg_connection
+        # (..., use_authcfg=True)) : sans reference authcfg stockee, le
+        # bouton "Tester la connexion" et le parcours du navigateur QGIS
+        # pour `be` n'utilisent PAS le meme chemin que le chargement de
+        # couche et ne beneficient donc pas de l'interception
+        # _BridgeCredentials — l'utilisateur se retrouve avec une invite
+        # de mot de passe bloquante (constate en test reel). Utiliser
+        # authcfg n'introduit PAS une nouvelle categorie d'invite : `wyre`
+        # declenche deja _ensure_auth_manager_ready() (et donc l'eventuel
+        # mot de passe maitre QGIS) via son propre auto-connect a chaque
+        # demarrage du plugin ; une fois le gestionnaire d'authentification
+        # deverrouille pour `wyre`, `be` en beneficie silencieusement.
+        # `be` n'a toujours pas besoin du flux _connect complet (psycopg2,
         # ref.users, onboarding) : c'est une connexion de consultation.
         if BE_ENABLED:
             try:
-                self._setup_qgis_pg_connection(_BE_PW, use_authcfg=False, conn="be")
+                self._setup_qgis_pg_connection(_BE_PW, use_authcfg=True, conn="be")
             except Exception as exc:
                 QgsMessageLog.logMessage(
                     f"BE connection setup failed: {exc}", TAG, level=Qgis.Warning,
@@ -977,13 +990,28 @@ class ConstructelBridgePlugin:
             else:
                 uri = QgsDataSourceUri(layer.source())
 
-            # Toujours utiliser des credentials en clair pour la portabilite
+            # Toujours utiliser des credentials en clair pour la portabilite.
+            # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
+            # historique) et be (BE_USER, bureau d'etudes, si active). Sans
+            # cette distinction, toute couche `be` (username=bureau_etudes)
+            # etait auparavant reecrite de force vers wyre a chaque
+            # ouverture de projet -- cassant le cloisonnement schema public
+            # de `be` et embarquant le mot de passe wyre en clair dans le
+            # .qgz d'un utilisateur externe (bureau d'etudes).
+            known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+            if BE_ENABLED:
+                known_identities[BE_USER] = (BE_USER, _BE_PW)
+
             old_authcfg = uri.authConfigId()
-            needs_fix = bool(old_authcfg) or uri.username() != DEFAULT_USER
+            current_user = uri.username()
+            needs_fix = bool(old_authcfg) or current_user not in known_identities
             if needs_fix:
+                target_user, target_password = known_identities.get(
+                    current_user, (DEFAULT_USER, password)
+                )
                 uri.setAuthConfigId("")
-                uri.setUsername(DEFAULT_USER)
-                uri.setPassword(password)
+                uri.setUsername(target_user)
+                uri.setPassword(target_password)
 
             if needs_fix or not layer.isValid():
                 options = QgsDataProvider.ProviderOptions()
