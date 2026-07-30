@@ -178,9 +178,18 @@ class _BridgeCredentials(QgsCredentials):
         l'argument *username*. Tout autre realm de notre serveur retombe
         sur `wyre` — comportement historique preserve a l'identique.
 
+        Le repli sur simple correspondance de *username* est ANCRE sur
+        DEFAULT_HOST : `_BridgeCredentials` est installe comme le singleton
+        QgsCredentials actif pour toute la session QGIS, donc sans cet
+        ancrage une demande d'authentification vers un serveur PG TIERS ou
+        le username serait egalement `bureau_etudes` recevrait par erreur
+        le mot de passe `be` — fuite de credentials vers un serveur
+        externe. `wyre` et `be` partageant le meme host, cet ancrage ne
+        casse aucun cas legitime de `be`.
+
         Retourne None si le realm ne nous concerne pas.
         """
-        if BE_ENABLED and (f"user='{BE_USER}'" in realm or username == BE_USER):
+        if BE_ENABLED and DEFAULT_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
             return BE_USER, _BE_PW
         if DEFAULT_HOST in realm:
             return self._username, self._password
