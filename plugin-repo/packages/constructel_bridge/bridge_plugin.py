@@ -45,6 +45,19 @@ from .bridge_expressions import register_expressions, unregister_expressions
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
+AUTH_CFG_NAME_BE = "constructel_bridge_be_pw"
+
+# Cle de settings ou est memorise l'ID de configuration Auth Manager, par
+# connexion. `wyre` CONSERVE la cle historique : la changer orphaniserait
+# les configurations Auth Manager deja stockees sur les postes existants.
+_AUTH_CFG_ID_KEYS = {
+    "wyre": "constructel_bridge/auth_cfg_id",
+    "be": "constructel_bridge/auth_cfg_id_be",
+}
+_AUTH_CFG_NAMES = {
+    "wyre": AUTH_CFG_NAME,
+    "be": AUTH_CFG_NAME_BE,
+}
 
 # ---------------------------------------------------------------------------
 # Credentials — loaded from credentials.json next to this file
@@ -52,22 +65,91 @@ AUTH_CFG_NAME = "constructel_bridge_pw"
 _CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 
 def _load_credentials() -> dict:
-    """Load connection parameters from credentials.json."""
+    """Load connection parameters from credentials.json.
+
+    Format attendu depuis la v1.5.0 : un objet par connexion,
+    {"wyre": {...}, "be": {...}}. Les deploiements anterieurs ont un objet
+    PLAT (host/port/... a la racine) : on le rattache alors a "wyre" et on
+    laisse "be" vide, plutot que de lever une KeyError a l'import du module
+    — ce qui empecherait le plugin de se charger DU TOUT, `wyre` compris.
+    """
     import json
     with open(_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    if "host" in raw:
+        return {"wyre": raw, "be": {}}
+    return raw
 
 _CREDS = _load_credentials()
+_WYRE_CREDS = _CREDS.get("wyre", {})
+_BE_CREDS = _CREDS.get("be", {})
 
-DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _CREDS["host"]
-DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_CREDS["port"])))
-DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _CREDS["dbname"]
-DEFAULT_USER = _CREDS["user"]
-_DEFAULT_PW = base64.b64decode(_CREDS["password"]).decode()
-DEFAULT_SRID = _CREDS.get("srid", 31370)
-DEFAULT_SSLMODE = _CREDS.get("sslmode", "require")
-PG_SERVICE_NAME = _CREDS.get("service_name", "constructel_bridge")
-EMAIL_DOMAIN = _CREDS.get("email_domain", "constructel.be")
+DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
+DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_WYRE_CREDS["port"])))
+DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _WYRE_CREDS["dbname"]
+DEFAULT_USER = _WYRE_CREDS["user"]
+_DEFAULT_PW = base64.b64decode(_WYRE_CREDS["password"]).decode()
+DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
+DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
+PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
+EMAIL_DOMAIN = _WYRE_CREDS.get("email_domain", "constructel.be")
+
+# Connexion `be` (bureau d'etudes) — schema public uniquement, identifiant
+# PostgreSQL PARTAGE (pas de compte par personne). Absente des
+# credentials.json anterieurs a la v1.5.0 : toutes les constantes retombent
+# alors sur des valeurs vides et BE_ENABLED est False.
+BE_HOST = os.getenv("BE_DB_HOST", "") or _BE_CREDS.get("host", "")
+BE_PORT = int(os.getenv("BE_DB_PORT", str(_BE_CREDS.get("port", 5432))))
+BE_DBNAME = os.getenv("BE_DB_NAME", "") or _BE_CREDS.get("dbname", "")
+BE_USER = _BE_CREDS.get("user", "")
+_BE_PW = (
+    base64.b64decode(_BE_CREDS["password"]).decode()
+    if _BE_CREDS.get("password") else ""
+)
+BE_SSLMODE = _BE_CREDS.get("sslmode", "require")
+
+# `wyre` et `be` pointent sur le MEME host et la MEME base : dans un realm
+# QgsCredentials, seul l'utilisateur les distingue (cf.
+# _BridgeCredentials._credentials_for). Un bloc `be` qui reutiliserait
+# l'utilisateur de `wyre` rendrait la resolution ambigue et casserait
+# l'authentification de `wyre` — on refuse alors d'activer la connexion.
+BE_ENABLED = (
+    bool(BE_HOST and BE_DBNAME and BE_USER and _BE_PW)
+    and BE_USER != DEFAULT_USER
+)
+
+# Connexions PostgreSQL enregistrees dans les settings QGIS (panneau
+# Parcourir / Gestionnaire de sources de donnees).
+#   name    : nom affiche = cle sous PostgreSQL/connections/<name>
+#   schemas : valeur du champ "Restreindre aux schemas"
+#   schema  : schema par defaut
+_PG_CONNECTIONS = {
+    "wyre": {
+        "name": "wyre",
+        "host": DEFAULT_HOST,
+        "port": DEFAULT_PORT,
+        "dbname": DEFAULT_DBNAME,
+        "user": DEFAULT_USER,
+        "sslmode": DEFAULT_SSLMODE,
+        "schemas": "infra,osiris",
+        "schema": "infra",
+    },
+    "be": {
+        "name": "be",
+        "host": BE_HOST,
+        "port": BE_PORT,
+        "dbname": BE_DBNAME,
+        "user": BE_USER,
+        "sslmode": BE_SSLMODE,
+        "schemas": "public",
+        "schema": "public",
+    },
+}
+
+# Nom de la connexion QGIS avant la v1.5.0. Retire des settings a chaque
+# enregistrement : sans ca, le navigateur QGIS afficherait a la fois
+# l'ancienne entree et la nouvelle apres mise a jour du plugin.
+_LEGACY_PG_CONNECTION = "PostgreSQL/connections/constructel_bridge"
 
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
 
@@ -77,13 +159,17 @@ LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
 # ---------------------------------------------------------------------------
 
 class _BridgeCredentials(QgsCredentials):
-    """Fournit automatiquement les credentials pour la base WYRE FTTH.
+    """Fournit automatiquement les credentials pour nos connexions PG.
 
     Quand un projet contient des couches avec un authcfg d'un autre
     utilisateur, QGIS affiche un dialogue de saisie pour chaque couche.
     Ce handler intercepte ces demandes et fournit le mot de passe
     automatiquement si le realm correspond a notre serveur PG.
     Pour les autres realms, il delegue au handler original (dialogue).
+
+    `wyre` et `be` pointent sur le MEME host et la MEME base : le realm
+    seul ne les distingue pas, la discrimination se fait sur le nom
+    d'utilisateur (cf. _credentials_for).
     """
 
     def __init__(self, fallback):
@@ -95,19 +181,48 @@ class _BridgeCredentials(QgsCredentials):
     def update_password(self, password: str):
         self._password = password
 
+    def _credentials_for(self, realm, username):
+        """Resout le couple (utilisateur, mot de passe) pour un realm.
+
+        `be` est teste EN PREMIER car c'est le cas le plus specifique : il
+        n'est reconnu que si l'utilisateur du bureau d'etudes apparait
+        explicitement, soit dans le realm (`user='...'` que QGIS y insere
+        quand la connexion memorise son nom d'utilisateur), soit dans
+        l'argument *username*. Tout autre realm de notre serveur retombe
+        sur `wyre` — comportement historique preserve a l'identique.
+
+        Le repli sur simple correspondance de *username* est ANCRE sur
+        DEFAULT_HOST : `_BridgeCredentials` est installe comme le singleton
+        QgsCredentials actif pour toute la session QGIS, donc sans cet
+        ancrage une demande d'authentification vers un serveur PG TIERS ou
+        le username serait egalement `bureau_etudes` recevrait par erreur
+        le mot de passe `be` — fuite de credentials vers un serveur
+        externe. `wyre` et `be` partageant le meme host, cet ancrage ne
+        casse aucun cas legitime de `be`.
+
+        Retourne None si le realm ne nous concerne pas.
+        """
+        if BE_ENABLED and DEFAULT_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
+            return BE_USER, _BE_PW
+        if DEFAULT_HOST in realm:
+            return self._username, self._password
+        return None
+
     def request(self, realm, username, password, message=""):
         QgsMessageLog.logMessage(
             f"Credentials request intercepted — realm={realm!r}",
             TAG, level=Qgis.Info,
         )
-        if DEFAULT_HOST in realm:
+        creds = self._credentials_for(realm, username)
+        if creds is not None:
+            user, pwd = creds
             QgsMessageLog.logMessage(
-                "Auto-providing credentials for WYRE FTTH",
+                f"Auto-providing credentials for {user}",
                 TAG, level=Qgis.Info,
             )
             # Also cache via put() so subsequent get() calls skip request()
-            self.put(realm, self._username, self._password)
-            return True, self._username, self._password
+            self.put(realm, user, pwd)
+            return True, user, pwd
         # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
         if self._fallback:
             return self._fallback.request(realm, username, password, message)
@@ -148,6 +263,18 @@ def _precache_pg_credentials():
     ):
         creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
 
+    if not BE_ENABLED:
+        return
+    # `be` partage host + base avec `wyre` : SEULES les variantes de realm
+    # qui portent user='...' sont pre-cachees. Pre-cacher une variante sans
+    # utilisateur ecraserait le cache de `wyre` avec le mot de passe du
+    # bureau d'etudes et casserait la connexion principale.
+    for realm in (
+        f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} user='{BE_USER}'",
+        f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} sslmode={BE_SSLMODE} user='{BE_USER}'",
+    ):
+        creds.put(realm, BE_USER, _BE_PW)
+
 
 def _ensure_auth_manager_ready() -> bool:
     """Ensure the Auth Manager is initialized and master password is set.
@@ -164,8 +291,12 @@ def _ensure_auth_manager_ready() -> bool:
     return False
 
 
-def _store_password_encrypted(password: str) -> bool:
+def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
     """Store the password in QGIS Auth Manager (encrypted SQLite DB).
+
+    *conn* est une cle de ``_PG_CONNECTIONS`` : chaque connexion a sa
+    propre configuration Auth Manager et sa propre cle de settings, sinon
+    `be` ecraserait celle de `wyre` (et inversement).
 
     Returns True on success.
     """
@@ -176,8 +307,9 @@ def _store_password_encrypted(password: str) -> bool:
         )
         return False
     auth_mgr = QgsApplication.authManager()
+    settings_key = _AUTH_CFG_ID_KEYS[conn]
     # Look for an existing config with our name
-    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    cfg_id = QgsSettings().value(settings_key, "")
     if cfg_id and cfg_id in auth_mgr.configIds():
         # Update existing config
         config = QgsAuthMethodConfig()
@@ -187,18 +319,18 @@ def _store_password_encrypted(password: str) -> bool:
     else:
         # Create new config
         config = QgsAuthMethodConfig("Basic")
-        config.setName(AUTH_CFG_NAME)
-        config.setConfig("username", DEFAULT_USER)
+        config.setName(_AUTH_CFG_NAMES[conn])
+        config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
         config.setConfig("password", password)
         ok = auth_mgr.storeAuthenticationConfig(config)
         if ok:
-            QgsSettings().setValue("constructel_bridge/auth_cfg_id", config.id())
+            QgsSettings().setValue(settings_key, config.id())
     # Remove legacy plaintext password if present
     QgsSettings().remove("constructel_bridge/password")
     return ok
 
 
-def _retrieve_password_encrypted() -> str:
+def _retrieve_password_encrypted(conn: str = "wyre") -> str:
     """Retrieve the password from QGIS Auth Manager.
 
     Returns the password string, or empty string if not found.
@@ -206,26 +338,31 @@ def _retrieve_password_encrypted() -> str:
     if not _ensure_auth_manager_ready():
         return ""
     auth_mgr = QgsApplication.authManager()
-    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    cfg_id = QgsSettings().value(_AUTH_CFG_ID_KEYS[conn], "")
     if not cfg_id or cfg_id not in auth_mgr.configIds():
-        # Fallback: check legacy plaintext storage and migrate
-        legacy_pw = QgsSettings().value("constructel_bridge/password", "")
-        if legacy_pw:
-            _store_password_encrypted(legacy_pw)
-            return legacy_pw
+        # Fallback: check legacy plaintext storage and migrate.
+        # RESERVE a `wyre` : la cle historique constructel_bridge/password
+        # ne contient que le mot de passe de la connexion d'origine ; la
+        # renvoyer pour `be` fournirait un mot de passe faux.
+        if conn == "wyre":
+            legacy_pw = QgsSettings().value("constructel_bridge/password", "")
+            if legacy_pw:
+                _store_password_encrypted(legacy_pw, conn)
+                return legacy_pw
         return ""
     config = QgsAuthMethodConfig()
     auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
     return config.config("password", "")
 
 
-def _remove_stored_password():
+def _remove_stored_password(conn: str = "wyre"):
     """Remove the stored password from Auth Manager and legacy settings."""
     auth_mgr = QgsApplication.authManager()
-    cfg_id = QgsSettings().value("constructel_bridge/auth_cfg_id", "")
+    settings_key = _AUTH_CFG_ID_KEYS[conn]
+    cfg_id = QgsSettings().value(settings_key, "")
     if cfg_id and cfg_id in auth_mgr.configIds():
         auth_mgr.removeAuthenticationConfig(cfg_id)
-    QgsSettings().remove("constructel_bridge/auth_cfg_id")
+    QgsSettings().remove(settings_key)
     QgsSettings().remove("constructel_bridge/password")
 
 
@@ -380,6 +517,27 @@ class ConstructelBridgePlugin:
         # Cela couvre le cas ou un projet avec authcfg inconnu est charge
         # au demarrage (projets recents, browser, etc.).
         _precache_pg_credentials()
+
+        # Enregistrer la connexion `be` (bureau d'etudes, schema public).
+        # SANS authcfg : _store_password_encrypted appellerait
+        # _ensure_auth_manager_ready(), qui declenche le dialogue de mot de
+        # passe maitre QGIS des le demarrage. Le mot de passe est fourni a
+        # la volee par _BridgeCredentials et par le cache pre-rempli
+        # ci-dessus. `be` n'a pas besoin du flux _connect complet (psycopg2,
+        # ref.users, onboarding) : c'est une connexion de consultation.
+        if BE_ENABLED:
+            try:
+                self._setup_qgis_pg_connection(_BE_PW, use_authcfg=False, conn="be")
+            except Exception as exc:
+                QgsMessageLog.logMessage(
+                    f"BE connection setup failed: {exc}", TAG, level=Qgis.Warning,
+                )
+        else:
+            QgsMessageLog.logMessage(
+                "Connexion 'be' non configuree "
+                "(bloc absent ou invalide dans credentials.json)",
+                TAG, level=Qgis.Info,
+            )
 
         # Supprimer le dialogue "Traiter les couches inutilisables" —
         # les couches avec un authcfg inconnu seront reparees apres
@@ -985,23 +1143,30 @@ class ConstructelBridgePlugin:
                 ),
             )
 
-    def _setup_qgis_pg_connection(self, password: str, use_authcfg: bool = False):
-        """Enregistre la connexion PostgreSQL dans les settings QGIS.
+    def _setup_qgis_pg_connection(self, password: str, use_authcfg: bool = False,
+                                  conn: str = "wyre"):
+        """Enregistre une connexion PostgreSQL dans les settings QGIS.
 
         Always writes all values to ensure consistency and fix any
         leftover misconfiguration from previous plugin versions.
+
+        *conn* est une cle de ``_PG_CONNECTIONS`` ("wyre" ou "be") : elle
+        determine le nom affiche, les parametres serveur et les schemas
+        exposes.  Le defaut "wyre" preserve le comportement des appelants
+        historiques (_connect).
 
         When *use_authcfg* is True, stores credentials in Auth Manager
         and references the authcfg ID instead of storing the password
         in plaintext (equivalent to "Convertir en configuration").
         """
+        params = _PG_CONNECTIONS[conn]
         settings = QgsSettings()
-        base = "PostgreSQL/connections/constructel_bridge"
+        base = f"PostgreSQL/connections/{params['name']}"
 
-        settings.setValue(f"{base}/host", DEFAULT_HOST)
-        settings.setValue(f"{base}/port", str(DEFAULT_PORT))
-        settings.setValue(f"{base}/database", DEFAULT_DBNAME)
-        settings.setValue(f"{base}/username", DEFAULT_USER)
+        settings.setValue(f"{base}/host", params["host"])
+        settings.setValue(f"{base}/port", str(params["port"]))
+        settings.setValue(f"{base}/database", params["dbname"])
+        settings.setValue(f"{base}/username", params["user"])
         settings.setValue(f"{base}/sslmode", "3")
         settings.setValue(f"{base}/estimatedMetadata", True)
         settings.setValue(f"{base}/allowGeometrylessTables", False)
@@ -1010,21 +1175,24 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/publicOnly", False)
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
-        settings.setValue(f"{base}/schemas", "infra,osiris")
-        settings.setValue(f"{base}/schema", "infra")
+        settings.setValue(f"{base}/schemas", params["schemas"])
+        settings.setValue(f"{base}/schema", params["schema"])
 
         if use_authcfg:
             # Store credentials in Auth Manager (encrypted)
-            store_ok = _store_password_encrypted(password)
-            auth_cfg_id = settings.value("constructel_bridge/auth_cfg_id", "")
+            store_ok = _store_password_encrypted(password, conn)
+            auth_cfg_id = settings.value(_AUTH_CFG_ID_KEYS[conn], "")
             if store_ok and auth_cfg_id:
                 settings.setValue(f"{base}/authcfg", auth_cfg_id)
-                self._log("PG connection configured with authcfg (encrypted).")
+                self._log(
+                    f"PG connection '{params['name']}' configured with authcfg (encrypted)."
+                )
             else:
                 # Auth Manager not ready — clear any stale authcfg
                 settings.remove(f"{base}/authcfg")
                 self._log(
-                    "Auth Manager unavailable, PG connection uses saved password.",
+                    f"Auth Manager unavailable, PG connection '{params['name']}' "
+                    "uses saved password.",
                     Qgis.Warning,
                 )
         else:
@@ -1036,7 +1204,10 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/savePassword", False)
         settings.remove(f"{base}/password")
 
-        self._log(tr("pg.configured"))
+        # Renommage v1.5.0 : retirer l'entree historique "constructel_bridge".
+        settings.remove(_LEGACY_PG_CONNECTION)
+
+        self._log(tr("pg.configured", name=params["name"]))
 
     # =====================================================================
     # Connexions externes — WMTS / XYZ / WFS
