@@ -339,8 +339,15 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
         ok = auth_mgr.storeAuthenticationConfig(config)
         if ok:
             QgsSettings().setValue(settings_key, config.id())
-    # Remove legacy plaintext password if present
-    QgsSettings().remove("constructel_bridge/password")
+    # Remove legacy plaintext password if present -- ONLY for `wyre` and
+    # only on success: this key is the pre-Auth-Manager migration source
+    # read by _retrieve_password_encrypted("wyre"). Since `be`'s own setup
+    # now runs (with authcfg=True) before wyre's auto-connect in initGui,
+    # an unconditional removal here would destroy that legacy value before
+    # wyre had a chance to migrate it, on a be-triggered call that has
+    # nothing to do with wyre's password.
+    if conn == "wyre" and ok:
+        QgsSettings().remove("constructel_bridge/password")
     return ok
 
 
@@ -714,8 +721,11 @@ class ConstructelBridgePlugin:
             if "authcfg=" not in ds:
                 continue
             # Ne jamais injecter nos identifiants dans la datasource d'un
-            # serveur PG tiers.
-            if DEFAULT_HOST not in ds and BE_HOST not in ds:
+            # serveur PG tiers. Filtre les hotes vides (BE_HOST == "" quand
+            # `be` est desactivee) AVANT le test : "" est toujours une
+            # sous-chaine de n'importe quel `ds` en Python, donc un hote
+            # vide dans le tuple annulerait silencieusement cette garde.
+            if not any(h and h in ds for h in (DEFAULT_HOST, BE_HOST)):
                 continue
 
             # Determiner l'identite a preserver depuis le user='...'
@@ -1053,7 +1063,12 @@ class ConstructelBridgePlugin:
             # serveur PG TIERS -- seules les couches pointant sur notre
             # propre serveur (wyre/be, meme host aujourd'hui) sont
             # concernees par cette normalisation de portabilite.
-            if uri.host() not in (DEFAULT_HOST, BE_HOST):
+            # Meme precaution que _strip_authcfg_from_dom : ne comparer
+            # qu'aux hotes REELLEMENT configures, sinon une couche sans
+            # hote explicite (ex. connexion par service=...) matcherait
+            # a tort un BE_HOST vide (be desactivee).
+            known_hosts = {h for h in (DEFAULT_HOST, BE_HOST) if h}
+            if uri.host() not in known_hosts:
                 continue
 
             old_authcfg = uri.authConfigId()
@@ -1881,19 +1896,30 @@ class ConstructelBridgePlugin:
                     self._log("Cannot decode project content from PG", Qgis.Warning)
                     return False
 
-        # Nettoyer les authcfg des datasources et injecter user/password
+        # Nettoyer les authcfg des datasources et injecter user/password.
+        # Meme logique known_identities que _fix_layer_credentials /
+        # _strip_authcfg_from_dom (hotfix 2026-07-30, cf. leurs
+        # docstrings) : preserver l'identite be existante plutot que de
+        # tout basculer vers wyre, et ne jamais toucher un serveur tiers.
         original_xml = xml
-        xml = re.sub(r"\bauthcfg=\w+", "", xml)
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+        if BE_ENABLED:
+            known_identities[BE_USER] = (BE_USER, _BE_PW)
+        known_hosts = tuple(h for h in (DEFAULT_HOST, BE_HOST) if h)
 
         def _fix_datasource(m):
             """Callback pour re.sub: nettoie une balise <datasource>."""
             prefix, ds, suffix = m.group(1), m.group(2), m.group(3)
-            if DEFAULT_HOST not in ds:
+            if not any(h in ds for h in known_hosts):
                 return m.group(0)
-            if f"user='{DEFAULT_USER}'" not in ds:
-                ds += f" user='{DEFAULT_USER}'"
-            if "password=" not in ds:
-                ds += f" password='{password}'"
+            user_match = re.search(r"\buser='([^']*)'", ds)
+            current_user = user_match.group(1) if user_match else None
+            target_user, target_password = known_identities.get(
+                current_user, (DEFAULT_USER, password)
+            )
+            ds = re.sub(r"\buser='[^']*'", "", ds)
+            ds = re.sub(r"\bpassword='[^']*'", "", ds)
+            ds += f" user='{target_user}' password='{target_password}'"
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             return prefix + ds + suffix
 
