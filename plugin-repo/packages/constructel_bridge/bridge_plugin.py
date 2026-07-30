@@ -1912,6 +1912,12 @@ class ConstructelBridgePlugin:
             prefix, ds, suffix = m.group(1), m.group(2), m.group(3)
             if not any(h in ds for h in known_hosts):
                 return m.group(0)
+            # Regression round 3 corrigee : le strip global d'authcfg sur
+            # tout le XML a ete retire au profit d'un traitement par
+            # datasource, mais le re.sub sur `ds` avait ete oublie -- plus
+            # aucun authcfg n'etait retire pour NOS datasources, cassant
+            # l'objectif meme de cette fonction (cf. docstring).
+            ds = re.sub(r"\bauthcfg=\w+", "", ds)
             user_match = re.search(r"\buser='([^']*)'", ds)
             current_user = user_match.group(1) if user_match else None
             target_user, target_password = known_identities.get(
