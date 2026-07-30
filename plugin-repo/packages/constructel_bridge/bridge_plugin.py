@@ -52,22 +52,58 @@ AUTH_CFG_NAME = "constructel_bridge_pw"
 _CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 
 def _load_credentials() -> dict:
-    """Load connection parameters from credentials.json."""
+    """Load connection parameters from credentials.json.
+
+    Format attendu depuis la v1.5.0 : un objet par connexion,
+    {"wyre": {...}, "be": {...}}. Les deploiements anterieurs ont un objet
+    PLAT (host/port/... a la racine) : on le rattache alors a "wyre" et on
+    laisse "be" vide, plutot que de lever une KeyError a l'import du module
+    — ce qui empecherait le plugin de se charger DU TOUT, `wyre` compris.
+    """
     import json
     with open(_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    if "host" in raw:
+        return {"wyre": raw, "be": {}}
+    return raw
 
 _CREDS = _load_credentials()
+_WYRE_CREDS = _CREDS.get("wyre", {})
+_BE_CREDS = _CREDS.get("be", {})
 
-DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _CREDS["host"]
-DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_CREDS["port"])))
-DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _CREDS["dbname"]
-DEFAULT_USER = _CREDS["user"]
-_DEFAULT_PW = base64.b64decode(_CREDS["password"]).decode()
-DEFAULT_SRID = _CREDS.get("srid", 31370)
-DEFAULT_SSLMODE = _CREDS.get("sslmode", "require")
-PG_SERVICE_NAME = _CREDS.get("service_name", "constructel_bridge")
-EMAIL_DOMAIN = _CREDS.get("email_domain", "constructel.be")
+DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
+DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_WYRE_CREDS["port"])))
+DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _WYRE_CREDS["dbname"]
+DEFAULT_USER = _WYRE_CREDS["user"]
+_DEFAULT_PW = base64.b64decode(_WYRE_CREDS["password"]).decode()
+DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
+DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
+PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
+EMAIL_DOMAIN = _WYRE_CREDS.get("email_domain", "constructel.be")
+
+# Connexion `be` (bureau d'etudes) — schema public uniquement, identifiant
+# PostgreSQL PARTAGE (pas de compte par personne). Absente des
+# credentials.json anterieurs a la v1.5.0 : toutes les constantes retombent
+# alors sur des valeurs vides et BE_ENABLED est False.
+BE_HOST = os.getenv("BE_DB_HOST", "") or _BE_CREDS.get("host", "")
+BE_PORT = int(os.getenv("BE_DB_PORT", str(_BE_CREDS.get("port", 5432))))
+BE_DBNAME = os.getenv("BE_DB_NAME", "") or _BE_CREDS.get("dbname", "")
+BE_USER = _BE_CREDS.get("user", "")
+_BE_PW = (
+    base64.b64decode(_BE_CREDS["password"]).decode()
+    if _BE_CREDS.get("password") else ""
+)
+BE_SSLMODE = _BE_CREDS.get("sslmode", "require")
+
+# `wyre` et `be` pointent sur le MEME host et la MEME base : dans un realm
+# QgsCredentials, seul l'utilisateur les distingue (cf.
+# _BridgeCredentials._credentials_for). Un bloc `be` qui reutiliserait
+# l'utilisateur de `wyre` rendrait la resolution ambigue et casserait
+# l'authentification de `wyre` — on refuse alors d'activer la connexion.
+BE_ENABLED = (
+    bool(BE_HOST and BE_DBNAME and BE_USER and _BE_PW)
+    and BE_USER != DEFAULT_USER
+)
 
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
 
