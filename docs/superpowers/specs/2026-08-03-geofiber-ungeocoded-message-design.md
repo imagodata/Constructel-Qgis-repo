@@ -96,3 +96,10 @@ géocodées/échecs/ignorées).
 
 - Toute modification du CSV `UNGEOCODED` existant ou de son format.
 - Envoi automatique du message (email, etc.) — reste un copier-coller manuel.
+
+## Extension (demandée après la première publication, 2026.08.03.4)
+
+Simon a demandé que le message apparaisse aussi à deux autres endroits, en plus de sa position en fin de run :
+
+1. **Journal Processing, juste après la ligne de résumé existante** (`"{n_ok} interventions géocodées, {n_nf} échecs, {n_skip} déjà présentes ignorées."`) — le bloc `build_ungeocoded_message` y est affiché une seconde fois, en plus de sa position actuelle en fin de run (pas un déplacement — les deux occurrences coexistent).
+2. **Table de synthèse xlsx (SUMMARY)** — nouvelle feuille "Adresses non géocodées" dans le même classeur, réutilisant `build_ungeocoded_rows(ungeocoded)` (déjà existant, sert aussi au CSV optionnel `UNGEOCODED`) pour son contenu. Ne remplace ni ne modifie les deux feuilles existantes ("Synthèse par ville", "Pourcentages"), ni le chargement en couche (qui ne cible que la feuille pivot).
