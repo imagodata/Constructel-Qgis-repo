@@ -21,7 +21,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Connection",
-        "dialog.header": "<b>Connection to WYRE FTTH database</b><br>"
+        "dialog.header": "<b>Connection to Farois FTTH database</b><br>"
                          "<small>Role: ftth_editor (infrastructure layer editing)</small>",
         "dialog.server": "Server:",
         "dialog.port": "Port:",
@@ -277,7 +277,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Connexion",
-        "dialog.header": "<b>Connexion a la base WYRE FTTH</b><br>"
+        "dialog.header": "<b>Connexion a la base Farois FTTH</b><br>"
                          "<small>Role: ftth_editor (edition couches infrastructure)</small>",
         "dialog.server": "Serveur:",
         "dialog.port": "Port:",
@@ -535,7 +535,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Ligacao",
-        "dialog.header": "<b>Ligacao a base de dados WYRE FTTH</b><br>"
+        "dialog.header": "<b>Ligacao a base de dados Farois FTTH</b><br>"
                          "<small>Papel: ftth_editor (edicao de camadas de infraestrutura)</small>",
         "dialog.server": "Servidor:",
         "dialog.port": "Porta:",
