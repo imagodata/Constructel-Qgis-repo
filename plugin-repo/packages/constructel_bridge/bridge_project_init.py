@@ -118,19 +118,19 @@ def stamp_project():
 
 LAYER_CATALOG = [
     # -- Demand Points ----------------------------------------------------
-    ("demand_points",      "Demand Points",   "infra", "demand_points",      "geom", "id",  "Points de demande"),
+    ("demand_points",      "Demand Points",   "wyre", "demand_points",      "geom", "id",  "Points de demande"),
 
     # -- Infrastructure ---------------------------------------------------
-    ("structures",         "Infrastructure",  "infra", "structures",         "geom", "id",  "Structures"),
-    ("cables",             "Infrastructure",  "infra", "cables",             "geom", "id",  "Cables"),
-    ("subducts",           "Infrastructure",  "infra", "subducts",           "geom", "id",  "Sous-fourreaux"),
-    ("ducts",              "Infrastructure",  "infra", "ducts",              "geom", "id",  "Conduites"),
+    ("structures",         "Infrastructure",  "wyre", "structures",         "geom", "id",  "Structures"),
+    ("cables",             "Infrastructure",  "wyre", "cables",             "geom", "id",  "Cables"),
+    ("subducts",           "Infrastructure",  "wyre", "subducts",           "geom", "id",  "Sous-fourreaux"),
+    ("ducts",              "Infrastructure",  "wyre", "ducts",              "geom", "id",  "Conduites"),
 
     # -- Zones ------------------------------------------------------------
-    ("zone_drop",          "Zones",           "infra", "zone_drop",          "geom", "id",  "Zones Drop"),
-    ("zone_distribution",  "Zones",           "infra", "zone_distribution",  "geom", "id",  "Zones Distribution"),
-    ("zone_pop",           "Zones",           "infra", "zone_pop",           "geom", "id",  "Zones POP"),
-    ("zone_mro",           "Zones",           "infra", "zone_mro",           "geom", "id",  "Zones MRO"),
+    ("zone_drop",          "Zones",           "wyre", "zone_drop",          "geom", "id",  "Zones Drop"),
+    ("zone_distribution",  "Zones",           "wyre", "zone_distribution",  "geom", "id",  "Zones Distribution"),
+    ("zone_pop",           "Zones",           "wyre", "zone_pop",           "geom", "id",  "Zones POP"),
+    ("zone_mro",           "Zones",           "wyre", "zone_mro",           "geom", "id",  "Zones MRO"),
 
 
     # -- Chantier ---------------------------------------------------------
@@ -1056,7 +1056,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             if not provider:
                 continue
             src_uri = QgsDataSourceUri(provider.uri().uri())
-            schema = src_uri.schema() or "infra"
+            schema = src_uri.schema() or "wyre"
             table = src_uri.table()
             geom_col = src_uri.geometryColumn() or ""
 

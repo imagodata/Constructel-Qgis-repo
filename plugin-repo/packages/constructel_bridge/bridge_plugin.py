@@ -131,9 +131,9 @@ _PG_CONNECTIONS = {
         "dbname": DEFAULT_DBNAME,
         "user": DEFAULT_USER,
         "sslmode": DEFAULT_SSLMODE,
-        "schemas": "infra,osiris",
-        "schema": "infra",
-        # Restriction multi-schema (infra+osiris) : la case "Seulement le
+        "schemas": "wyre,osiris",
+        "schema": "wyre",
+        # Restriction multi-schema (wyre+osiris) : la case "Seulement le
         # schema 'public'" du dialogue QGIS ne s'applique qu'a UN schema,
         # donc hors de propos ici.
         "public_only": False,
@@ -851,7 +851,7 @@ class ConstructelBridgePlugin:
                 user=DEFAULT_USER,
                 password=password,
                 application_name=app_name,
-                options="-c search_path=infra",
+                options="-c search_path=wyre,public",
                 sslmode=DEFAULT_SSLMODE,
             )
             self._conn.autocommit = True
@@ -1829,7 +1829,7 @@ class ConstructelBridgePlugin:
                 tr("project.load_error", name=proj_name, error=error),
             )
 
-    _PROJECT_SCHEMAS = ("infra",)
+    _PROJECT_SCHEMAS = ("wyre", "public")
 
     def _read_and_clean_project(self, project, schema: str, name: str) -> bool:
         """Lit le XML du projet depuis PG, nettoie les authcfg, et charge.
@@ -1965,7 +1965,7 @@ class ConstructelBridgePlugin:
     def _list_db_projects(self) -> list[dict] | None:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.
 
-        Cherche la table ``qgis_projects`` dans les schemas public et infra.
+        Cherche la table ``qgis_projects`` dans les schemas public et wyre.
         """
         cur = self._conn.cursor()
         try:

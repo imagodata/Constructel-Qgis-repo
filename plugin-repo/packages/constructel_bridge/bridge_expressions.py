@@ -29,7 +29,7 @@ def wyre_selected_common(schema_table, field_name, feature, parent):
       - NULL si valeurs mixtes, aucune selection, ou couche introuvable
 
     Usage typique (FilterExpression ValueRelation en multi-edit):
-      "sub_type" = wyre_selected_common('infra.structures', 'structure_type')
+      "sub_type" = wyre_selected_common('wyre.structures', 'structure_type')
     """
     try:
         schema, table = schema_table.split(".", 1)

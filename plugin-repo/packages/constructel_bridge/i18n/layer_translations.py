@@ -48,7 +48,7 @@ _ZONE_STATS = {
 FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
 
     # -----------------------------------------------------------------
-    # infra.structures
+    # wyre.structures
     # -----------------------------------------------------------------
     "structures": {
         **_COMMON,
@@ -60,7 +60,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.cables
+    # wyre.cables
     # -----------------------------------------------------------------
     "cables": {
         **_COMMON,
@@ -78,7 +78,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.ducts
+    # wyre.ducts
     # -----------------------------------------------------------------
     "ducts": {
         **_COMMON,
@@ -90,7 +90,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.subducts
+    # wyre.subducts
     # -----------------------------------------------------------------
     "subducts": {
         **_COMMON,
@@ -102,7 +102,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.demand_points
+    # wyre.demand_points
     # -----------------------------------------------------------------
     "demand_points": {
         **_COMMON,
@@ -122,7 +122,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
 
 
     # -----------------------------------------------------------------
-    # infra.zone_mro
+    # wyre.zone_mro
     # -----------------------------------------------------------------
     "zone_mro": {
         **_COMMON,
@@ -132,7 +132,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.zone_pop
+    # wyre.zone_pop
     # -----------------------------------------------------------------
     "zone_pop": {
         **_COMMON,
@@ -165,7 +165,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.zone_distribution
+    # wyre.zone_distribution
     # -----------------------------------------------------------------
     "zone_distribution": {
         **_COMMON,
@@ -183,7 +183,7 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
-    # infra.zone_drop
+    # wyre.zone_drop
     # -----------------------------------------------------------------
     "zone_drop": {
         **_COMMON,
