@@ -245,8 +245,9 @@ class _BridgeCredentials(QgsCredentials):
     d'utilisateur (cf. _credentials_for).
     """
 
-    def __init__(self, fallback):
+    def __init__(self, fallback, plugin):
         self._fallback = fallback
+        self._plugin = plugin
         super().__init__()  # appelle setInstance(self) en interne
 
     def _credentials_for(self, realm, username):
@@ -286,9 +287,24 @@ class _BridgeCredentials(QgsCredentials):
             # Also cache via put() so subsequent get() calls skip request()
             self.put(realm, user, pwd)
             return True, user, pwd
-        # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
+        # Realm inconnu (ou wyre, qui n'a plus de reponse automatique) ->
+        # deleguer au handler QGIS par defaut (dialogue natif).
         if self._fallback:
-            return self._fallback.request(realm, username, password, message)
+            ok, user, pwd = self._fallback.request(realm, username, password, message)
+            if ok and DEFAULT_HOST in realm:
+                # La personne vient de saisir SON mot de passe AD dans le
+                # dialogue natif QGIS. On le met en cache RAM (jamais sur
+                # disque, meurt avec le process) pour eviter une seconde
+                # invite dans la meme session, et on declenche le flux de
+                # connexion habituel du plugin (hooks de commit,
+                # enregistrement ref.users) s'il n'est pas deja actif --
+                # sans cela, une personne qui ouvre un projet et tape son
+                # mot de passe au dialogue natif reste "deconnectee" cote
+                # plugin (pas d'attribution d'edition).
+                self.put(realm, user, pwd)
+                if not self._plugin._connected:
+                    self._plugin._connect(pwd, silent=True)
+            return ok, user, pwd
         return False, username, password
 
     def requestMasterPassword(self, password, stored=False):
@@ -570,7 +586,7 @@ class ConstructelBridgePlugin:
         # Cela evite le dialogue "Saisir les identifiants" quand un
         # projet contient des authcfg d'un autre utilisateur.
         self._orig_credentials = QgsCredentials.instance()
-        self._bridge_credentials = _BridgeCredentials(self._orig_credentials)
+        self._bridge_credentials = _BridgeCredentials(self._orig_credentials, self)
 
         # Pre-cacher les credentials PG pour que QgsCredentials.get()
         # les trouve dans le cache AVANT d'appeler request().
