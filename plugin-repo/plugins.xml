@@ -22,7 +22,7 @@
   </pyqgis_plugin>
   <pyqgis_plugin name="Constructel Bridge" version="1.6.0">
     <description><![CDATA[Connexion auto a la base WYRE FTTH et tracking utilisateur pour les editions de couches.]]></description>
-    <about><![CDATA[Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS avec le role ftth_editor, identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user. Traductions i18n live des formulaires et alias de couches. Styles par defaut auto-charges + couche cachee v_form_lists pour formulaires.]]></about>
+    <about><![CDATA[Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS (authentification individuelle par mot de passe AD), identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user. Traductions i18n live des formulaires et alias de couches. Styles par defaut auto-charges + couche cachee v_form_lists pour formulaires.]]></about>
     <version>1.6.0</version>
     <qgis_minimum_version>3.28</qgis_minimum_version>
     <qgis_maximum_version>3.99</qgis_maximum_version>

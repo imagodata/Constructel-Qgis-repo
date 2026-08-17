@@ -34,7 +34,7 @@ changelog=v1.6.0 - fix(security): la connexion wyre n'utilise plus un mot de pas
     v1.2.0 - Fix multi-utilisateur: correction auto des credentials couches PG au chargement de projet (explorateur PG, fichier, menu plugin)
 author=Equipe WYRE / Constructel
 email=dev@wyre.be
-about=Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS avec le role ftth_editor, identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user.
+about=Plugin QGIS Constructel pour le projet WYRE FTTH Belgique. Configure automatiquement la connexion PostgreSQL/PostGIS (authentification individuelle par mot de passe AD), identifie l'utilisateur QGIS courant, l'enregistre dans ref.users si necessaire, et tague toutes les editions de couches avec son identite via app.current_user.
 tracker=https://github.com/wyre-ftth/wyre/issues
 repository=https://github.com/wyre-ftth/wyre
 tags=ftth,constructel,postgis,audit,wyre,database,bridge
