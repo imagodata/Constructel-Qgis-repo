@@ -28,7 +28,7 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QAction,
@@ -291,19 +291,30 @@ class _BridgeCredentials(QgsCredentials):
         # deleguer au handler QGIS par defaut (dialogue natif).
         if self._fallback:
             ok, user, pwd = self._fallback.request(realm, username, password, message)
-            if ok and DEFAULT_HOST in realm:
-                # La personne vient de saisir SON mot de passe AD dans le
-                # dialogue natif QGIS. On le met en cache RAM (jamais sur
-                # disque, meurt avec le process) pour eviter une seconde
-                # invite dans la meme session, et on declenche le flux de
-                # connexion habituel du plugin (hooks de commit,
-                # enregistrement ref.users) s'il n'est pas deja actif --
-                # sans cela, une personne qui ouvre un projet et tape son
-                # mot de passe au dialogue natif reste "deconnectee" cote
-                # plugin (pas d'attribution d'edition).
+            if ok and DEFAULT_HOST in realm and user == DEFAULT_USER:
+                # La personne vient de saisir SON mot de passe AD dans le dialogue
+                # natif QGIS. On le met en cache RAM (jamais sur disque) pour
+                # eviter une seconde invite dans la meme session.
+                #
+                # On NE DECLENCHE PAS _connect() directement ici : request() peut
+                # etre appele hors du thread GUI (documente par QgsCredentials) et
+                # QgsPostgresConn maintient son mutex d'auth verrouille pendant
+                # tout l'appel a request() -- executer du code Qt (wizard
+                # d'onboarding, messageBar) depuis ce contexte peut planter QGIS
+                # (mauvais thread) ou le bloquer (deadlock : nested event loop du
+                # wizard pendant que le mutex est tenu). On differe l'appel sur la
+                # boucle d'evenements du thread principal via QTimer.singleShot
+                # avec un OBJET DE CONTEXTE (mainWindow) -- c'est la seule forme
+                # thread-safe pour livrer le callback sur le bon thread depuis un
+                # appelant potentiellement hors-GUI (un QTimer.singleShot SANS
+                # objet de contexte ne le garantit pas).
                 self.put(realm, user, pwd)
-                if not self._plugin._connected:
-                    self._plugin._connect(pwd, silent=True)
+                plugin = self._plugin
+                if not plugin._connected:
+                    QTimer.singleShot(
+                        0, plugin.iface.mainWindow(),
+                        lambda: plugin._connect(pwd, silent=False),
+                    )
             return ok, user, pwd
         return False, username, password
 
