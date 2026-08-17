@@ -3,7 +3,7 @@
 Constructel Bridge - Plugin principal.
 
 Responsabilites:
-  1. Configurer la connexion PostgreSQL farois_ftth (role ftth_editor)
+  1. Configurer la connexion PostgreSQL farois_ftth (auth LDAP individuelle)
   2. Identifier l'utilisateur QGIS et l'enregistrer dans ref.users
   3. Positionner app.current_user sur chaque connexion pour tracer les editions
   4. Intercepter les commits de couche pour tagger l'utilisateur
@@ -199,6 +199,32 @@ _PG_CONNECTIONS = {
 _LEGACY_PG_CONNECTION = "PostgreSQL/connections/constructel_bridge"
 
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
+
+
+# ---------------------------------------------------------------------------
+# Echappement de valeurs pour datasource PG (user='...' password='...')
+# ---------------------------------------------------------------------------
+
+# Chaine entre quotes simples, consciente des caracteres echappes (\x) --
+# notamment le \' que QgsDataSourceUri::escape() genere pour une
+# apostrophe litterale dans un mot de passe. Un [^']* naif s'arrete sur ce
+# \' et laisse le reste de la valeur (jusqu'a la VRAIE quote fermante)
+# dans la chaine -- fragment de secret qui fuite dans le projet sauvegarde.
+_QUOTED = r"'(?:[^'\\]|\\.)*'"
+
+
+def _escape_pg_uri_value(value: str) -> str:
+    """Echappe une valeur avant de l'inserer entre quotes simples dans une
+    datasource PG, comme QgsDataSourceUri::escape() le fait en interne.
+
+    Ordre important : les backslashes sont doubles EN PREMIER, puis les
+    quotes simples sont echappees. Inverser l'ordre echapperait aussi le
+    backslash que l'on vient d'ajouter pour la quote, produisant une
+    sequence incorrecte.
+    """
+    escaped = value.replace("\\", "\\\\")
+    escaped = escaped.replace("'", "\\'")
+    return escaped
 
 
 # ---------------------------------------------------------------------------
@@ -584,9 +610,22 @@ class ConstructelBridgePlugin:
                     f"BE connection setup failed: {exc}", TAG, level=Qgis.Warning,
                 )
         else:
+            # BE_ENABLED peut etre False pour 2 raisons distinctes depuis
+            # que DEFAULT_USER est une identite par personne (et non plus
+            # une constante fixe) : bloc be absent/invalide, OU collision
+            # DEFAULT_USER == BE_USER (ex. poste partage dont le compte OS
+            # s'appelle "bureau_etudes") -- dans ce dernier cas, activer
+            # `be` rendrait _credentials_for ambigu (un realm wyre avec
+            # username == BE_USER recevrait a tort le mot de passe be).
+            reason = (
+                "l'identite AD/OS courante coincide avec le compte partage "
+                "bureau_etudes -- resolution de credentials ambigue, be "
+                "reste desactivee par securite"
+                if BE_USER and BE_USER == DEFAULT_USER
+                else "bloc absent ou invalide dans credentials.json"
+            )
             QgsMessageLog.logMessage(
-                "Connexion 'be' non configuree "
-                "(bloc absent ou invalide dans credentials.json)",
+                f"Connexion 'be' non configuree ({reason})",
                 TAG, level=Qgis.Info,
             )
 
@@ -608,7 +647,17 @@ class ConstructelBridgePlugin:
         # connexion DB et l'enregistrement utilisateur, sans toucher au
         # projet (pas de fix credentials, hooks, etc.) pour eviter de
         # rendre le projet vide "dirty" et le dialogue "Enregistrer".
-        self._auto_connect()
+        # Enveloppe (comme le bloc be juste au-dessus) : _auto_connect()
+        # fait des ecritures Auth Manager / QgsSettings et pourrait lever
+        # -- sans ce try/except, une exception ici interromprait initGui
+        # a mi-chemin (hooks projet deja connectes = plugin a moitie
+        # initialise).
+        try:
+            self._auto_connect()
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                f"Auto-connect failed: {exc}", TAG, level=Qgis.Warning,
+            )
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -691,9 +740,14 @@ class ConstructelBridgePlugin:
         """Appele par QgsProject.writeProject pendant la sauvegarde.
 
         Nettoie les datasources PG dans le DOM XML pour retirer les authcfg
-        user-specific et les remplacer par des credentials en clair.
-        Cela garantit qu'un projet sauvegarde par User A pourra etre
-        ouvert par User B sans dialogue de credentials.
+        user-specific et normaliser user=/password= (wyre : toujours mot
+        de passe vide ; be : son mot de passe partage inchange). Portable
+        au sens ou l'authcfg (propre au poste de qui a sauvegarde) ne
+        bloque plus l'ouverture chez quelqu'un d'autre -- mais depuis le
+        passage en auth LDAP, ouvrir une couche wyre declenche desormais
+        TOUJOURS le dialogue natif de saisie du mot de passe, quel que
+        soit qui a sauvegarde le projet (comportement voulu, pas une
+        regression : "portable" ne veut plus dire "sans dialogue" pour wyre).
         """
         try:
             self._strip_authcfg_from_dom(doc)
@@ -766,10 +820,26 @@ class ConstructelBridgePlugin:
             # cible en clair -- evite toute duplication d'attribut. Execute
             # pour TOUTE datasource matchant nos hotes, authcfg present ou
             # non (cf. docstring -- ne plus se fier a "authcfg=" in ds).
+            #
+            # CRITIQUE : user=/password= sont retires avec _QUOTED (chaine
+            # entre quotes consciente des caracteres echappes), PAS un
+            # naif [^']* -- celui-ci s'arrete au premier \' (que
+            # QgsDataSourceUri::escape() genere pour une apostrophe
+            # litterale dans un mot de passe, ex. abc'def -> abc\'def) et
+            # laisse le reste de la valeur (" def'") dans la datasource --
+            # fragment de mot de passe qui fuite dans le projet sauvegarde
+            # / round-trip PG. target_user/target_password sont eux-memes
+            # echappes avant reinjection (_escape_pg_uri_value) au cas ou
+            # une identite AD contiendrait une apostrophe ou un backslash
+            # (sAMAccountName les autorise en theorie, contrairement a un
+            # certain nombre d'autres caracteres).
             ds = re.sub(r"\bauthcfg=\w+", "", ds)
-            ds = re.sub(r"\buser='[^']*'", "", ds)
-            ds = re.sub(r"\bpassword='[^']*'", "", ds)
-            ds += f" user='{target_user}' password='{target_password}'"
+            ds = re.sub(r"\buser=" + _QUOTED, "", ds)
+            ds = re.sub(r"\bpassword=" + _QUOTED, "", ds)
+            ds += (
+                f" user='{_escape_pg_uri_value(target_user)}'"
+                f" password='{_escape_pg_uri_value(target_password)}'"
+            )
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             # Remplacer le contenu du noeud
             while ds_node.hasChildNodes():
@@ -970,8 +1040,18 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _get_qgis_username(self) -> str:
-        """Recupere le nom d'utilisateur depuis les settings QGIS ou l'OS."""
-        return _resolve_os_username()
+        """Identite QGIS de la personne courante -- TOUJOURS DEFAULT_USER.
+
+        DEFAULT_USER est resolu UNE SEULE FOIS a l'import du module (cf.
+        _resolve_os_username()). Rappeler _resolve_os_username() ici
+        pourrait renvoyer une valeur differente si l'environnement a
+        change depuis (ex. reglage constructel_bridge/username modifie en
+        cours de session) -- ce qui ferait diverger l'identite utilisee
+        pour AUTHENTIFIER la connexion PG (DEFAULT_USER, fixee) de celle
+        utilisee pour ATTRIBUER les editions (ref.users, app.current_user).
+        Les deux doivent toujours designer la meme personne.
+        """
+        return DEFAULT_USER
 
     def _register_bridge_user(self) -> bool:
         """Enregistre l'utilisateur QGIS dans ref.users si absent."""
@@ -1044,8 +1124,12 @@ class ConstructelBridgePlugin:
 
         Cette methode remplace l'authentification de chaque couche PG
         par des credentials en clair (user/password) SANS authcfg.
-        Cela garantit que tout projet sauvegarde sera portable — un autre
-        utilisateur pourra l'ouvrir sans rencontrer un authcfg inconnu.
+        Cela garantit que tout projet sauvegarde ne bloque plus sur un
+        authcfg inconnu chez un autre utilisateur -- mais "portable" ne
+        veut PAS dire "sans dialogue" pour wyre : son mot de passe est
+        toujours normalise a "" (jamais le vrai mot de passe AD de
+        session), donc ouvrir une couche wyre continue de declencher le
+        dialogue natif de saisie -- par design (auth LDAP individuelle).
         Gere aussi les couches invalides (provider=None) en utilisant
         layer.providerType() et layer.source() directement.
         """
@@ -1964,9 +2048,17 @@ class ConstructelBridgePlugin:
             target_user, target_password = known_identities.get(
                 current_user, (DEFAULT_USER, "")
             )
-            ds = re.sub(r"\buser='[^']*'", "", ds)
-            ds = re.sub(r"\bpassword='[^']*'", "", ds)
-            ds += f" user='{target_user}' password='{target_password}'"
+            # CRITIQUE : meme fix que _strip_authcfg_from_dom -- _QUOTED
+            # au lieu de [^']* pour ne pas laisser un fragment de mot de
+            # passe (apres un \' echappe par QGIS) dans le XML round-trip
+            # via {schema}.qgis_projects. target_user/target_password
+            # echappes avant reinjection (_escape_pg_uri_value).
+            ds = re.sub(r"\buser=" + _QUOTED, "", ds)
+            ds = re.sub(r"\bpassword=" + _QUOTED, "", ds)
+            ds += (
+                f" user='{_escape_pg_uri_value(target_user)}'"
+                f" password='{_escape_pg_uri_value(target_password)}'"
+            )
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             return prefix + ds + suffix
 
