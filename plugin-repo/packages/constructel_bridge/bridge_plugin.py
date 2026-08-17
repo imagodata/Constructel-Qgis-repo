@@ -92,22 +92,34 @@ def _resolve_os_username() -> str:
     "Authentification LDAP wyre") -- a valider empiriquement (cf. Task 10,
     verification QGIS n1). Utilisee a la fois pour DEFAULT_USER (identite
     de connexion PG "wyre") et pour l'enregistrement dans ref.users.
+
+    Ne doit JAMAIS lever : appelee au chargement du MODULE (DEFAULT_USER =
+    _resolve_os_username()), une exception ici ferait echouer l'import du
+    plugin en entier -- exactement le mode d'echec que _load_credentials()
+    est deja concue pour eviter.
     """
-    settings = QgsSettings()
-
-    explicit = settings.value("constructel_bridge/username", "")
-    if explicit:
-        return explicit
-
     try:
-        profile = QgsApplication.instance().userProfileManager().userProfile()
-        if profile and profile.name() and profile.name() != "default":
-            return profile.name()
-    except Exception:
-        pass
+        settings = QgsSettings()
 
-    import getpass
-    return getpass.getuser()
+        explicit = settings.value("constructel_bridge/username", "")
+        if explicit:
+            return explicit
+
+        try:
+            profile = QgsApplication.instance().userProfileManager().userProfile()
+            if profile and profile.name() and profile.name() != "default":
+                return profile.name()
+        except Exception:
+            pass
+
+        import getpass
+        return getpass.getuser()
+    except Exception:
+        try:
+            import getpass
+            return getpass.getuser()
+        except Exception:
+            return ""
 
 
 DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
@@ -221,6 +233,13 @@ class _BridgeCredentials(QgsCredentials):
 
         Retourne None si le realm ne nous concerne pas (ou concerne
         `wyre`, qui doit toujours passer par le dialogue natif).
+
+        Le repli sur simple correspondance de *username* est ANCRE sur
+        BE_HOST : ce handler reste le singleton QgsCredentials actif pour
+        toute la session QGIS, donc sans cet ancrage une demande vers un
+        serveur PG TIERS ou le username serait egalement `bureau_etudes`
+        recevrait par erreur le mot de passe `be` -- fuite de credentials
+        vers un serveur externe.
         """
         if BE_ENABLED and BE_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
             return BE_USER, _BE_PW
@@ -273,6 +292,10 @@ def _precache_pg_credentials():
     if not BE_ENABLED:
         return
     creds = QgsCredentials.instance()
+    # `be` partage host + base avec `wyre` : SEULES les variantes de realm
+    # qui portent user='...' sont pre-cachees. Pre-cacher une variante sans
+    # utilisateur pourrait faire servir le mot de passe `be` a une demande
+    # de connexion `wyre` qui matcherait le meme realm generique.
     for realm in (
         f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} user='{BE_USER}'",
         f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} sslmode={BE_SSLMODE} user='{BE_USER}'",
@@ -691,8 +714,7 @@ class ConstructelBridgePlugin:
         le premier.
         """
         import re
-        password = getattr(self, "_password", None) or ""
-        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
 
@@ -724,7 +746,7 @@ class ConstructelBridgePlugin:
             user_match = re.search(r"user='([^']*)'", ds)
             current_user = user_match.group(1) if user_match else None
             target_user, target_password = known_identities.get(
-                current_user, (DEFAULT_USER, password)
+                current_user, (DEFAULT_USER, "")
             )
 
             # Retirer authcfg=xxx ainsi que tout user=/password= existant,
@@ -748,27 +770,28 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _auto_connect(self):
-        """Tente une connexion silencieuse au demarrage, UNIQUEMENT si un
-        mot de passe a deja ete memorise (Auth Manager, session precedente
-        avant ce chantier).
+        """Purge tout mot de passe wyre precedemment memorise (legacy
+        pre-LDAP) au lieu de l'utiliser.
 
-        Depuis le passage en auth LDAP, `wyre` n'a plus de mot de passe
-        par defaut ni de sauvegarde automatique (cf. Step 4 ci-dessous) :
-        si rien n'est disponible, on n'affiche PAS de dialogue ici — la
-        personne doit cliquer Connecter (menu / bouton), qui ouvre le
-        dialogue de saisie natif.
+        Depuis le passage en auth LDAP, `wyre` ne doit plus JAMAIS se
+        connecter silencieusement -- meme si un mot de passe est reste
+        stocke dans Auth Manager depuis une session anterieure a ce
+        chantier (la case "memoriser" existait avant et etait cochee par
+        defaut). Le reutiliser romprait "saisie a chaque session" et,
+        avant le fix C1, aurait pu faire fuiter ce mot de passe stocke
+        via known_identities. La personne doit cliquer Connecter
+        (menu / bouton), qui ouvre le dialogue de saisie natif.
         """
         if self._connected:
             return
-        password = _retrieve_password_encrypted()
-        if not password:
-            self._log(
-                "Auto-connexion 'wyre' ignoree (aucun mot de passe memorise) "
-                "— connexion manuelle requise.",
-                Qgis.Info,
-            )
-            return
-        self._connect(password, silent=True)
+        _remove_stored_password("wyre")
+        QgsSettings().remove("PostgreSQL/connections/wyre/authcfg")
+        self._log(
+            "Auto-connexion 'wyre' desactivee (auth LDAP) — tout mot de "
+            "passe memorise precedemment a ete purge, connexion manuelle "
+            "requise.",
+            Qgis.Info,
+        )
 
     # =====================================================================
     # Language
@@ -867,6 +890,9 @@ class ConstructelBridgePlugin:
                     "Constructel Bridge",
                     tr("conn.failed", error=f"{DEFAULT_HOST}:{DEFAULT_PORT} — {exc}"),
                 )
+            # Ne jamais laisser un mot de passe errone/perime dans
+            # self._password apres un echec de connexion.
+            self._password = None
             return False
 
         self._connected = True
@@ -1009,7 +1035,6 @@ class ConstructelBridgePlugin:
         Gere aussi les couches invalides (provider=None) en utilisant
         layer.providerType() et layer.source() directement.
         """
-        password = getattr(self, "_password", None) or ""
         # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
         # historique) et be (BE_USER, bureau d'etudes, si active). Sans
         # cette distinction, toute couche `be` (username=bureau_etudes)
@@ -1018,7 +1043,14 @@ class ConstructelBridgePlugin:
         # embarquant le mot de passe wyre en clair dans le .qgz d'un
         # utilisateur externe (bureau d'etudes). Hisse hors de la boucle :
         # invariant, pas la peine de le reconstruire par couche.
-        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+        #
+        # Le mot de passe wyre associe est TOUJOURS "" (jamais le vrai mot
+        # de passe AD de la session) : ces identites sont ecrites dans des
+        # projets partages (.qgz ou {schema}.qgis_projects), jamais un lieu
+        # de stockage prive -- cf. incident de securite qui a motive ce
+        # chantier. Une couche wyre normalisee vaut "user=... password=''",
+        # ce qui fait retomber QGIS sur le dialogue natif au chargement.
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
 
@@ -1056,7 +1088,7 @@ class ConstructelBridgePlugin:
             needs_fix = bool(old_authcfg) or current_user not in known_identities
             if needs_fix:
                 target_user, target_password = known_identities.get(
-                    current_user, (DEFAULT_USER, password)
+                    current_user, (DEFAULT_USER, "")
                 )
                 uri.setAuthConfigId("")
                 uri.setUsername(target_user)
@@ -1827,7 +1859,6 @@ class ConstructelBridgePlugin:
         import re
         import tempfile
 
-        password = getattr(self, "_password", None) or ""
         # Validate schema against whitelist to prevent SQL injection
         if schema not in self._PROJECT_SCHEMAS:
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.Warning)
@@ -1882,7 +1913,11 @@ class ConstructelBridgePlugin:
         # docstrings) : preserver l'identite be existante plutot que de
         # tout basculer vers wyre, et ne jamais toucher un serveur tiers.
         original_xml = xml
-        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
+        # wyre associe toujours "" (jamais le vrai mot de passe AD de la
+        # session) : ce XML est round-trip via {schema}.qgis_projects,
+        # une table PARTAGEE entre utilisateurs -- cf. C1 / incident de
+        # securite qui a motive ce chantier.
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
         known_hosts = tuple(h for h in (DEFAULT_HOST, BE_HOST) if h)
@@ -1901,7 +1936,7 @@ class ConstructelBridgePlugin:
             user_match = re.search(r"\buser='([^']*)'", ds)
             current_user = user_match.group(1) if user_match else None
             target_user, target_password = known_identities.get(
-                current_user, (DEFAULT_USER, password)
+                current_user, (DEFAULT_USER, "")
             )
             ds = re.sub(r"\buser='[^']*'", "", ds)
             ds = re.sub(r"\bpassword='[^']*'", "", ds)
