@@ -945,7 +945,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="true" name="OrderByField"/>
@@ -1019,7 +1019,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="bool" value="false" name="OrderByKey"/>
             <Option type="bool" value="false" name="OrderByValue"/>
             <Option type="bool" value="true" name="OrderByField"/>
@@ -1045,7 +1045,7 @@
             <Option type="QString" value="" name="Layer"/>
             <Option type="QString" value="v_form_lists" name="LayerName"/>
             <Option type="QString" value="postgres" name="LayerProviderName"/>
-            <Option type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
+            <Option type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;" name="LayerSource"/>
             <Option type="int" value="1" name="NofColumns"/>
             <Option type="bool" value="false" name="OrderByDescending"/>
             <Option type="bool" value="false" name="OrderByField"/>

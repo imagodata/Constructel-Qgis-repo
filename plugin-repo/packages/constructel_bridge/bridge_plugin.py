@@ -3,7 +3,7 @@
 Constructel Bridge - Plugin principal.
 
 Responsabilites:
-  1. Configurer la connexion PostgreSQL farois_ftth (auth LDAP individuelle)
+  1. Configurer la connexion PostgreSQL farois_ftth (role ftth_editor)
   2. Identifier l'utilisateur QGIS et l'enregistrer dans ref.users
   3. Positionner app.current_user sur chaque connexion pour tracer les editions
   4. Intercepter les commits de couche pour tagger l'utilisateur
@@ -28,11 +28,10 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import Qt, QTimer
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QAction,
-    QApplication,
     QDialog,
     QInputDialog,
     QMenu,
@@ -85,48 +84,11 @@ _CREDS = _load_credentials()
 _WYRE_CREDS = _CREDS.get("wyre", {})
 _BE_CREDS = _CREDS.get("be", {})
 
-
-def _resolve_os_username() -> str:
-    """Determine l'identifiant OS/QGIS de la personne courante.
-
-    Attendu = sAMAccountName AD sur un poste joint au domaine (chantier
-    "Authentification LDAP wyre") -- a valider empiriquement (cf. Task 10,
-    verification QGIS n1). Utilisee a la fois pour DEFAULT_USER (identite
-    de connexion PG "wyre") et pour l'enregistrement dans ref.users.
-
-    Ne doit JAMAIS lever : appelee au chargement du MODULE (DEFAULT_USER =
-    _resolve_os_username()), une exception ici ferait echouer l'import du
-    plugin en entier -- exactement le mode d'echec que _load_credentials()
-    est deja concue pour eviter.
-    """
-    try:
-        settings = QgsSettings()
-
-        explicit = settings.value("constructel_bridge/username", "")
-        if explicit:
-            return explicit
-
-        try:
-            profile = QgsApplication.instance().userProfileManager().userProfile()
-            if profile and profile.name() and profile.name() != "default":
-                return profile.name()
-        except Exception:
-            pass
-
-        import getpass
-        return getpass.getuser()
-    except Exception:
-        try:
-            import getpass
-            return getpass.getuser()
-        except Exception:
-            return ""
-
-
 DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
 DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_WYRE_CREDS["port"])))
 DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _WYRE_CREDS["dbname"]
-DEFAULT_USER = _resolve_os_username()
+DEFAULT_USER = _WYRE_CREDS["user"]
+_DEFAULT_PW = base64.b64decode(_WYRE_CREDS["password"]).decode()
 DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
 DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
 PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
@@ -203,32 +165,6 @@ LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
 
 
 # ---------------------------------------------------------------------------
-# Echappement de valeurs pour datasource PG (user='...' password='...')
-# ---------------------------------------------------------------------------
-
-# Chaine entre quotes simples, consciente des caracteres echappes (\x) --
-# notamment le \' que QgsDataSourceUri::escape() genere pour une
-# apostrophe litterale dans un mot de passe. Un [^']* naif s'arrete sur ce
-# \' et laisse le reste de la valeur (jusqu'a la VRAIE quote fermante)
-# dans la chaine -- fragment de secret qui fuite dans le projet sauvegarde.
-_QUOTED = r"'(?:[^'\\]|\\.)*'"
-
-
-def _escape_pg_uri_value(value: str) -> str:
-    """Echappe une valeur avant de l'inserer entre quotes simples dans une
-    datasource PG, comme QgsDataSourceUri::escape() le fait en interne.
-
-    Ordre important : les backslashes sont doubles EN PREMIER, puis les
-    quotes simples sont echappees. Inverser l'ordre echapperait aussi le
-    backslash que l'on vient d'ajouter pour la quote, produisant une
-    sequence incorrecte.
-    """
-    escaped = value.replace("\\", "\\\\")
-    escaped = escaped.replace("'", "\\'")
-    return escaped
-
-
-# ---------------------------------------------------------------------------
 # Intercepteur de credentials — evite le dialogue de saisie pour notre base
 # ---------------------------------------------------------------------------
 
@@ -246,44 +182,44 @@ class _BridgeCredentials(QgsCredentials):
     d'utilisateur (cf. _credentials_for).
     """
 
-    def __init__(self, fallback, plugin):
+    def __init__(self, fallback):
         self._fallback = fallback
-        self._plugin = plugin
-        # Etat de la chaine de connexion differee (cf. _trigger_deferred_connect) :
-        # une SEULE chaine a la fois ("single-flight"), qui relit toujours le
-        # mot de passe le plus recent au moment ou elle s'execute -- sinon une
-        # personne qui se trompe puis retape le bon mot de passe pendant que la
-        # premiere chaine attend encore (dialogue modal de re-saisie de QGIS
-        # actif) declencherait DEUX _connect() independants : un avec le bon
-        # mot de passe (sur closure capturee au moment du 2e request()) et un
-        # avec le mauvais (closure du 1er), ce dernier tirant apres coup sur un
-        # plugin deja connecte -- echec PG/LDAP supplementaire (risque de
-        # verrouillage AD) + dialogue d'erreur confus + self._password ecrase.
-        self._connect_pending = False
-        self._pending_password = None
-        self._connect_attempt = 0
+        self._username = DEFAULT_USER
+        self._password = _DEFAULT_PW
         super().__init__()  # appelle setInstance(self) en interne
+
+    def update_password(self, password: str):
+        self._password = password
 
     def _credentials_for(self, realm, username):
         """Resout le couple (utilisateur, mot de passe) pour un realm.
 
-        Seul `be` est fourni automatiquement (mot de passe partage,
-        issu de credentials.json). `wyre` n'a plus de mot de passe
-        connu a l'avance (auth LDAP individuelle) : toute demande pour
-        son realm est deleguee au dialogue QGIS natif via `request()`.
-
-        Retourne None si le realm ne nous concerne pas (ou concerne
-        `wyre`, qui doit toujours passer par le dialogue natif).
+        `be` est teste EN PREMIER car c'est le cas le plus specifique : il
+        n'est reconnu que si l'utilisateur du bureau d'etudes apparait
+        explicitement, soit dans le realm (`user='...'` que QGIS y insere
+        quand la connexion memorise son nom d'utilisateur), soit dans
+        l'argument *username*. Tout autre realm de notre serveur retombe
+        sur `wyre` — comportement historique preserve a l'identique.
 
         Le repli sur simple correspondance de *username* est ANCRE sur
-        BE_HOST : ce handler reste le singleton QgsCredentials actif pour
-        toute la session QGIS, donc sans cet ancrage une demande vers un
-        serveur PG TIERS ou le username serait egalement `bureau_etudes`
-        recevrait par erreur le mot de passe `be` -- fuite de credentials
-        vers un serveur externe.
+        BE_HOST (pas DEFAULT_HOST) : `_BridgeCredentials` est installe
+        comme le singleton QgsCredentials actif pour toute la session
+        QGIS, donc sans cet ancrage une demande d'authentification vers
+        un serveur PG TIERS ou le username serait egalement
+        `bureau_etudes` recevrait par erreur le mot de passe `be` —
+        fuite de credentials vers un serveur externe. On ancre sur
+        BE_HOST (pas DEFAULT_HOST) car credentials.json expose des
+        overrides BE_DB_HOST/BE_DB_NAME independants de wyre : si `be`
+        est un jour reconfigure sur un autre serveur, l'ancrage doit
+        suivre SA propre configuration, pas celle de `wyre`. Aujourd'hui
+        BE_HOST == DEFAULT_HOST donc le comportement est identique.
+
+        Retourne None si le realm ne nous concerne pas.
         """
         if BE_ENABLED and BE_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
             return BE_USER, _BE_PW
+        if DEFAULT_HOST in realm:
+            return self._username, self._password
         return None
 
     def request(self, realm, username, password, message=""):
@@ -301,115 +237,10 @@ class _BridgeCredentials(QgsCredentials):
             # Also cache via put() so subsequent get() calls skip request()
             self.put(realm, user, pwd)
             return True, user, pwd
-        # Realm inconnu (ou wyre, qui n'a plus de reponse automatique) ->
-        # deleguer au handler QGIS par defaut (dialogue natif).
+        # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
         if self._fallback:
-            ok, user, pwd = self._fallback.request(realm, username, password, message)
-            if ok and DEFAULT_HOST in realm and user == DEFAULT_USER:
-                # La personne vient de saisir SON mot de passe AD dans le dialogue
-                # natif QGIS. On le met en cache RAM (jamais sur disque) pour
-                # eviter une seconde invite dans la meme session.
-                #
-                # On NE DECLENCHE PAS _connect() directement ici : request() peut
-                # etre appele hors du thread GUI (documente par QgsCredentials) et
-                # QgsPostgresConn maintient son mutex d'auth verrouille pendant
-                # tout l'appel a request() -- executer du code Qt (wizard
-                # d'onboarding, messageBar) depuis ce contexte peut planter QGIS
-                # (mauvais thread) ou le bloquer (deadlock : nested event loop du
-                # wizard pendant que le mutex est tenu). On differe l'appel sur la
-                # boucle d'evenements du thread principal via QTimer.singleShot
-                # avec un OBJET DE CONTEXTE (mainWindow) -- c'est la seule forme
-                # thread-safe pour livrer le callback sur le bon thread depuis un
-                # appelant potentiellement hors-GUI (un QTimer.singleShot SANS
-                # objet de contexte ne le garantit pas).
-                self.put(realm, user, pwd)
-                plugin = self._plugin
-                if not plugin._connected:
-                    # Toujours le mot de passe le plus recent : si une chaine
-                    # differee est deja en cours (ex. suite a une premiere
-                    # saisie), elle relira cette valeur au moment ou elle
-                    # s'execute -- pas celle qui etait courante quand elle a
-                    # ete programmee.
-                    self._pending_password = pwd
-                    if not self._connect_pending:
-                        # Single-flight : une seule chaine a la fois. Si une
-                        # chaine tourne deja (ex. elle attend qu'un dialogue
-                        # modal de re-saisie se ferme), ne pas en programmer
-                        # une deuxieme -- elle relira self._pending_password
-                        # ci-dessus et utilisera donc quand meme ce mot de
-                        # passe-ci des qu'elle s'executera.
-                        self._connect_pending = True
-                        self._connect_attempt = 0
-                        QTimer.singleShot(
-                            0, plugin.iface.mainWindow(),
-                            self._trigger_deferred_connect,
-                        )
-            return ok, user, pwd
+            return self._fallback.request(realm, username, password, message)
         return False, username, password
-
-    # Nombre max de reprogrammations (100ms chacune, ~30s) avant d'abandonner
-    # la connexion differee si un dialogue modal reste actif en continu --
-    # evite de boucler indefiniment dans un etat pathologique improbable,
-    # tout en laissant largement le temps a un dialogue modal legitime (ex.
-    # re-saisie apres mot de passe errone) de se fermer normalement.
-    _DEFERRED_CONNECT_MAX_ATTEMPTS = 300
-
-    def _trigger_deferred_connect(self):
-        """Appelle plugin._connect(...) des qu'aucun dialogue modal n'est actif.
-
-        QTimer.singleShot(0, contextObject, callback) livre son callback via
-        LA PROCHAINE iteration de la boucle d'evenements traitee sur le
-        thread du contextObject -- qui peut etre une boucle IMBRIQUEE (ex.
-        QGIS relance son propre dialogue natif de credentials si la personne
-        s'est trompee au premier essai). Si le callback tombait pendant
-        cette boucle imbriquee, le mutex d'auth de QgsPostgresConn pourrait
-        encore etre tenu par l'appel a request() plus haut dans la pile --
-        reintroduisant une version plus etroite du deadlock d'origine (le
-        wizard d'onboarding ouvrirait sa propre boucle imbriquee pendant que
-        ce mutex est tenu).
-
-        On verifie donc qu'aucun widget modal n'est actif avant d'appeler
-        _connect() ; QApplication.activeModalWidget() detecte precisement ce
-        cas car le dialogue natif de QGIS (QgsCredentialDialog) est un
-        QDialog affiche via exec_(), qui l'enregistre comme widget modal
-        actif tant qu'il est a l'ecran -- exactement l'API Qt prevue pour
-        cette verification. Si un modal est actif, on se reprogramme 100ms
-        plus tard, jusqu'a _DEFERRED_CONNECT_MAX_ATTEMPTS.
-
-        Relit self._plugin._connected et self._pending_password A CHAQUE
-        appel (plutot que des valeurs capturees a la programmation) : une
-        seule chaine est jamais en vol (single-flight, cf. request()), donc
-        c'est la SEULE lecture qui compte, et elle doit refleter l'etat le
-        plus recent -- pas celui qui prevalait quand cette chaine a demarre.
-        Si le plugin est deja connecte (par ce chemin ou un autre, ex. clic
-        manuel sur "Connecter" pendant l'attente), cette chaine est devenue
-        obsolete : ne rien faire plutot que de re-authentifier inutilement
-        (echec PG/LDAP superflu, risque de verrouillage AD).
-        """
-        plugin = self._plugin
-        if plugin._connected:
-            self._connect_pending = False
-            return
-        if QApplication.activeModalWidget() is not None:
-            self._connect_attempt += 1
-            if self._connect_attempt >= self._DEFERRED_CONNECT_MAX_ATTEMPTS:
-                QgsMessageLog.logMessage(
-                    "Deferred wyre connect abandoned: a modal dialog stayed "
-                    "active for ~30s straight. The native credentials prompt "
-                    "succeeded, but the plugin's own connect flow (hooks, "
-                    "ref.users) was not triggered automatically -- use "
-                    "'Connecter' manually.",
-                    TAG, level=Qgis.Warning,
-                )
-                self._connect_pending = False
-                return
-            QTimer.singleShot(
-                100, plugin.iface.mainWindow(),
-                self._trigger_deferred_connect,
-            )
-            return
-        self._connect_pending = False
-        plugin._connect(self._pending_password, silent=False)
 
     def requestMasterPassword(self, password, stored=False):
         if self._fallback:
@@ -429,19 +260,29 @@ class _BridgeBadLayerHandler(QgsProjectBadLayerHandler):
 
 
 def _precache_pg_credentials():
-    """Pre-cache les credentials PG de `be` (bureau d'etudes).
+    """Pre-cache PG credentials pour eviter le dialogue de saisie.
 
-    `wyre` n'a plus de mot de passe par defaut (authentification LDAP,
-    saisie a chaque session) : rien a pre-cacher pour cette connexion,
-    QGIS doit demander le mot de passe nativement.
+    Insere dans le cache de QgsCredentials les credentials pour les
+    variantes de realm les plus courantes.  Quand QGIS appelle get()
+    pour une de ces realms, il trouve le cache et n'affiche pas de
+    dialogue.  Le cache est consomme (take) par get(), donc on le
+    re-remplit a chaque chargement de projet.
     """
+    creds = QgsCredentials.instance()
+    for realm in (
+        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT}",
+        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT} sslmode={DEFAULT_SSLMODE}",
+        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST}",
+        DEFAULT_HOST,
+    ):
+        creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
+
     if not BE_ENABLED:
         return
-    creds = QgsCredentials.instance()
     # `be` partage host + base avec `wyre` : SEULES les variantes de realm
     # qui portent user='...' sont pre-cachees. Pre-cacher une variante sans
-    # utilisateur pourrait faire servir le mot de passe `be` a une demande
-    # de connexion `wyre` qui matcherait le meme realm generique.
+    # utilisateur ecraserait le cache de `wyre` avec le mot de passe du
+    # bureau d'etudes et casserait la connexion principale.
     for realm in (
         f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} user='{BE_USER}'",
         f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} sslmode={BE_SSLMODE} user='{BE_USER}'",
@@ -690,7 +531,7 @@ class ConstructelBridgePlugin:
         # Cela evite le dialogue "Saisir les identifiants" quand un
         # projet contient des authcfg d'un autre utilisateur.
         self._orig_credentials = QgsCredentials.instance()
-        self._bridge_credentials = _BridgeCredentials(self._orig_credentials, self)
+        self._bridge_credentials = _BridgeCredentials(self._orig_credentials)
 
         # Pre-cacher les credentials PG pour que QgsCredentials.get()
         # les trouve dans le cache AVANT d'appeler request().
@@ -730,22 +571,9 @@ class ConstructelBridgePlugin:
                     f"BE connection setup failed: {exc}", TAG, level=Qgis.Warning,
                 )
         else:
-            # BE_ENABLED peut etre False pour 2 raisons distinctes depuis
-            # que DEFAULT_USER est une identite par personne (et non plus
-            # une constante fixe) : bloc be absent/invalide, OU collision
-            # DEFAULT_USER == BE_USER (ex. poste partage dont le compte OS
-            # s'appelle "bureau_etudes") -- dans ce dernier cas, activer
-            # `be` rendrait _credentials_for ambigu (un realm wyre avec
-            # username == BE_USER recevrait a tort le mot de passe be).
-            reason = (
-                "l'identite AD/OS courante coincide avec le compte partage "
-                "bureau_etudes -- resolution de credentials ambigue, be "
-                "reste desactivee par securite"
-                if BE_USER and BE_USER == DEFAULT_USER
-                else "bloc absent ou invalide dans credentials.json"
-            )
             QgsMessageLog.logMessage(
-                f"Connexion 'be' non configuree ({reason})",
+                "Connexion 'be' non configuree "
+                "(bloc absent ou invalide dans credentials.json)",
                 TAG, level=Qgis.Info,
             )
 
@@ -767,17 +595,7 @@ class ConstructelBridgePlugin:
         # connexion DB et l'enregistrement utilisateur, sans toucher au
         # projet (pas de fix credentials, hooks, etc.) pour eviter de
         # rendre le projet vide "dirty" et le dialogue "Enregistrer".
-        # Enveloppe (comme le bloc be juste au-dessus) : _auto_connect()
-        # fait des ecritures Auth Manager / QgsSettings et pourrait lever
-        # -- sans ce try/except, une exception ici interromprait initGui
-        # a mi-chemin (hooks projet deja connectes = plugin a moitie
-        # initialise).
-        try:
-            self._auto_connect()
-        except Exception as exc:
-            QgsMessageLog.logMessage(
-                f"Auto-connect failed: {exc}", TAG, level=Qgis.Warning,
-            )
+        self._auto_connect()
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -860,14 +678,9 @@ class ConstructelBridgePlugin:
         """Appele par QgsProject.writeProject pendant la sauvegarde.
 
         Nettoie les datasources PG dans le DOM XML pour retirer les authcfg
-        user-specific et normaliser user=/password= (wyre : toujours mot
-        de passe vide ; be : son mot de passe partage inchange). Portable
-        au sens ou l'authcfg (propre au poste de qui a sauvegarde) ne
-        bloque plus l'ouverture chez quelqu'un d'autre -- mais depuis le
-        passage en auth LDAP, ouvrir une couche wyre declenche desormais
-        TOUJOURS le dialogue natif de saisie du mot de passe, quel que
-        soit qui a sauvegarde le projet (comportement voulu, pas une
-        regression : "portable" ne veut plus dire "sans dialogue" pour wyre).
+        user-specific et les remplacer par des credentials en clair.
+        Cela garantit qu'un projet sauvegarde par User A pourra etre
+        ouvert par User B sans dialogue de credentials.
         """
         try:
             self._strip_authcfg_from_dom(doc)
@@ -875,9 +688,7 @@ class ConstructelBridgePlugin:
             self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.Warning)
 
     def _strip_authcfg_from_dom(self, doc):
-        """Parcourt le DOM du projet, retire les authcfg des datasources PG
-        et normalise le mot de passe wyre a "" -- meme en l'absence de
-        tout authcfg.
+        """Parcourt le DOM du projet et retire les authcfg des datasources PG.
 
         Miroir cote ECRITURE de _fix_layer_credentials (cote lecture) :
         meme raisonnement known_identities (preserver l'identite be plutot
@@ -888,21 +699,10 @@ class ConstructelBridgePlugin:
         EXISTANT different (ex. bureau_etudes), ce qui ajoutait un second
         attribut user= en double dans la datasource au lieu de remplacer
         le premier.
-
-        IMPORTANT (fix round 2, cf. C1) : le traitement d'une datasource
-        n'est PLUS conditionne a la presence d'un authcfg=. Une couche
-        construite directement avec un QgsDataSourceUri portant le vrai
-        mot de passe de session (ex. _ensure_ref_layers, _on_init_project)
-        n'a jamais eu d'authcfg -- un gate `"authcfg=" in ds` la laissait
-        passer intacte, vrai mot de passe AD inclus, dans le projet
-        sauvegarde/round-trip PG. TOUTE datasource postgres pointant sur
-        nos hotes (wyre/be) est donc retraitee inconditionnellement ; la
-        presence d'un authcfg ne fait plus que determiner s'il y a
-        quelque chose a retirer en plus du user/password (le re.sub sur
-        authcfg= est un no-op quand il est deja absent).
         """
         import re
-        known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
+        password = getattr(self, "_password", None) or _DEFAULT_PW
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
 
@@ -918,6 +718,8 @@ class ConstructelBridgePlugin:
             if ds_node.isNull():
                 continue
             ds = ds_node.text()
+            if "authcfg=" not in ds:
+                continue
             # Ne jamais injecter nos identifiants dans la datasource d'un
             # serveur PG tiers. Filtre les hotes vides (BE_HOST == "" quand
             # `be` est desactivee) AVANT le test : "" est toujours une
@@ -932,34 +734,16 @@ class ConstructelBridgePlugin:
             user_match = re.search(r"user='([^']*)'", ds)
             current_user = user_match.group(1) if user_match else None
             target_user, target_password = known_identities.get(
-                current_user, (DEFAULT_USER, "")
+                current_user, (DEFAULT_USER, password)
             )
 
-            # Retirer authcfg=xxx (s'il existe -- no-op sinon) ainsi que
-            # tout user=/password= existant, puis reinjecter l'identite
-            # cible en clair -- evite toute duplication d'attribut. Execute
-            # pour TOUTE datasource matchant nos hotes, authcfg present ou
-            # non (cf. docstring -- ne plus se fier a "authcfg=" in ds).
-            #
-            # CRITIQUE : user=/password= sont retires avec _QUOTED (chaine
-            # entre quotes consciente des caracteres echappes), PAS un
-            # naif [^']* -- celui-ci s'arrete au premier \' (que
-            # QgsDataSourceUri::escape() genere pour une apostrophe
-            # litterale dans un mot de passe, ex. abc'def -> abc\'def) et
-            # laisse le reste de la valeur (" def'") dans la datasource --
-            # fragment de mot de passe qui fuite dans le projet sauvegarde
-            # / round-trip PG. target_user/target_password sont eux-memes
-            # echappes avant reinjection (_escape_pg_uri_value) au cas ou
-            # une identite AD contiendrait une apostrophe ou un backslash
-            # (sAMAccountName les autorise en theorie, contrairement a un
-            # certain nombre d'autres caracteres).
+            # Retirer authcfg=xxx ainsi que tout user=/password= existant,
+            # puis reinjecter l'identite cible en clair -- evite toute
+            # duplication d'attribut.
             ds = re.sub(r"\bauthcfg=\w+", "", ds)
-            ds = re.sub(r"\buser=" + _QUOTED, "", ds)
-            ds = re.sub(r"\bpassword=" + _QUOTED, "", ds)
-            ds += (
-                f" user='{_escape_pg_uri_value(target_user)}'"
-                f" password='{_escape_pg_uri_value(target_password)}'"
-            )
+            ds = re.sub(r"\buser='[^']*'", "", ds)
+            ds = re.sub(r"\bpassword='[^']*'", "", ds)
+            ds += f" user='{target_user}' password='{target_password}'"
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             # Remplacer le contenu du noeud
             while ds_node.hasChildNodes():
@@ -967,35 +751,24 @@ class ConstructelBridgePlugin:
             ds_node.appendChild(doc.createTextNode(ds))
             cleaned += 1
         if cleaned:
-            self._log(f"{cleaned} datasource(s) PG normalisee(s) avant sauvegarde (authcfg/mot de passe)")
+            self._log(f"{cleaned} datasource(s) PG nettoyee(s) avant sauvegarde (authcfg retire)")
 
     # =====================================================================
     # Auto-connexion
     # =====================================================================
 
     def _auto_connect(self):
-        """Purge tout mot de passe wyre precedemment memorise (legacy
-        pre-LDAP) au lieu de l'utiliser.
+        """Tente une connexion silencieuse au demarrage du plugin.
 
-        Depuis le passage en auth LDAP, `wyre` ne doit plus JAMAIS se
-        connecter silencieusement -- meme si un mot de passe est reste
-        stocke dans Auth Manager depuis une session anterieure a ce
-        chantier (la case "memoriser" existait avant et etait cochee par
-        defaut). Le reutiliser romprait "saisie a chaque session" et,
-        avant le fix C1, aurait pu faire fuiter ce mot de passe stocke
-        via known_identities. La personne doit cliquer Connecter
-        (menu / bouton), qui ouvre le dialogue de saisie natif.
+        Utilise le mot de passe stocke dans Auth Manager, ou a defaut
+        le mot de passe par defaut du fichier credentials.json.
+        En cas d'echec, aucune erreur n'est affichee — l'utilisateur
+        pourra se connecter manuellement via le menu.
         """
         if self._connected:
             return
-        _remove_stored_password("wyre")
-        QgsSettings().remove("PostgreSQL/connections/wyre/authcfg")
-        self._log(
-            "Auto-connexion 'wyre' desactivee (auth LDAP) — tout mot de "
-            "passe memorise precedemment a ete purge, connexion manuelle "
-            "requise.",
-            Qgis.Info,
-        )
+        password = _retrieve_password_encrypted() or _DEFAULT_PW
+        self._connect(password, silent=True)
 
     # =====================================================================
     # Language
@@ -1039,7 +812,7 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _on_connect(self):
-        """Action manuelle: dialogue de connexion (mot de passe AD, jamais memorise)."""
+        """Action manuelle: dialogue de connexion."""
         from .bridge_dialog import ConstructelConnectDialog
 
         dlg = ConstructelConnectDialog(
@@ -1047,10 +820,13 @@ class ConstructelBridgePlugin:
             host=DEFAULT_HOST,
             port=DEFAULT_PORT,
             dbname=DEFAULT_DBNAME,
-            user=DEFAULT_USER,
+            default_password=_DEFAULT_PW,
         )
         if dlg.exec_() == QDialog.Accepted:
-            self._connect(dlg.password())
+            password = dlg.password() or _DEFAULT_PW
+            if dlg.save_password():
+                _store_password_encrypted(password)
+            self._connect(password)
 
     def _connect(self, password: str, silent: bool = False):
         """Etablit la connexion et initialise l'utilisateur.
@@ -1059,6 +835,9 @@ class ConstructelBridgePlugin:
         When *silent* is True, no error dialog is shown (used by auto-connect).
         """
         self._password = password
+        # Mettre a jour le handler de credentials avec le mot de passe courant
+        if hasattr(self, "_bridge_credentials"):
+            self._bridge_credentials.update_password(password)
         qgis_user = self._get_qgis_username()
 
         try:
@@ -1094,9 +873,6 @@ class ConstructelBridgePlugin:
                     "Constructel Bridge",
                     tr("conn.failed", error=f"{DEFAULT_HOST}:{DEFAULT_PORT} — {exc}"),
                 )
-            # Ne jamais laisser un mot de passe errone/perime dans
-            # self._password apres un echec de connexion.
-            self._password = None
             return False
 
         self._connected = True
@@ -1109,7 +885,7 @@ class ConstructelBridgePlugin:
             is_new_user = False
 
         try:
-            self._setup_qgis_pg_connection(password, use_authcfg=False)
+            self._setup_qgis_pg_connection(password, use_authcfg=True)
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
@@ -1160,18 +936,22 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _get_qgis_username(self) -> str:
-        """Identite QGIS de la personne courante -- TOUJOURS DEFAULT_USER.
+        """Recupere le nom d'utilisateur depuis les settings QGIS ou l'OS."""
+        settings = QgsSettings()
 
-        DEFAULT_USER est resolu UNE SEULE FOIS a l'import du module (cf.
-        _resolve_os_username()). Rappeler _resolve_os_username() ici
-        pourrait renvoyer une valeur differente si l'environnement a
-        change depuis (ex. reglage constructel_bridge/username modifie en
-        cours de session) -- ce qui ferait diverger l'identite utilisee
-        pour AUTHENTIFIER la connexion PG (DEFAULT_USER, fixee) de celle
-        utilisee pour ATTRIBUER les editions (ref.users, app.current_user).
-        Les deux doivent toujours designer la meme personne.
-        """
-        return DEFAULT_USER
+        explicit = settings.value("constructel_bridge/username", "")
+        if explicit:
+            return explicit
+
+        try:
+            profile = QgsApplication.instance().userProfileManager().userProfile()
+            if profile and profile.name() and profile.name() != "default":
+                return profile.name()
+        except Exception:
+            pass
+
+        import getpass
+        return getpass.getuser()
 
     def _register_bridge_user(self) -> bool:
         """Enregistre l'utilisateur QGIS dans ref.users si absent."""
@@ -1244,15 +1024,12 @@ class ConstructelBridgePlugin:
 
         Cette methode remplace l'authentification de chaque couche PG
         par des credentials en clair (user/password) SANS authcfg.
-        Cela garantit que tout projet sauvegarde ne bloque plus sur un
-        authcfg inconnu chez un autre utilisateur -- mais "portable" ne
-        veut PAS dire "sans dialogue" pour wyre : son mot de passe est
-        toujours normalise a "" (jamais le vrai mot de passe AD de
-        session), donc ouvrir une couche wyre continue de declencher le
-        dialogue natif de saisie -- par design (auth LDAP individuelle).
+        Cela garantit que tout projet sauvegarde sera portable — un autre
+        utilisateur pourra l'ouvrir sans rencontrer un authcfg inconnu.
         Gere aussi les couches invalides (provider=None) en utilisant
         layer.providerType() et layer.source() directement.
         """
+        password = getattr(self, "_password", None) or _DEFAULT_PW
         # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
         # historique) et be (BE_USER, bureau d'etudes, si active). Sans
         # cette distinction, toute couche `be` (username=bureau_etudes)
@@ -1261,14 +1038,7 @@ class ConstructelBridgePlugin:
         # embarquant le mot de passe wyre en clair dans le .qgz d'un
         # utilisateur externe (bureau d'etudes). Hisse hors de la boucle :
         # invariant, pas la peine de le reconstruire par couche.
-        #
-        # Le mot de passe wyre associe est TOUJOURS "" (jamais le vrai mot
-        # de passe AD de la session) : ces identites sont ecrites dans des
-        # projets partages (.qgz ou {schema}.qgis_projects), jamais un lieu
-        # de stockage prive -- cf. incident de securite qui a motive ce
-        # chantier. Une couche wyre normalisee vaut "user=... password=''",
-        # ce qui fait retomber QGIS sur le dialogue natif au chargement.
-        known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
 
@@ -1303,23 +1073,11 @@ class ConstructelBridgePlugin:
 
             old_authcfg = uri.authConfigId()
             current_user = uri.username()
-            target_user, target_password = known_identities.get(
-                current_user, (DEFAULT_USER, "")
-            )
-            # IMPORTANT (fix round 2, cf. C1) : needs_fix ne se limite plus
-            # a "authcfg present ou identite inconnue". Une couche
-            # construite directement avec un QgsDataSourceUri portant deja
-            # le bon user='...' MAIS un vrai mot de passe (ex.
-            # _ensure_ref_layers, _on_init_project) "semblait" deja
-            # correcte sous l'ancien test -- son mot de passe reel restait
-            # alors tel quel en memoire. On compare desormais aussi le mot
-            # de passe courant a la cible attendue.
-            needs_fix = (
-                bool(old_authcfg)
-                or current_user != target_user
-                or uri.password() != target_password
-            )
+            needs_fix = bool(old_authcfg) or current_user not in known_identities
             if needs_fix:
+                target_user, target_password = known_identities.get(
+                    current_user, (DEFAULT_USER, password)
+                )
                 uri.setAuthConfigId("")
                 uri.setUsername(target_user)
                 uri.setPassword(target_password)
@@ -1436,7 +1194,7 @@ class ConstructelBridgePlugin:
                 return  # Deja chargee
 
         # Charger la couche cachee
-        password = getattr(self, "_password", None) or ""
+        password = getattr(self, "_password", None) or _DEFAULT_PW
         uri = QgsDataSourceUri()
         uri.setConnection(
             DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
@@ -1969,7 +1727,7 @@ class ConstructelBridgePlugin:
                 "user": DEFAULT_USER,
                 "sslmode": DEFAULT_SSLMODE,
             }
-            password = getattr(self, "_password", None) or ""
+            password = getattr(self, "_password", None) or _DEFAULT_PW
 
             count = init_project(
                 conn_params, password, selected,
@@ -2089,6 +1847,7 @@ class ConstructelBridgePlugin:
         import re
         import tempfile
 
+        password = getattr(self, "_password", None) or _DEFAULT_PW
         # Validate schema against whitelist to prevent SQL injection
         if schema not in self._PROJECT_SCHEMAS:
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.Warning)
@@ -2143,11 +1902,7 @@ class ConstructelBridgePlugin:
         # docstrings) : preserver l'identite be existante plutot que de
         # tout basculer vers wyre, et ne jamais toucher un serveur tiers.
         original_xml = xml
-        # wyre associe toujours "" (jamais le vrai mot de passe AD de la
-        # session) : ce XML est round-trip via {schema}.qgis_projects,
-        # une table PARTAGEE entre utilisateurs -- cf. C1 / incident de
-        # securite qui a motive ce chantier.
-        known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
+        known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
         known_hosts = tuple(h for h in (DEFAULT_HOST, BE_HOST) if h)
@@ -2166,19 +1921,11 @@ class ConstructelBridgePlugin:
             user_match = re.search(r"\buser='([^']*)'", ds)
             current_user = user_match.group(1) if user_match else None
             target_user, target_password = known_identities.get(
-                current_user, (DEFAULT_USER, "")
+                current_user, (DEFAULT_USER, password)
             )
-            # CRITIQUE : meme fix que _strip_authcfg_from_dom -- _QUOTED
-            # au lieu de [^']* pour ne pas laisser un fragment de mot de
-            # passe (apres un \' echappe par QGIS) dans le XML round-trip
-            # via {schema}.qgis_projects. target_user/target_password
-            # echappes avant reinjection (_escape_pg_uri_value).
-            ds = re.sub(r"\buser=" + _QUOTED, "", ds)
-            ds = re.sub(r"\bpassword=" + _QUOTED, "", ds)
-            ds += (
-                f" user='{_escape_pg_uri_value(target_user)}'"
-                f" password='{_escape_pg_uri_value(target_password)}'"
-            )
+            ds = re.sub(r"\buser='[^']*'", "", ds)
+            ds = re.sub(r"\bpassword='[^']*'", "", ds)
+            ds += f" user='{target_user}' password='{target_password}'"
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             return prefix + ds + suffix
 

@@ -5,7 +5,6 @@ Usage:
     python release.py 1.2.0
 """
 
-import json
 import re
 import sys
 import zipfile
@@ -17,26 +16,6 @@ PLUGINS_XML = PACKAGES_DIR.parent / "plugins.xml"
 METADATA_TXT = PLUGIN_DIR / "metadata.txt"
 PLUGIN_NAME = PLUGIN_DIR.name  # constructel_bridge
 ZIP_PATH = PACKAGES_DIR / f"{PLUGIN_NAME}.zip"
-CREDENTIALS_JSON = PLUGIN_DIR / "credentials.json"
-
-# Secret fields stripped from credentials.json's "be" block before it is
-# embedded in the distributed zip. The on-disk file (used for local
-# dev/testing) is never modified — only the copy written into the archive.
-BE_SECRET_KEYS = ("user", "password")
-
-
-def redacted_credentials_bytes() -> bytes:
-    """Return credentials.json content with be.user/be.password stripped,
-    re-serialized with the same formatting as the source file (indent=4,
-    trailing newline). wyre's block and be's non-secret fields are left
-    untouched.
-    """
-    data = json.loads(CREDENTIALS_JSON.read_text())
-    be = data.get("be")
-    if isinstance(be, dict):
-        for key in BE_SECRET_KEYS:
-            be.pop(key, None)
-    return (json.dumps(data, indent=4) + "\n").encode("utf-8")
 
 
 def bump_metadata(version: str):
@@ -79,11 +58,6 @@ def rebuild_zip():
             if fpath.name == ZIP_PATH.name:
                 continue
             arcname = f"{PLUGIN_NAME}/{fpath.relative_to(PLUGIN_DIR)}"
-            if fpath == CREDENTIALS_JSON:
-                # Never ship be's real secret in the distributed archive;
-                # the on-disk file itself is left untouched.
-                zf.writestr(arcname, redacted_credentials_bytes())
-                continue
             zf.write(fpath, arcname)
     size_kb = ZIP_PATH.stat().st_size / 1024
     print(f"  {ZIP_PATH.name} rebuilt ({size_kb:.0f} KB)")

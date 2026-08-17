@@ -1660,7 +1660,7 @@
             <Option name="Layer" type="QString" value=""/>
             <Option name="LayerName" type="QString" value="zone_pop"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
-            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;wyre&quot;.&quot;zone_pop&quot; (geom)"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygon checkPrimaryKeyUnicity='0' table=&quot;wyre&quot;.&quot;zone_pop&quot; (geom)"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
             <Option name="OrderByField" type="bool" value="true"/>
@@ -1688,7 +1688,7 @@
             <Option name="Layer" type="QString" value=""/>
             <Option name="LayerName" type="QString" value="zone_mro"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
-            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygonZ checkPrimaryKeyUnicity='0' table=&quot;wyre&quot;.&quot;zone_mro&quot; (geom)"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=MultiPolygonZ checkPrimaryKeyUnicity='0' table=&quot;wyre&quot;.&quot;zone_mro&quot; (geom)"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
             <Option name="OrderByField" type="bool" value="true"/>
@@ -1730,7 +1730,7 @@
             <Option name="Layer" type="invalid"/>
             <Option name="LayerName" type="QString" value="v_form_lists"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
-            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
             <Option name="OrderByField" type="bool" value="true"/>
@@ -1776,7 +1776,7 @@
             <Option name="Layer" type="invalid"/>
             <Option name="LayerName" type="QString" value="v_form_lists"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
-            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
             <Option name="NofColumns" type="int" value="1"/>
             <Option name="OrderByDescending" type="bool" value="false"/>
             <Option name="OrderByField" type="bool" value="false"/>
@@ -1810,7 +1810,7 @@
             <Option name="Layer" type="QString" value=""/>
             <Option name="LayerName" type="QString" value="demand_points"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
-            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;wyre&quot;.&quot;demand_points&quot; (geom)"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='id' estimatedmetadata=true srid=31370 type=Point checkPrimaryKeyUnicity='0' table=&quot;wyre&quot;.&quot;demand_points&quot; (geom)"/>
             <Option name="OrderByValue" type="bool" value="true"/>
             <Option name="UseCompleter" type="bool" value="true"/>
             <Option name="Value" type="QString" value="coalesce(homecount, 0) || ' — ' || coalesce(full_address, street || ' ' || street_number || ', ' || city, identifier)"/>

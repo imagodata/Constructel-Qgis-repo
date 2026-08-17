@@ -21,19 +21,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Connection",
-        "dialog.header": "<b>Connection to Farois FTTH database</b>",
+        "dialog.header": "<b>Connection to Farois FTTH database</b><br>"
+                         "<small>Role: ftth_editor (infrastructure layer editing)</small>",
         "dialog.server": "Server:",
         "dialog.port": "Port:",
         "dialog.database": "Database:",
         "dialog.role": "Role:",
         "dialog.password": "Password:",
-        "dialog.password_placeholder": "AD password",
+        "dialog.password_placeholder": "ftth_editor password",
         "dialog.show_password": "Show password",
         "dialog.hide_password": "Hide password",
+        "dialog.save_password": "Remember password",
 
         # -- Connection messages --
         "conn.failed": "Connection failed:\n{error}",
-        "conn.established": "Connection established",
+        "conn.established": "Connection established (ftth_editor)",
         "conn.connected_as": "Connected as {user}",
         "conn.connect_first": "Connect first via Constructel Bridge > Database connection.",
 
@@ -275,19 +277,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Connexion",
-        "dialog.header": "<b>Connexion a la base Farois FTTH</b>",
+        "dialog.header": "<b>Connexion a la base Farois FTTH</b><br>"
+                         "<small>Role: ftth_editor (edition couches infrastructure)</small>",
         "dialog.server": "Serveur:",
         "dialog.port": "Port:",
         "dialog.database": "Base:",
         "dialog.role": "Role:",
         "dialog.password": "Mot de passe:",
-        "dialog.password_placeholder": "Mot de passe AD",
+        "dialog.password_placeholder": "Mot de passe ftth_editor",
         "dialog.show_password": "Afficher le mot de passe",
         "dialog.hide_password": "Masquer le mot de passe",
+        "dialog.save_password": "Retenir le mot de passe",
 
         # -- Connection messages --
         "conn.failed": "Connexion impossible:\n{error}",
-        "conn.established": "Connexion etablie",
+        "conn.established": "Connexion etablie (ftth_editor)",
         "conn.connected_as": "Connecte en tant que {user}",
         "conn.connect_first": "Connectez-vous d'abord via Constructel Bridge > Connexion base de donnees.",
 
@@ -531,19 +535,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Connection dialog --
         "dialog.title": "Constructel Bridge - Ligacao",
-        "dialog.header": "<b>Ligacao a base de dados Farois FTTH</b>",
+        "dialog.header": "<b>Ligacao a base de dados Farois FTTH</b><br>"
+                         "<small>Papel: ftth_editor (edicao de camadas de infraestrutura)</small>",
         "dialog.server": "Servidor:",
         "dialog.port": "Porta:",
         "dialog.database": "Base de dados:",
         "dialog.role": "Papel:",
         "dialog.password": "Palavra-passe:",
-        "dialog.password_placeholder": "Palavra-passe AD",
+        "dialog.password_placeholder": "Palavra-passe ftth_editor",
         "dialog.show_password": "Mostrar palavra-passe",
         "dialog.hide_password": "Ocultar palavra-passe",
+        "dialog.save_password": "Guardar palavra-passe",
 
         # -- Connection messages --
         "conn.failed": "Ligacao impossivel:\n{error}",
-        "conn.established": "Ligacao estabelecida",
+        "conn.established": "Ligacao estabelecida (ftth_editor)",
         "conn.connected_as": "Ligado como {user}",
         "conn.connect_first": "Ligue-se primeiro via Constructel Bridge > Ligacao a base de dados.",
 
