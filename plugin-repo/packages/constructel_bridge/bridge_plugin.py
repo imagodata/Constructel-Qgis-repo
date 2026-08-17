@@ -32,6 +32,7 @@ from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QAction,
+    QApplication,
     QDialog,
     QInputDialog,
     QMenu,
@@ -313,10 +314,57 @@ class _BridgeCredentials(QgsCredentials):
                 if not plugin._connected:
                     QTimer.singleShot(
                         0, plugin.iface.mainWindow(),
-                        lambda: plugin._connect(pwd, silent=False),
+                        lambda: self._trigger_deferred_connect(plugin, pwd),
                     )
             return ok, user, pwd
         return False, username, password
+
+    # Nombre max de reprogrammations (100ms chacune, ~30s) avant d'abandonner
+    # la connexion differee si un dialogue modal reste actif en continu --
+    # evite de boucler indefiniment dans un etat pathologique improbable,
+    # tout en laissant largement le temps a un dialogue modal legitime (ex.
+    # re-saisie apres mot de passe errone) de se fermer normalement.
+    _DEFERRED_CONNECT_MAX_ATTEMPTS = 300
+
+    def _trigger_deferred_connect(self, plugin, pwd, attempt=0):
+        """Appelle plugin._connect(pwd) des qu'aucun dialogue modal n'est actif.
+
+        QTimer.singleShot(0, contextObject, callback) livre son callback via
+        LA PROCHAINE iteration de la boucle d'evenements traitee sur le
+        thread du contextObject -- qui peut etre une boucle IMBRIQUEE (ex.
+        QGIS relance son propre dialogue natif de credentials si la personne
+        s'est trompee au premier essai). Si le callback tombait pendant
+        cette boucle imbriquee, le mutex d'auth de QgsPostgresConn pourrait
+        encore etre tenu par l'appel a request() plus haut dans la pile --
+        reintroduisant une version plus etroite du deadlock d'origine (le
+        wizard d'onboarding ouvrirait sa propre boucle imbriquee pendant que
+        ce mutex est tenu).
+
+        On verifie donc qu'aucun widget modal n'est actif avant d'appeler
+        _connect() ; QApplication.activeModalWidget() detecte precisement ce
+        cas car le dialogue natif de QGIS (QgsCredentialDialog) est un
+        QDialog affiche via exec_(), qui l'enregistre comme widget modal
+        actif tant qu'il est a l'ecran -- exactement l'API Qt prevue pour
+        cette verification. Si un modal est actif, on se reprogramme 100ms
+        plus tard, jusqu'a _DEFERRED_CONNECT_MAX_ATTEMPTS.
+        """
+        if QApplication.activeModalWidget() is not None:
+            if attempt >= self._DEFERRED_CONNECT_MAX_ATTEMPTS:
+                QgsMessageLog.logMessage(
+                    "Deferred wyre connect abandoned: a modal dialog stayed "
+                    "active for ~30s straight. The native credentials prompt "
+                    "succeeded, but the plugin's own connect flow (hooks, "
+                    "ref.users) was not triggered automatically -- use "
+                    "'Connecter' manually.",
+                    TAG, level=Qgis.Warning,
+                )
+                return
+            QTimer.singleShot(
+                100, plugin.iface.mainWindow(),
+                lambda: self._trigger_deferred_connect(plugin, pwd, attempt + 1),
+            )
+            return
+        plugin._connect(pwd, silent=False)
 
     def requestMasterPassword(self, password, stored=False):
         if self._fallback:
