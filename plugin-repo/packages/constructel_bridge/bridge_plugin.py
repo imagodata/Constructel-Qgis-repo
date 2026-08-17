@@ -84,11 +84,36 @@ _CREDS = _load_credentials()
 _WYRE_CREDS = _CREDS.get("wyre", {})
 _BE_CREDS = _CREDS.get("be", {})
 
+
+def _resolve_os_username() -> str:
+    """Determine l'identifiant OS/QGIS de la personne courante.
+
+    Attendu = sAMAccountName AD sur un poste joint au domaine (chantier
+    "Authentification LDAP wyre") -- a valider empiriquement (cf. Task 10,
+    verification QGIS n1). Utilisee a la fois pour DEFAULT_USER (identite
+    de connexion PG "wyre") et pour l'enregistrement dans ref.users.
+    """
+    settings = QgsSettings()
+
+    explicit = settings.value("constructel_bridge/username", "")
+    if explicit:
+        return explicit
+
+    try:
+        profile = QgsApplication.instance().userProfileManager().userProfile()
+        if profile and profile.name() and profile.name() != "default":
+            return profile.name()
+    except Exception:
+        pass
+
+    import getpass
+    return getpass.getuser()
+
+
 DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
 DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_WYRE_CREDS["port"])))
 DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _WYRE_CREDS["dbname"]
-DEFAULT_USER = _WYRE_CREDS["user"]
-_DEFAULT_PW = base64.b64decode(_WYRE_CREDS["password"]).decode()
+DEFAULT_USER = _resolve_os_username()
 DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
 DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
 PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
@@ -184,42 +209,21 @@ class _BridgeCredentials(QgsCredentials):
 
     def __init__(self, fallback):
         self._fallback = fallback
-        self._username = DEFAULT_USER
-        self._password = _DEFAULT_PW
         super().__init__()  # appelle setInstance(self) en interne
-
-    def update_password(self, password: str):
-        self._password = password
 
     def _credentials_for(self, realm, username):
         """Resout le couple (utilisateur, mot de passe) pour un realm.
 
-        `be` est teste EN PREMIER car c'est le cas le plus specifique : il
-        n'est reconnu que si l'utilisateur du bureau d'etudes apparait
-        explicitement, soit dans le realm (`user='...'` que QGIS y insere
-        quand la connexion memorise son nom d'utilisateur), soit dans
-        l'argument *username*. Tout autre realm de notre serveur retombe
-        sur `wyre` — comportement historique preserve a l'identique.
+        Seul `be` est fourni automatiquement (mot de passe partage,
+        issu de credentials.json). `wyre` n'a plus de mot de passe
+        connu a l'avance (auth LDAP individuelle) : toute demande pour
+        son realm est deleguee au dialogue QGIS natif via `request()`.
 
-        Le repli sur simple correspondance de *username* est ANCRE sur
-        BE_HOST (pas DEFAULT_HOST) : `_BridgeCredentials` est installe
-        comme le singleton QgsCredentials actif pour toute la session
-        QGIS, donc sans cet ancrage une demande d'authentification vers
-        un serveur PG TIERS ou le username serait egalement
-        `bureau_etudes` recevrait par erreur le mot de passe `be` —
-        fuite de credentials vers un serveur externe. On ancre sur
-        BE_HOST (pas DEFAULT_HOST) car credentials.json expose des
-        overrides BE_DB_HOST/BE_DB_NAME independants de wyre : si `be`
-        est un jour reconfigure sur un autre serveur, l'ancrage doit
-        suivre SA propre configuration, pas celle de `wyre`. Aujourd'hui
-        BE_HOST == DEFAULT_HOST donc le comportement est identique.
-
-        Retourne None si le realm ne nous concerne pas.
+        Retourne None si le realm ne nous concerne pas (ou concerne
+        `wyre`, qui doit toujours passer par le dialogue natif).
         """
         if BE_ENABLED and BE_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
             return BE_USER, _BE_PW
-        if DEFAULT_HOST in realm:
-            return self._username, self._password
         return None
 
     def request(self, realm, username, password, message=""):
@@ -260,29 +264,15 @@ class _BridgeBadLayerHandler(QgsProjectBadLayerHandler):
 
 
 def _precache_pg_credentials():
-    """Pre-cache PG credentials pour eviter le dialogue de saisie.
+    """Pre-cache les credentials PG de `be` (bureau d'etudes).
 
-    Insere dans le cache de QgsCredentials les credentials pour les
-    variantes de realm les plus courantes.  Quand QGIS appelle get()
-    pour une de ces realms, il trouve le cache et n'affiche pas de
-    dialogue.  Le cache est consomme (take) par get(), donc on le
-    re-remplit a chaque chargement de projet.
+    `wyre` n'a plus de mot de passe par defaut (authentification LDAP,
+    saisie a chaque session) : rien a pre-cacher pour cette connexion,
+    QGIS doit demander le mot de passe nativement.
     """
-    creds = QgsCredentials.instance()
-    for realm in (
-        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT}",
-        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT} sslmode={DEFAULT_SSLMODE}",
-        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST}",
-        DEFAULT_HOST,
-    ):
-        creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
-
     if not BE_ENABLED:
         return
-    # `be` partage host + base avec `wyre` : SEULES les variantes de realm
-    # qui portent user='...' sont pre-cachees. Pre-cacher une variante sans
-    # utilisateur ecraserait le cache de `wyre` avec le mot de passe du
-    # bureau d'etudes et casserait la connexion principale.
+    creds = QgsCredentials.instance()
     for realm in (
         f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} user='{BE_USER}'",
         f"dbname='{BE_DBNAME}' host={BE_HOST} port={BE_PORT} sslmode={BE_SSLMODE} user='{BE_USER}'",
@@ -701,7 +691,7 @@ class ConstructelBridgePlugin:
         le premier.
         """
         import re
-        password = getattr(self, "_password", None) or _DEFAULT_PW
+        password = getattr(self, "_password", None) or ""
         known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
@@ -758,16 +748,26 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _auto_connect(self):
-        """Tente une connexion silencieuse au demarrage du plugin.
+        """Tente une connexion silencieuse au demarrage, UNIQUEMENT si un
+        mot de passe a deja ete memorise (Auth Manager, session precedente
+        avant ce chantier).
 
-        Utilise le mot de passe stocke dans Auth Manager, ou a defaut
-        le mot de passe par defaut du fichier credentials.json.
-        En cas d'echec, aucune erreur n'est affichee — l'utilisateur
-        pourra se connecter manuellement via le menu.
+        Depuis le passage en auth LDAP, `wyre` n'a plus de mot de passe
+        par defaut ni de sauvegarde automatique (cf. Step 4 ci-dessous) :
+        si rien n'est disponible, on n'affiche PAS de dialogue ici — la
+        personne doit cliquer Connecter (menu / bouton), qui ouvre le
+        dialogue de saisie natif.
         """
         if self._connected:
             return
-        password = _retrieve_password_encrypted() or _DEFAULT_PW
+        password = _retrieve_password_encrypted()
+        if not password:
+            self._log(
+                "Auto-connexion 'wyre' ignoree (aucun mot de passe memorise) "
+                "— connexion manuelle requise.",
+                Qgis.Info,
+            )
+            return
         self._connect(password, silent=True)
 
     # =====================================================================
@@ -812,7 +812,7 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _on_connect(self):
-        """Action manuelle: dialogue de connexion."""
+        """Action manuelle: dialogue de connexion (mot de passe AD, jamais memorise)."""
         from .bridge_dialog import ConstructelConnectDialog
 
         dlg = ConstructelConnectDialog(
@@ -820,13 +820,10 @@ class ConstructelBridgePlugin:
             host=DEFAULT_HOST,
             port=DEFAULT_PORT,
             dbname=DEFAULT_DBNAME,
-            default_password=_DEFAULT_PW,
+            user=DEFAULT_USER,
         )
         if dlg.exec_() == QDialog.Accepted:
-            password = dlg.password() or _DEFAULT_PW
-            if dlg.save_password():
-                _store_password_encrypted(password)
-            self._connect(password)
+            self._connect(dlg.password())
 
     def _connect(self, password: str, silent: bool = False):
         """Etablit la connexion et initialise l'utilisateur.
@@ -835,9 +832,6 @@ class ConstructelBridgePlugin:
         When *silent* is True, no error dialog is shown (used by auto-connect).
         """
         self._password = password
-        # Mettre a jour le handler de credentials avec le mot de passe courant
-        if hasattr(self, "_bridge_credentials"):
-            self._bridge_credentials.update_password(password)
         qgis_user = self._get_qgis_username()
 
         try:
@@ -885,7 +879,7 @@ class ConstructelBridgePlugin:
             is_new_user = False
 
         try:
-            self._setup_qgis_pg_connection(password, use_authcfg=True)
+            self._setup_qgis_pg_connection(password, use_authcfg=False)
         except Exception as exc:
             self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
 
@@ -937,21 +931,7 @@ class ConstructelBridgePlugin:
 
     def _get_qgis_username(self) -> str:
         """Recupere le nom d'utilisateur depuis les settings QGIS ou l'OS."""
-        settings = QgsSettings()
-
-        explicit = settings.value("constructel_bridge/username", "")
-        if explicit:
-            return explicit
-
-        try:
-            profile = QgsApplication.instance().userProfileManager().userProfile()
-            if profile and profile.name() and profile.name() != "default":
-                return profile.name()
-        except Exception:
-            pass
-
-        import getpass
-        return getpass.getuser()
+        return _resolve_os_username()
 
     def _register_bridge_user(self) -> bool:
         """Enregistre l'utilisateur QGIS dans ref.users si absent."""
@@ -1029,7 +1009,7 @@ class ConstructelBridgePlugin:
         Gere aussi les couches invalides (provider=None) en utilisant
         layer.providerType() et layer.source() directement.
         """
-        password = getattr(self, "_password", None) or _DEFAULT_PW
+        password = getattr(self, "_password", None) or ""
         # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
         # historique) et be (BE_USER, bureau d'etudes, si active). Sans
         # cette distinction, toute couche `be` (username=bureau_etudes)
@@ -1194,7 +1174,7 @@ class ConstructelBridgePlugin:
                 return  # Deja chargee
 
         # Charger la couche cachee
-        password = getattr(self, "_password", None) or _DEFAULT_PW
+        password = getattr(self, "_password", None) or ""
         uri = QgsDataSourceUri()
         uri.setConnection(
             DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
@@ -1727,7 +1707,7 @@ class ConstructelBridgePlugin:
                 "user": DEFAULT_USER,
                 "sslmode": DEFAULT_SSLMODE,
             }
-            password = getattr(self, "_password", None) or _DEFAULT_PW
+            password = getattr(self, "_password", None) or ""
 
             count = init_project(
                 conn_params, password, selected,
@@ -1847,7 +1827,7 @@ class ConstructelBridgePlugin:
         import re
         import tempfile
 
-        password = getattr(self, "_password", None) or _DEFAULT_PW
+        password = getattr(self, "_password", None) or ""
         # Validate schema against whitelist to prevent SQL injection
         if schema not in self._PROJECT_SCHEMAS:
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.Warning)
