@@ -701,7 +701,9 @@ class ConstructelBridgePlugin:
             self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.Warning)
 
     def _strip_authcfg_from_dom(self, doc):
-        """Parcourt le DOM du projet et retire les authcfg des datasources PG.
+        """Parcourt le DOM du projet, retire les authcfg des datasources PG
+        et normalise le mot de passe wyre a "" -- meme en l'absence de
+        tout authcfg.
 
         Miroir cote ECRITURE de _fix_layer_credentials (cote lecture) :
         meme raisonnement known_identities (preserver l'identite be plutot
@@ -712,6 +714,18 @@ class ConstructelBridgePlugin:
         EXISTANT different (ex. bureau_etudes), ce qui ajoutait un second
         attribut user= en double dans la datasource au lieu de remplacer
         le premier.
+
+        IMPORTANT (fix round 2, cf. C1) : le traitement d'une datasource
+        n'est PLUS conditionne a la presence d'un authcfg=. Une couche
+        construite directement avec un QgsDataSourceUri portant le vrai
+        mot de passe de session (ex. _ensure_ref_layers, _on_init_project)
+        n'a jamais eu d'authcfg -- un gate `"authcfg=" in ds` la laissait
+        passer intacte, vrai mot de passe AD inclus, dans le projet
+        sauvegarde/round-trip PG. TOUTE datasource postgres pointant sur
+        nos hotes (wyre/be) est donc retraitee inconditionnellement ; la
+        presence d'un authcfg ne fait plus que determiner s'il y a
+        quelque chose a retirer en plus du user/password (le re.sub sur
+        authcfg= est un no-op quand il est deja absent).
         """
         import re
         known_identities = {DEFAULT_USER: (DEFAULT_USER, "")}
@@ -730,8 +744,6 @@ class ConstructelBridgePlugin:
             if ds_node.isNull():
                 continue
             ds = ds_node.text()
-            if "authcfg=" not in ds:
-                continue
             # Ne jamais injecter nos identifiants dans la datasource d'un
             # serveur PG tiers. Filtre les hotes vides (BE_HOST == "" quand
             # `be` est desactivee) AVANT le test : "" est toujours une
@@ -749,9 +761,11 @@ class ConstructelBridgePlugin:
                 current_user, (DEFAULT_USER, "")
             )
 
-            # Retirer authcfg=xxx ainsi que tout user=/password= existant,
-            # puis reinjecter l'identite cible en clair -- evite toute
-            # duplication d'attribut.
+            # Retirer authcfg=xxx (s'il existe -- no-op sinon) ainsi que
+            # tout user=/password= existant, puis reinjecter l'identite
+            # cible en clair -- evite toute duplication d'attribut. Execute
+            # pour TOUTE datasource matchant nos hotes, authcfg present ou
+            # non (cf. docstring -- ne plus se fier a "authcfg=" in ds).
             ds = re.sub(r"\bauthcfg=\w+", "", ds)
             ds = re.sub(r"\buser='[^']*'", "", ds)
             ds = re.sub(r"\bpassword='[^']*'", "", ds)
@@ -763,7 +777,7 @@ class ConstructelBridgePlugin:
             ds_node.appendChild(doc.createTextNode(ds))
             cleaned += 1
         if cleaned:
-            self._log(f"{cleaned} datasource(s) PG nettoyee(s) avant sauvegarde (authcfg retire)")
+            self._log(f"{cleaned} datasource(s) PG normalisee(s) avant sauvegarde (authcfg/mot de passe)")
 
     # =====================================================================
     # Auto-connexion
@@ -1085,11 +1099,23 @@ class ConstructelBridgePlugin:
 
             old_authcfg = uri.authConfigId()
             current_user = uri.username()
-            needs_fix = bool(old_authcfg) or current_user not in known_identities
+            target_user, target_password = known_identities.get(
+                current_user, (DEFAULT_USER, "")
+            )
+            # IMPORTANT (fix round 2, cf. C1) : needs_fix ne se limite plus
+            # a "authcfg present ou identite inconnue". Une couche
+            # construite directement avec un QgsDataSourceUri portant deja
+            # le bon user='...' MAIS un vrai mot de passe (ex.
+            # _ensure_ref_layers, _on_init_project) "semblait" deja
+            # correcte sous l'ancien test -- son mot de passe reel restait
+            # alors tel quel en memoire. On compare desormais aussi le mot
+            # de passe courant a la cible attendue.
+            needs_fix = (
+                bool(old_authcfg)
+                or current_user != target_user
+                or uri.password() != target_password
+            )
             if needs_fix:
-                target_user, target_password = known_identities.get(
-                    current_user, (DEFAULT_USER, "")
-                )
                 uri.setAuthConfigId("")
                 uri.setUsername(target_user)
                 uri.setPassword(target_password)
