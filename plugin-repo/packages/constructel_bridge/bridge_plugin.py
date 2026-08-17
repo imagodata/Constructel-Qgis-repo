@@ -249,6 +249,19 @@ class _BridgeCredentials(QgsCredentials):
     def __init__(self, fallback, plugin):
         self._fallback = fallback
         self._plugin = plugin
+        # Etat de la chaine de connexion differee (cf. _trigger_deferred_connect) :
+        # une SEULE chaine a la fois ("single-flight"), qui relit toujours le
+        # mot de passe le plus recent au moment ou elle s'execute -- sinon une
+        # personne qui se trompe puis retape le bon mot de passe pendant que la
+        # premiere chaine attend encore (dialogue modal de re-saisie de QGIS
+        # actif) declencherait DEUX _connect() independants : un avec le bon
+        # mot de passe (sur closure capturee au moment du 2e request()) et un
+        # avec le mauvais (closure du 1er), ce dernier tirant apres coup sur un
+        # plugin deja connecte -- echec PG/LDAP supplementaire (risque de
+        # verrouillage AD) + dialogue d'erreur confus + self._password ecrase.
+        self._connect_pending = False
+        self._pending_password = None
+        self._connect_attempt = 0
         super().__init__()  # appelle setInstance(self) en interne
 
     def _credentials_for(self, realm, username):
@@ -312,10 +325,25 @@ class _BridgeCredentials(QgsCredentials):
                 self.put(realm, user, pwd)
                 plugin = self._plugin
                 if not plugin._connected:
-                    QTimer.singleShot(
-                        0, plugin.iface.mainWindow(),
-                        lambda: self._trigger_deferred_connect(plugin, pwd),
-                    )
+                    # Toujours le mot de passe le plus recent : si une chaine
+                    # differee est deja en cours (ex. suite a une premiere
+                    # saisie), elle relira cette valeur au moment ou elle
+                    # s'execute -- pas celle qui etait courante quand elle a
+                    # ete programmee.
+                    self._pending_password = pwd
+                    if not self._connect_pending:
+                        # Single-flight : une seule chaine a la fois. Si une
+                        # chaine tourne deja (ex. elle attend qu'un dialogue
+                        # modal de re-saisie se ferme), ne pas en programmer
+                        # une deuxieme -- elle relira self._pending_password
+                        # ci-dessus et utilisera donc quand meme ce mot de
+                        # passe-ci des qu'elle s'executera.
+                        self._connect_pending = True
+                        self._connect_attempt = 0
+                        QTimer.singleShot(
+                            0, plugin.iface.mainWindow(),
+                            self._trigger_deferred_connect,
+                        )
             return ok, user, pwd
         return False, username, password
 
@@ -326,8 +354,8 @@ class _BridgeCredentials(QgsCredentials):
     # re-saisie apres mot de passe errone) de se fermer normalement.
     _DEFERRED_CONNECT_MAX_ATTEMPTS = 300
 
-    def _trigger_deferred_connect(self, plugin, pwd, attempt=0):
-        """Appelle plugin._connect(pwd) des qu'aucun dialogue modal n'est actif.
+    def _trigger_deferred_connect(self):
+        """Appelle plugin._connect(...) des qu'aucun dialogue modal n'est actif.
 
         QTimer.singleShot(0, contextObject, callback) livre son callback via
         LA PROCHAINE iteration de la boucle d'evenements traitee sur le
@@ -347,9 +375,24 @@ class _BridgeCredentials(QgsCredentials):
         actif tant qu'il est a l'ecran -- exactement l'API Qt prevue pour
         cette verification. Si un modal est actif, on se reprogramme 100ms
         plus tard, jusqu'a _DEFERRED_CONNECT_MAX_ATTEMPTS.
+
+        Relit self._plugin._connected et self._pending_password A CHAQUE
+        appel (plutot que des valeurs capturees a la programmation) : une
+        seule chaine est jamais en vol (single-flight, cf. request()), donc
+        c'est la SEULE lecture qui compte, et elle doit refleter l'etat le
+        plus recent -- pas celui qui prevalait quand cette chaine a demarre.
+        Si le plugin est deja connecte (par ce chemin ou un autre, ex. clic
+        manuel sur "Connecter" pendant l'attente), cette chaine est devenue
+        obsolete : ne rien faire plutot que de re-authentifier inutilement
+        (echec PG/LDAP superflu, risque de verrouillage AD).
         """
+        plugin = self._plugin
+        if plugin._connected:
+            self._connect_pending = False
+            return
         if QApplication.activeModalWidget() is not None:
-            if attempt >= self._DEFERRED_CONNECT_MAX_ATTEMPTS:
+            self._connect_attempt += 1
+            if self._connect_attempt >= self._DEFERRED_CONNECT_MAX_ATTEMPTS:
                 QgsMessageLog.logMessage(
                     "Deferred wyre connect abandoned: a modal dialog stayed "
                     "active for ~30s straight. The native credentials prompt "
@@ -358,13 +401,15 @@ class _BridgeCredentials(QgsCredentials):
                     "'Connecter' manually.",
                     TAG, level=Qgis.Warning,
                 )
+                self._connect_pending = False
                 return
             QTimer.singleShot(
                 100, plugin.iface.mainWindow(),
-                lambda: self._trigger_deferred_connect(plugin, pwd, attempt + 1),
+                self._trigger_deferred_connect,
             )
             return
-        plugin._connect(pwd, silent=False)
+        self._connect_pending = False
+        plugin._connect(self._pending_password, silent=False)
 
     def requestMasterPassword(self, password, stored=False):
         if self._fallback:
