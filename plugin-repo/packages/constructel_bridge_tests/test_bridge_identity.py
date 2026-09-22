@@ -140,6 +140,26 @@ def test_resolve_credentials_third_party_host_with_be_username_does_not_leak():
     assert result is None
 
 
+
+def test_resolve_credentials_be_host_distinct_from_default_host_anchors_correctly():
+    # be_host deliberately DIFFERENT from default_host — proves the function
+    # anchors the be-branch on be_host specifically, not on default_host.
+    # (Regression guard: a mutant that swaps be_host->default_host in the
+    # source's first condition passes every OTHER existing test in this
+    # file, because they all set be_host == default_host.)
+    result = resolve_credentials_for_realm(
+        "dbname='farois_ftth' host=be.example.internal user='bureau_etudes'",
+        "someone_else",
+        be_enabled=True,
+        be_host="be.example.internal",
+        be_user="bureau_etudes",
+        be_password="be-pw",
+        default_host="db.example.internal",
+        default_user="ftth_editor",
+        default_password="wyre-pw",
+    )
+    assert result == ("bureau_etudes", "be-pw")
+
 # --- build_set_config_sql --------------------------------------------------
 
 def test_build_set_config_sql_simple_username():

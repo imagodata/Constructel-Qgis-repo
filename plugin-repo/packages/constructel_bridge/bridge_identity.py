@@ -28,6 +28,13 @@ def derive_email(username: str, domain: str = "constructel.be") -> str:
     """Reproduces the email construction in _register_bridge_user():
     f"{username}@constructel.be" hardcoded — domain kept as a parameter
     here for testability, default matches the hardcoded value exactly.
+    
+    IMPORTANT: The hardcoded default="constructel.be" is deliberate and preserves
+    the original pre-refactor behavior. bridge_plugin.py has a configurable
+    EMAIL_DOMAIN that bridge_onboarding.py already uses; wiring EMAIL_DOMAIN into
+    this function would be a user-visible behavior change (different emails written
+    to ref.users for deployments with email_domain configured) and requires an
+    explicit design decision, not a drive-by refactor.
     """
     return f"{username}@{domain}"
 
@@ -88,7 +95,7 @@ def build_set_config_sql(username: str) -> tuple[str, str]:
     API) is the only option. Returns (set_config_sql, application_name_sql).
 
     KNOWN LIMITATION, characterized not fixed by PR Bridge 0: this is a
-    naive doubled-quote escape (`.replace("'", "''")`, not a real SQL
+    naive doubled-quote escape (`.replace("'", "''")`), not a real SQL
     literal encoder. It does not handle backslashes specially and assumes
     standard_conforming_strings=on (PostgreSQL default since 9.1). Do not
     extend this pattern to new call sites; the parameterized cursor path
