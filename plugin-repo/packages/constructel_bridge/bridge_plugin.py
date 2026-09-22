@@ -9,7 +9,6 @@ Responsabilites:
   4. Intercepter les commits de couche pour tagger l'utilisateur
 """
 
-import base64
 import os
 from typing import Optional
 
@@ -42,6 +41,7 @@ from qgis.PyQt.QtWidgets import (
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
 from .bridge_expressions import register_expressions, unregister_expressions
+from .bridge_identity import decode_password, derive_email
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
@@ -74,11 +74,10 @@ def _load_credentials() -> dict:
     — ce qui empecherait le plugin de se charger DU TOUT, `wyre` compris.
     """
     import json
+    from .bridge_identity import parse_credentials_json
     with open(_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
         raw = json.load(f)
-    if "host" in raw:
-        return {"wyre": raw, "be": {}}
-    return raw
+    return parse_credentials_json(raw)
 
 _CREDS = _load_credentials()
 _WYRE_CREDS = _CREDS.get("wyre", {})
@@ -88,7 +87,7 @@ DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
 DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_WYRE_CREDS["port"])))
 DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _WYRE_CREDS["dbname"]
 DEFAULT_USER = _WYRE_CREDS["user"]
-_DEFAULT_PW = base64.b64decode(_WYRE_CREDS["password"]).decode()
+_DEFAULT_PW = decode_password(_WYRE_CREDS["password"])
 DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
 DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
 PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
@@ -102,10 +101,7 @@ BE_HOST = os.getenv("BE_DB_HOST", "") or _BE_CREDS.get("host", "")
 BE_PORT = int(os.getenv("BE_DB_PORT", str(_BE_CREDS.get("port", 5432))))
 BE_DBNAME = os.getenv("BE_DB_NAME", "") or _BE_CREDS.get("dbname", "")
 BE_USER = _BE_CREDS.get("user", "")
-_BE_PW = (
-    base64.b64decode(_BE_CREDS["password"]).decode()
-    if _BE_CREDS.get("password") else ""
-)
+_BE_PW = decode_password(_BE_CREDS["password"]) if _BE_CREDS.get("password") else ""
 BE_SSLMODE = _BE_CREDS.get("sslmode", "require")
 
 # `wyre` et `be` pointent sur le MEME host et la MEME base : dans un realm
@@ -216,11 +212,19 @@ class _BridgeCredentials(QgsCredentials):
 
         Retourne None si le realm ne nous concerne pas.
         """
-        if BE_ENABLED and BE_HOST in realm and (f"user='{BE_USER}'" in realm or username == BE_USER):
-            return BE_USER, _BE_PW
-        if DEFAULT_HOST in realm:
-            return self._username, self._password
-        return None
+        from .bridge_identity import resolve_credentials_for_realm
+
+        return resolve_credentials_for_realm(
+            realm,
+            username,
+            be_enabled=BE_ENABLED,
+            be_host=BE_HOST,
+            be_user=BE_USER,
+            be_password=_BE_PW,
+            default_host=DEFAULT_HOST,
+            default_user=self._username,
+            default_password=self._password,
+        )
 
     def request(self, realm, username, password, message=""):
         QgsMessageLog.logMessage(
@@ -937,21 +941,32 @@ class ConstructelBridgePlugin:
 
     def _get_qgis_username(self) -> str:
         """Recupere le nom d'utilisateur depuis les settings QGIS ou l'OS."""
+        from .bridge_identity import resolve_username
+
         settings = QgsSettings()
-
         explicit = settings.value("constructel_bridge/username", "")
-        if explicit:
-            return explicit
 
+        profile_name = ""
         try:
             profile = QgsApplication.instance().userProfileManager().userProfile()
-            if profile and profile.name() and profile.name() != "default":
-                return profile.name()
+            if profile:
+                profile_name = profile.name() or ""
         except Exception:
             pass
 
+        # NOTE (PR Bridge 0): both the QGIS profile-manager lookup and
+        # getpass.getuser() are now evaluated eagerly, even when `explicit`
+        # alone would already decide the result. Previously the profile
+        # lookup ran only when `explicit` was falsy, and getpass.getuser()
+        # only when both prior checks failed. Neither call has side effects
+        # (the profile lookup is a read-only getter, already wrapped in
+        # try/except in the original code too) and resolve_username()
+        # short-circuits on `explicit_setting` before consulting either
+        # value, so the return value is unaffected. Accepted as a
+        # deliberate, low-risk deviation to make the decision logic a pure,
+        # testable function — not a silent behavior change.
         import getpass
-        return getpass.getuser()
+        return resolve_username(explicit, profile_name, getpass.getuser())
 
     def _register_bridge_user(self) -> bool:
         """Enregistre l'utilisateur QGIS dans ref.users si absent."""
@@ -979,7 +994,7 @@ class ConstructelBridgePlugin:
                         SET last_login = NOW(), active = TRUE
                     RETURNING id
                     """,
-                    (username, f"{username}@constructel.be", username),
+                    (username, derive_email(username), username),
                 )
                 self._bridge_user_id = str(cur.fetchone()[0])
                 self._log(tr("user.created", username=username, user_id=self._bridge_user_id))
@@ -1574,13 +1589,11 @@ class ConstructelBridgePlugin:
                     cur.close()
             else:
                 # Fallback: escape value for provider.executeSql() (no parameterized API)
-                safe_user = self._bridge_user.replace("'", "''")
-                provider.executeSql(
-                    f"SELECT set_config('app.current_user', '{safe_user}', true)"
-                )
-                provider.executeSql(
-                    f"SET application_name = 'constructel_bridge:{safe_user}'"
-                )
+                from .bridge_identity import build_set_config_sql
+
+                set_config_sql, app_name_sql = build_set_config_sql(self._bridge_user)
+                provider.executeSql(set_config_sql)
+                provider.executeSql(app_name_sql)
             self._log(tr("hook.commit_tagged", user=self._bridge_user, layer=layer.name()))
         except (Exception, ) as exc:
             self._log(tr("hook.exec_error", error=exc), Qgis.Warning)  # noqa: broad-except — provider API may raise various types
