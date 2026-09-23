@@ -191,7 +191,7 @@ $
 
 ## Implications pour Task 2 (`bridge_mtls.py`)
 
-- `build_pki_paths_authcfg_config` doit produire une configuration QGIS Auth Manager de type **PKI-Paths** portant : chemin certificat client, chemin clé privée, et le CA (ou laisser le CA système/`ssl_ca_file` serveur si applicable) — c'est le triplet `PGSSLCERT`/`PGSSLKEY`/`PGSSLROOTCERT` prouvé ci-dessus, jamais un secret en clair dans le projet/QSettings/logs (déjà une contrainte du plan).
+- `build_pki_paths_authcfg_config` doit produire une configuration QGIS Auth Manager de type **PKI-Paths** portant : chemin certificat client et chemin clé privée uniquement (jamais de mot de passe — contrainte #58179). La vérification du serveur (`sslmode=verify-full`, le rôle que jouait `PGSSLROOTCERT` dans ce spike) passe par le canal TLS standard de la connexion, pas par cet authcfg. Jamais un secret en clair dans le projet/QSettings/logs (déjà une contrainte du plan).
 - Le mot de passe partagé (`ftth_editor` en prod) continue de passer par un canal séparé (`.pgpass` / config Postgres QGIS classique), **jamais** fusionné avec la logique certificat — cette séparation est ce que ce spike vient de prouver empiriquement, pas juste supposer.
 - `sslmode` doit être `verify-full`, jamais `require` seul : le cas (b) montre que c'est bien `clientcert=verify-full` côté `pg_hba.conf` serveur qui fait respecter l'exigence de certificat — le rôle du plugin est de fournir un `sslmode=verify-full` + les bons chemins PKI, pas de réimplémenter cette logique côté client.
 - La ligne `pg_hba.conf` de production reste du ressort de l'infra Farois (hors périmètre plugin), mais ce spike en fixe la forme exacte de référence : `hostssl all all <réseau> scram-sha-256 clientcert=verify-full`.

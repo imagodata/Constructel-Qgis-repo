@@ -293,9 +293,10 @@ côté Farois/ops) :**
    définit où un certificat client réel atterrit sur le poste d'un
    utilisateur après émission. `pki_manager.sh create-client <name>` n'a
    jamais été exécuté — pas d'exemple d'artefact à inspecter. Le code de
-   `bridge_mtls.py` prend un chemin de répertoire en paramètre plutôt que
-   de supposer une convention ; il faut décider ce chemin avec les ops
-   avant que le plugin puisse chercher un certificat automatiquement.
+   `bridge_mtls.py` ne suppose aucune convention : `validate_client_certificate`
+   prend des chemins de fichiers explicites (certificat, clé, CA) ; la
+   convention de répertoire pour une découverte automatique reste à décider
+   avec les ops.
 2. **PKI réelle jamais activée.** `docker/postgres/pg_hba_mtls.conf` et
    `ssl_ca_file` restent inactifs en prod — cette PR ne les active pas et
    ne le pourrait pas de toute façon (aucune CA Farois n'existe).
