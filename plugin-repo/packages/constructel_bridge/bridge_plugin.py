@@ -42,7 +42,13 @@ from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language
 from . import bridge_sketcher
 from .bridge_expressions import register_expressions, unregister_expressions
 from .bridge_identity import decode_password, derive_email
-from .bridge_mtls import MTLS_SETTINGS_KEYS, validate_client_certificate
+from .bridge_mtls import (
+    MTLS_SETTINGS_KEYS,
+    build_pgpass_line,
+    pgpass_file_path,
+    upsert_pgpass_entry,
+    validate_client_certificate,
+)
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
@@ -443,6 +449,64 @@ def _remove_pki_authcfg() -> None:
     if cfg_id and cfg_id in auth_mgr.configIds():
         auth_mgr.removeAuthenticationConfig(cfg_id)
     QgsSettings().remove(MTLS_SETTINGS_KEYS["authcfg_id"])
+
+
+def _mtls_message(key: str, **kwargs) -> str:
+    """Translate an mtls.* diagnostic key for the operator.
+
+    T3 wires the diagnostics; T4 provides the real translated texts. Until
+    then an unknown key must degrade to the key itself — never raise inside
+    the connect flow. Returns the key unchanged when `tr()` raises, returns
+    a non-string, or returns an empty string.
+    """
+    try:
+        text = tr(key, **kwargs)
+    except Exception:
+        return key
+    if not isinstance(text, str) or not text:
+        return key
+    return text
+
+
+def _ensure_pgpass_entry(pgpass_path, host: str, port: int, dbname: str,
+                         user: str, password: str) -> bool:
+    """Write our password line into the libpq pgpass file.
+
+    Creates the file (and missing parent directories, e.g. %APPDATA%
+    postgresql/ on first use) when absent, preserves every other line via
+    upsert_pgpass_entry(), and enforces 0o600 — libpq silently IGNORES a
+    group/other-readable pgpass on POSIX, so a lax file would degrade to
+    password prompts without a word.
+
+    Returns False when the file cannot be read, written, or chmod'ed
+    (callers abort loudly with the mtls.pgpass_unwritable diagnostic).
+    os.chmod(0o600) is also harmless on Windows (no write bit removed, so
+    no read-only flag is set); libpq ignores permissions there anyway.
+    """
+    new_line = build_pgpass_line(host, port, dbname, user, password)
+    parent = os.path.dirname(os.path.abspath(str(pgpass_path)))
+    try:
+        os.makedirs(parent, exist_ok=True)
+    except OSError:
+        return False
+    try:
+        with open(pgpass_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except FileNotFoundError:
+        existing = ""
+    except OSError:
+        return False
+    try:
+        text = upsert_pgpass_entry(existing, new_line)
+    except ValueError:
+        return False
+    try:
+        with open(pgpass_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(pgpass_path, 0o600)
+    except OSError:
+        return False
+    return True
 
 
 def _mtls_active() -> tuple[bool, str | None]:
@@ -913,6 +977,10 @@ class ConstructelBridgePlugin:
 
         Returns True on success, False on failure.
         When *silent* is True, no error dialog is shown (used by auto-connect).
+
+        When mTLS is active, connects with verify-full + client certificate
+        (paths from the mTLS settings). When mTLS is configured but
+        invalid, aborts loudly before attempting any connection.
         """
         self._password = password
         # Mettre a jour le handler de credentials avec le mot de passe courant
@@ -920,10 +988,36 @@ class ConstructelBridgePlugin:
             self._bridge_credentials.update_password(password)
         qgis_user = self._get_qgis_username()
 
+        mtls_active, mtls_reason = _mtls_active()
+        if not mtls_active and mtls_reason not in ("disabled", "not_configured"):
+            # Configured but invalid (expired cert, missing key, ...): fail
+            # closed BEFORE attempting any connection. A doomed legacy
+            # attempt would only produce a misleading "wrong password"
+            # trail once the server enforces client certs.
+            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.Critical)
+            if not silent:
+                QMessageBox.critical(
+                    self.iface.mainWindow(),
+                    "Constructel Bridge",
+                    _mtls_message(f"mtls.{mtls_reason}"),
+                )
+            return False
+        ssl_kwargs = {}
+        if mtls_active:
+            # verify-full against our CA + client cert auth; the password
+            # still travels (SCRAM + clientcert), the cert is the 2nd factor.
+            ssl_kwargs = {
+                "sslmode": "verify-full",
+                "sslcert": QgsSettings().value(MTLS_SETTINGS_KEYS["cert_path"], ""),
+                "sslkey": QgsSettings().value(MTLS_SETTINGS_KEYS["key_path"], ""),
+                "sslrootcert": QgsSettings().value(MTLS_SETTINGS_KEYS["ca_path"], ""),
+            }
+
         try:
             import psycopg2
 
             app_name = f"constructel_bridge:{qgis_user}"
+            ssl_mode = ssl_kwargs.pop("sslmode", DEFAULT_SSLMODE)
             self._conn = psycopg2.connect(
                 host=DEFAULT_HOST,
                 port=DEFAULT_PORT,
@@ -932,10 +1026,28 @@ class ConstructelBridgePlugin:
                 password=password,
                 application_name=app_name,
                 options="-c search_path=wyre,public",
-                sslmode=DEFAULT_SSLMODE,
+                sslmode=ssl_mode,
+                **ssl_kwargs,
             )
             self._conn.autocommit = True
         except (psycopg2.Error, OSError) as exc:
+            if mtls_active and "connection requires a valid client certificate" in str(exc):
+                # Exact server-side verdict (pg_hba clientcert rejection):
+                # our certificate was refused — not a password problem.
+                # Still configure the browser entry (mirrors the generic
+                # failure path below).
+                try:
+                    self._setup_qgis_pg_connection(password, use_authcfg=False)
+                except Exception:
+                    pass
+                self._log(_mtls_message("mtls.cert_required_by_server"), Qgis.Critical)
+                if not silent:
+                    QMessageBox.critical(
+                        self.iface.mainWindow(),
+                        "Constructel Bridge",
+                        _mtls_message("mtls.cert_required_by_server"),
+                    )
+                return False
             self._log(
                 f"Connection failed to {DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DBNAME}: {exc}",
                 Qgis.Critical,
@@ -1119,6 +1231,13 @@ class ConstructelBridgePlugin:
         utilisateur pourra l'ouvrir sans rencontrer un authcfg inconnu.
         Gere aussi les couches invalides (provider=None) en utilisant
         layer.providerType() et layer.source() directement.
+
+        Quand mTLS est actif, les couches sont reecrites vers l'authcfg
+        PKI-Paths partagee (username conserve, SANS mot de passe) au lieu
+        de credentials en clair. Si mTLS est actif mais le certificat
+        indisponible, ou configure mais invalide, les couches concernees
+        sont IGNOREES (comptees still_bad, warning) — jamais downgradees
+        vers du plaintext (R4).
         """
         password = getattr(self, "_password", None) or _DEFAULT_PW
         # Deux identites plugin sont legitimes ici : wyre (DEFAULT_USER,
@@ -1132,6 +1251,20 @@ class ConstructelBridgePlugin:
         known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
         if BE_ENABLED:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
+
+        # Reachable without _connect (project-load hook), so the
+        # configured-but-invalid state must refuse HERE too — never
+        # downgrade a layer to a plaintext password while mTLS is
+        # configured but broken (R4).
+        mtls_active, mtls_reason = _mtls_active()
+        mtls_invalid = not mtls_active and mtls_reason not in ("disabled", "not_configured")
+        pki_cfg_id = ""
+        if mtls_active:
+            pki_cfg_id = _store_pki_authcfg()
+            if not pki_cfg_id:
+                self._log(_mtls_message("mtls.activation_failed"), Qgis.Warning)
+        if mtls_invalid:
+            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.Critical)
 
         project = QgsProject.instance()
         fixed = 0
@@ -1164,14 +1297,31 @@ class ConstructelBridgePlugin:
 
             old_authcfg = uri.authConfigId()
             current_user = uri.username()
-            needs_fix = bool(old_authcfg) or current_user not in known_identities
-            if needs_fix:
-                target_user, target_password = known_identities.get(
-                    current_user, (DEFAULT_USER, password)
-                )
-                uri.setAuthConfigId("")
-                uri.setUsername(target_user)
-                uri.setPassword(target_password)
+            if mtls_active or mtls_invalid:
+                if not pki_cfg_id:
+                    # Active but cert unavailable (or configured but
+                    # invalid): SKIP, never downgrade to a plaintext
+                    # password. Counted as still_bad so the operator
+                    # sees the warning tally.
+                    still_bad += 1
+                    continue
+                target_user = current_user if current_user in known_identities else DEFAULT_USER
+                if old_authcfg != pki_cfg_id or uri.password() or current_user != target_user:
+                    uri.setAuthConfigId(pki_cfg_id)
+                    uri.setUsername(target_user)
+                    uri.setPassword("")
+                    needs_fix = True
+                else:
+                    needs_fix = False
+            else:
+                needs_fix = bool(old_authcfg) or current_user not in known_identities
+                if needs_fix:
+                    target_user, target_password = known_identities.get(
+                        current_user, (DEFAULT_USER, password)
+                    )
+                    uri.setAuthConfigId("")
+                    uri.setUsername(target_user)
+                    uri.setPassword(target_password)
 
             if needs_fix or not layer.isValid():
                 options = QgsDataProvider.ProviderOptions()
@@ -1331,6 +1481,62 @@ class ConstructelBridgePlugin:
                 ),
             )
 
+    def _setup_qgis_pg_connection_mtls(self, conn: str, password: str):
+        """PKI-Paths variant of _setup_qgis_pg_connection (mTLS active).
+
+        sslmode "5" (verify-full), shared PKI authcfg, username saved, NO
+        password value anywhere — the password travels via .pgpass for
+        libpq-based consumers. Any legacy Basic authcfg for this
+        connection is removed (idempotent). Aborts loudly (log + return,
+        settings untouched) when the pgpass write or the PKI config store
+        fails. The legacy `use_authcfg` flag is ignored: PKI replaces
+        Basic unconditionally while mTLS is active.
+        """
+        params = _PG_CONNECTIONS[conn]
+        settings = QgsSettings()
+        base = f"PostgreSQL/connections/{params['name']}"
+
+        if not _ensure_pgpass_entry(
+            pgpass_file_path(), params["host"], params["port"],
+            params["dbname"], params["user"], password,
+        ):
+            self._log(
+                _mtls_message("mtls.pgpass_unwritable", path=str(pgpass_file_path())),
+                Qgis.Critical,
+            )
+            return
+        cfg_id = _store_pki_authcfg()
+        if not cfg_id:
+            self._log(_mtls_message("mtls.activation_failed"), Qgis.Critical)
+            return
+
+        settings.setValue(f"{base}/host", params["host"])
+        settings.setValue(f"{base}/port", str(params["port"]))
+        settings.setValue(f"{base}/database", params["dbname"])
+        settings.setValue(f"{base}/username", params["user"])
+        settings.setValue(f"{base}/sslmode", "5")
+        settings.setValue(f"{base}/estimatedMetadata", True)
+        settings.setValue(f"{base}/allowGeometrylessTables", False)
+        settings.setValue(f"{base}/geometryColumnsOnly", True)
+        settings.setValue(f"{base}/dontResolveType", False)
+        settings.setValue(f"{base}/publicOnly", params.get("public_only", False))
+        settings.setValue(f"{base}/projectsInDatabase", True)
+        settings.setValue(f"{base}/metadataInDatabase", True)
+        settings.setValue(f"{base}/schemas", params["schemas"])
+        settings.setValue(f"{base}/schema", params["schema"])
+        settings.setValue(f"{base}/authcfg", cfg_id)
+        settings.setValue(f"{base}/saveUsername", True)
+        settings.setValue(f"{base}/savePassword", False)
+        settings.remove(f"{base}/password")
+
+        # Legacy Basic authcfg must not linger next to the PKI config.
+        _remove_stored_password(conn)
+
+        # Renommage v1.5.0 : retirer l'entree historique "constructel_bridge".
+        settings.remove(_LEGACY_PG_CONNECTION)
+
+        self._log(tr("pg.configured", name=params["name"]))
+
     def _setup_qgis_pg_connection(self, password: str, use_authcfg: bool = False,
                                   conn: str = "wyre"):
         """Enregistre une connexion PostgreSQL dans les settings QGIS.
@@ -1346,8 +1552,22 @@ class ConstructelBridgePlugin:
         When *use_authcfg* is True, stores credentials in Auth Manager
         and references the authcfg ID instead of storing the password
         in plaintext (equivalent to "Convertir en configuration").
+
+        When mTLS is active, delegates to _setup_qgis_pg_connection_mtls
+        (PKI-Paths + verify-full; `use_authcfg` ignored). When mTLS is
+        configured but invalid, aborts loudly without writing anything.
         """
         params = _PG_CONNECTIONS[conn]
+        mtls_active, mtls_reason = _mtls_active()
+        if mtls_active:
+            self._setup_qgis_pg_connection_mtls(conn, password)
+            return
+        if mtls_reason not in ("disabled", "not_configured"):
+            # Configured but invalid: fail closed, LOUDLY. Never fall back
+            # to legacy silently (R4) — an expired cert + silent Basic
+            # fallback would leave the operator unprotected post-enforcement.
+            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.Critical)
+            return
         settings = QgsSettings()
         base = f"PostgreSQL/connections/{params['name']}"
 

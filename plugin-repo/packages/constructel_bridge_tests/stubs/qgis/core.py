@@ -4,6 +4,11 @@ the real API beyond what's needed for a clean module import — extend as
 needed if other constructel_bridge modules require more symbols; a
 failing import's traceback names exactly what's missing.
 """
+import re
+
+
+_URI_TOKEN_RE = re.compile(r"(\w+)=('([^']*)'|\"([^\"]*)\"|(\S+))")
+_URI_BARE_RE = re.compile(r"^[\w.\-]+$")
 
 
 class Qgis:
@@ -154,12 +159,29 @@ class QgsCredentials:
 
 
 class QgsDataProvider:
-    pass
+    class ProviderOptions:
+        pass
 
 
 class QgsDataSourceUri:
-    def __init__(self):
+    """Minimal subset of the real QgsDataSourceUri: parses a postgres
+    provider URI string (whitespace-separated key=value / key='value' /
+    key="value" tokens) and rebuilds it. Only the connection-parameter
+    accessors used by bridge_plugin._fix_layer_credentials are
+    implemented; other tokens round-trip verbatim. Anything beyond that
+    (table/key/sql clauses, service= connections) is out of scope."""
+
+    def __init__(self, uri=""):
         self._params = {}
+        if uri:
+            for match in _URI_TOKEN_RE.finditer(uri):
+                key = match.group(1)
+                value = match.group(3)
+                if value is None:
+                    value = match.group(4)
+                if value is None:
+                    value = match.group(5)
+                self._params[key] = value
 
     def setConnection(self, *args, **kwargs):
         pass
@@ -167,14 +189,53 @@ class QgsDataSourceUri:
     def setDataSource(self, *args, **kwargs):
         pass
 
+    def host(self):
+        return self._params.get("host", "")
+
+    def username(self):
+        return self._params.get("user", "")
+
+    def password(self):
+        return self._params.get("password", "")
+
+    def authConfigId(self):
+        return self._params.get("authcfg", "")
+
+    def setUsername(self, username):
+        self._params["user"] = username
+
+    def setPassword(self, password):
+        if password:
+            self._params["password"] = password
+        else:
+            self._params.pop("password", None)
+
+    def setAuthConfigId(self, authcfg_id):
+        if authcfg_id:
+            self._params["authcfg"] = authcfg_id
+        else:
+            self._params.pop("authcfg", None)
+
     def uri(self, *args, **kwargs):
-        return ""
+        parts = []
+        for key, value in self._params.items():
+            if _URI_BARE_RE.match(value):
+                parts.append(f"{key}={value}")
+            else:
+                parts.append(f"{key}='{value}'")
+        return " ".join(parts)
 
 
 class QgsMessageLog:
+    # Test-double introspection: real code never reads this; wiring tests
+    # assert diagnostics through it. Reset by a fresh module import.
+    _messages = []
+
     @staticmethod
-    def logMessage(*_args, **_kwargs):
-        pass
+    def logMessage(message, tag="", level=None):
+        if level is None:
+            level = Qgis.Info
+        QgsMessageLog._messages.append((message, tag, level))
 
 
 class _StubSignal:
@@ -188,6 +249,10 @@ class _StubSignal:
 class QgsProject:
     _instance = None
 
+    def __init__(self):
+        self._layers = {}
+        self._next_layer_id = 1
+
     @classmethod
     def instance(cls):
         if cls._instance is None:
@@ -195,7 +260,13 @@ class QgsProject:
         return cls._instance
 
     def mapLayers(self):
-        return {}
+        return dict(self._layers)
+
+    def addMapLayer(self, layer, add_to_legend=True):
+        layer_id = f"stub-layer-{self._next_layer_id}"
+        self._next_layer_id += 1
+        self._layers[layer_id] = layer
+        return layer
 
     @property
     def layersAdded(self):
