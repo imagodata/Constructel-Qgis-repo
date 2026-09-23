@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from constructel_bridge.bridge_mtls import (
+    MTLS_SETTINGS_KEYS,
     build_pgpass_line,
     build_pki_paths_authcfg_config,
     needs_mtls_migration,
@@ -220,3 +221,17 @@ def test_pgpass_file_path_windows(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.name == "nt", reason="default follows live platform; nt covered by explicit-arg test")
 def test_pgpass_file_path_defaults_to_live_platform():
     assert pgpass_file_path() == Path.home() / ".pgpass"
+
+
+# --- MTLS_SETTINGS_KEYS -----------------------------------------------------
+
+
+def test_mtls_settings_keys():
+    # Exact key strings: a typo here would silently fork the settings.
+    assert MTLS_SETTINGS_KEYS == {
+        "enabled": "constructel_bridge/mtls_enabled",
+        "cert_path": "constructel_bridge/mtls_cert_path",
+        "key_path": "constructel_bridge/mtls_key_path",
+        "ca_path": "constructel_bridge/mtls_ca_path",
+        "authcfg_id": "constructel_bridge/mtls_authcfg_id",
+    }

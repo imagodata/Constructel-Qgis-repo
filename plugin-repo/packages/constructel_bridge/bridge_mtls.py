@@ -179,3 +179,15 @@ def pgpass_file_path(os_name: str = os.name) -> Path:
     if os_name == "nt":
         return Path(os.getenv("APPDATA", "")) / "postgresql" / "pgpass.conf"
     return Path.home() / ".pgpass"
+
+
+# QSettings keys for mTLS wiring (Bridge 1b). Single source of truth so the
+# plugin and tests can never disagree on a key name (a typo would silently
+# fork the settings).
+MTLS_SETTINGS_KEYS = {
+    "enabled": "constructel_bridge/mtls_enabled",
+    "cert_path": "constructel_bridge/mtls_cert_path",
+    "key_path": "constructel_bridge/mtls_key_path",
+    "ca_path": "constructel_bridge/mtls_ca_path",
+    "authcfg_id": "constructel_bridge/mtls_authcfg_id",
+}

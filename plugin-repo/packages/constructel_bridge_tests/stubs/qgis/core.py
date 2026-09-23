@@ -23,29 +23,64 @@ class _StubUserProfileManager:
 
 
 class _StubAuthManager:
+    # Shared across instances like the real Auth Manager (QgsApplication
+    # hands out the same manager); tests reset via a fresh module import.
+    # Default state is READY (production-normal); tests flip isDisabled for
+    # the not-ready path.
+    _configs = {}
+    _next_id = 1
+
     def isDisabled(self):
-        return True
+        return False
 
     def masterPasswordIsSet(self):
-        return False
+        return True
 
     def setMasterPassword(self, *_args, **_kwargs):
         return False
 
     def configIds(self):
-        return []
+        return list(_StubAuthManager._configs)
 
-    def loadAuthenticationConfig(self, *_args, **_kwargs):
+    def loadAuthenticationConfig(self, authcfg_id, config, full=False):
+        # NOTE: `full` accepted for signature fidelity; the stub stores
+        # plaintext and ignores decryption depth. The return is ignored by
+        # production and tests alike (unknown ids leave the probe untouched).
+        stored = _StubAuthManager._configs.get(authcfg_id)
+        if stored is None:
+            return None
+        config.setId(authcfg_id)
+        config.setName(stored["name"])
+        # Test-double private write: the real API restores the method on load.
+        config._method_name = stored["method"]
+        for key, value in stored["config"].items():
+            config.setConfig(key, value)
         return None
 
-    def updateAuthenticationConfig(self, *_args, **_kwargs):
-        return False
+    def _snapshot(self, config):
+        # Test-double introspection: real code never reads these privates.
+        return {
+            "method": config.method(),
+            "name": config.name(),
+            "config": dict(config._config),
+        }
 
-    def storeAuthenticationConfig(self, *_args, **_kwargs):
-        return False
+    def storeAuthenticationConfig(self, config):
+        if not config.id():
+            config.setId(f"stub-authcfg-{_StubAuthManager._next_id}")
+            _StubAuthManager._next_id += 1
+        _StubAuthManager._configs[config.id()] = self._snapshot(config)
+        return True
 
-    def removeAuthenticationConfig(self, *_args, **_kwargs):
-        return None
+    def updateAuthenticationConfig(self, config):
+        if config.id() not in _StubAuthManager._configs:
+            return False
+        _StubAuthManager._configs[config.id()] = self._snapshot(config)
+        return True
+
+    def removeAuthenticationConfig(self, authcfg_id):
+        _StubAuthManager._configs.pop(authcfg_id, None)
+        return True
 
 
 class QgsApplication:
@@ -70,18 +105,29 @@ class QgsAuthMethodConfig:
         self._method_name = method_name
         self._config = {}
         self._name = ""
+        self._id = ""
+
+    def setId(self, id):
+        self._id = id
+
+    def id(self):
+        return self._id
 
     def setName(self, name):
         self._name = name
+
+    def name(self):
+        return self._name
+
+    def method(self):
+        # Used by wiring tests to assert PKI-Paths vs Basic.
+        return self._method_name
 
     def setConfig(self, key, value):
         self._config[key] = value
 
     def config(self, key, default=""):
         return self._config.get(key, default)
-
-    def id(self):
-        return "stub-cfg-id"
 
 
 class QgsCredentials:
@@ -163,8 +209,12 @@ class QgsProjectBadLayerHandler:
 class QgsSettings:
     _store = {}
 
-    def value(self, key, default=None):
-        return QgsSettings._store.get(key, default)
+    def value(self, key, default=None, type=None):
+        value = QgsSettings._store.get(key, default)
+        if type is bool and isinstance(value, str):
+            # Real QGIS persists bools as strings; type=bool converts.
+            return value.lower() in ("true", "1")
+        return value
 
     def setValue(self, key, value):
         QgsSettings._store[key] = value

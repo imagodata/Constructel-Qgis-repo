@@ -42,10 +42,12 @@ from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language
 from . import bridge_sketcher
 from .bridge_expressions import register_expressions, unregister_expressions
 from .bridge_identity import decode_password, derive_email
+from .bridge_mtls import MTLS_SETTINGS_KEYS, validate_client_certificate
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
 AUTH_CFG_NAME_BE = "constructel_bridge_be_pw"
+MTLS_AUTH_CFG_NAME = "constructel_bridge_mtls"
 
 # Cle de settings ou est memorise l'ID de configuration Auth Manager, par
 # connexion. `wyre` CONSERVE la cle historique : la changer orphaniserait
@@ -389,6 +391,80 @@ def _remove_stored_password(conn: str = "wyre"):
         auth_mgr.removeAuthenticationConfig(cfg_id)
     QgsSettings().remove(settings_key)
     QgsSettings().remove("constructel_bridge/password")
+
+
+def _store_pki_authcfg() -> str:
+    """Create or update the ONE shared PKI-Paths auth config for mTLS.
+
+    Cert/key paths come from the mTLS settings (single source of truth).
+    The config carries certificate and key ONLY, never a password (QGIS
+    bug #58179). Mirrors _store_password_encrypted's structure exactly:
+    readiness guard, configIds() membership check, load + update vs create
+    (never both — a failed update must not orphan a duplicate).
+
+    Returns the config id, or "" when the manager is unavailable or the
+    write fails (callers abort loudly).
+    """
+    if not _ensure_auth_manager_ready():
+        QgsMessageLog.logMessage(
+            "Auth Manager not available, cannot store PKI-Paths config.",
+            TAG, level=Qgis.Warning,
+        )
+        return ""
+    auth_mgr = QgsApplication.authManager()
+    settings_key = MTLS_SETTINGS_KEYS["authcfg_id"]
+    cert_path = QgsSettings().value(MTLS_SETTINGS_KEYS["cert_path"], "")
+    key_path = QgsSettings().value(MTLS_SETTINGS_KEYS["key_path"], "")
+    cfg_id = QgsSettings().value(settings_key, "")
+    if cfg_id and cfg_id in auth_mgr.configIds():
+        # Update existing config
+        config = QgsAuthMethodConfig()
+        auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
+        config.setConfig("certpath", cert_path)
+        config.setConfig("keypath", key_path)
+        if auth_mgr.updateAuthenticationConfig(config):
+            return cfg_id
+        return ""
+    # Create new config
+    config = QgsAuthMethodConfig("PKI-Paths")
+    config.setName(MTLS_AUTH_CFG_NAME)
+    config.setConfig("certpath", cert_path)
+    config.setConfig("keypath", key_path)
+    if auth_mgr.storeAuthenticationConfig(config):
+        QgsSettings().setValue(settings_key, config.id())
+        return config.id()
+    return ""
+
+
+def _remove_pki_authcfg() -> None:
+    """Remove the shared PKI-Paths auth config and its settings id."""
+    auth_mgr = QgsApplication.authManager()
+    cfg_id = QgsSettings().value(MTLS_SETTINGS_KEYS["authcfg_id"], "")
+    if cfg_id and cfg_id in auth_mgr.configIds():
+        auth_mgr.removeAuthenticationConfig(cfg_id)
+    QgsSettings().remove(MTLS_SETTINGS_KEYS["authcfg_id"])
+
+
+def _mtls_active() -> tuple[bool, str | None]:
+    """Whether mTLS is engaged for GIS connections.
+
+    (True, None) iff the kill-switch is on AND all three cert paths are
+    configured AND the certificate validates. (False, reason) otherwise:
+    "disabled" (flag off), "not_configured" (flag on, paths missing), or a
+    CertValidationResult reason (configured but invalid — callers must abort
+    loudly, never fall back to legacy silently).
+    """
+    if not QgsSettings().value(MTLS_SETTINGS_KEYS["enabled"], True, type=bool):
+        return (False, "disabled")
+    cert = QgsSettings().value(MTLS_SETTINGS_KEYS["cert_path"], "")
+    key = QgsSettings().value(MTLS_SETTINGS_KEYS["key_path"], "")
+    ca = QgsSettings().value(MTLS_SETTINGS_KEYS["ca_path"], "")
+    if not cert or not key or not ca:
+        return (False, "not_configured")
+    result = validate_client_certificate(cert, key, ca)
+    if not result.ok:
+        return (False, result.reason)
+    return (True, None)
 
 
 def _get_plugin_version() -> str:
