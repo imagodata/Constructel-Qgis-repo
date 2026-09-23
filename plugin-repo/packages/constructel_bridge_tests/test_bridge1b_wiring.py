@@ -269,10 +269,10 @@ def test_mtls_active_valid(bp, _mtls_bundle):
 
 
 # --- T3 helpers: fake iface / psycopg2 / layers ------------------------------
-# NOTE (T4): several tests below assert the literal "mtls.*" key names in
-# logged diagnostics. T4 provides the real translated texts, which will NOT
-# contain those keys — T4 must update these assertions to the translated
-# strings (one assertion per key, i.e. full key coverage for free).
+# NOTE (T4 done): key-site assertions below compare against bp.tr(...) —
+# the wiring concern is that the RIGHT key is used at each site. The T4
+# rendering tests at the end of this file pin that every key has a real
+# non-empty text in FR/EN/PT (no raw-key echo in user-visible diagnostics).
 
 
 class _FakeMessageBar:
@@ -589,9 +589,8 @@ def test_setup_mtls_pgpass_failure_aborts_with_settings_untouched(
     plugin._setup_qgis_pg_connection("s3cret", use_authcfg=True)
 
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
-    assert any(
-        "mtls.pgpass_unwritable" in m for m in _log_messages(level=Qgis.Critical)
-    )
+    expected = bp.tr("mtls.pgpass_unwritable", path=str(tmp_path))
+    assert any(expected in m for m in _log_messages(level=Qgis.Critical))
 
 
 def test_setup_mtls_authcfg_store_failure_aborts(bp, tmp_path, monkeypatch, _mtls_bundle):
@@ -607,7 +606,8 @@ def test_setup_mtls_authcfg_store_failure_aborts(bp, tmp_path, monkeypatch, _mtl
 
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
     assert any(
-        "mtls.activation_failed" in m for m in _log_messages(level=Qgis.Critical)
+        bp.tr("mtls.activation_failed") in m
+        for m in _log_messages(level=Qgis.Critical)
     )
     # pgpass is written before the authcfg store is attempted (documented order)
     assert "test_user" in pgpass.read_text(encoding="utf-8")
@@ -623,7 +623,10 @@ def test_setup_configured_but_invalid_aborts_loudly(bp, tmp_path, _mtls_bundle):
 
     assert plugin._setup_qgis_pg_connection("s3cret", use_authcfg=True) is None
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
-    assert any("mtls.cert_missing" in m for m in _log_messages(level=Qgis.Critical))
+    assert any(
+        bp.tr("mtls.cert_missing") in m
+        for m in _log_messages(level=Qgis.Critical)
+    )
 
 
 def test_setup_inactive_matches_legacy_snapshot(bp):
@@ -753,7 +756,10 @@ def test_connect_configured_but_invalid_aborts_before_psycopg2(
     assert calls == []
     assert plugin._connected is False
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
-    assert any("mtls.cert_missing" in m for m in _log_messages(level=Qgis.Critical))
+    assert any(
+        bp.tr("mtls.cert_missing") in m
+        for m in _log_messages(level=Qgis.Critical)
+    )
 
 
 def test_connect_mtls_server_cert_rejection_maps_diagnostic(
@@ -771,7 +777,8 @@ def test_connect_mtls_server_cert_rejection_maps_diagnostic(
     assert plugin._connect("s3cret", silent=True) is False
 
     assert any(
-        "mtls.cert_required_by_server" in m for m in _log_messages(level=Qgis.Critical)
+        bp.tr("mtls.cert_required_by_server") in m
+        for m in _log_messages(level=Qgis.Critical)
     )
     # Browser entry is still configured on failure (mirrors legacy behavior)
     assert QgsSettings().value(f"{_pg_base(bp)}/sslmode") == "5"
@@ -883,7 +890,10 @@ def test_fix_mtls_cert_unavailable_skips_without_downgrade(bp, monkeypatch, _mtl
 
     assert layer.rewritten == []
     assert layer.source() == source
-    assert any("mtls.activation_failed" in m for m in _log_messages(level=Qgis.Warning))
+    assert any(
+        bp.tr("mtls.activation_failed") in m
+        for m in _log_messages(level=Qgis.Warning)
+    )
     assert any("toujours invalides" in m for m in _log_messages(level=Qgis.Warning))
 
 
@@ -903,7 +913,10 @@ def test_fix_configured_but_invalid_refuses_loudly(bp, tmp_path, _mtls_bundle):
 
     assert layer.rewritten == []
     assert layer.source() == source
-    assert any("mtls.cert_missing" in m for m in _log_messages(level=Qgis.Critical))
+    assert any(
+        bp.tr("mtls.cert_missing") in m
+        for m in _log_messages(level=Qgis.Critical)
+    )
 
 
 def test_fix_mtls_already_clean_layer_untouched(bp, _mtls_bundle):
@@ -961,3 +974,63 @@ def test_fix_inactive_keeps_legacy_plaintext_rewrite(bp):
     assert uri.authConfigId() == ""
     assert uri.password() == "s3cret"
     assert uri.username() == "test_user"
+
+
+# --- T4: translated mtls.* diagnostics ----------------------------------------
+
+_MTLS_KEYS = [
+    "mtls.cert_missing",
+    "mtls.key_missing",
+    "mtls.chain_invalid",
+    "mtls.expired",
+    "mtls.not_yet_valid",
+    "mtls.missing_client_auth_eku",
+    "mtls.not_configured",
+    "mtls.cert_required_by_server",
+    "mtls.pgpass_unwritable",
+    "mtls.activation_failed",
+]
+
+
+def test_mtls_keys_present_in_all_languages(qgis_stub_path):
+    from constructel_bridge.i18n.translations import TRANSLATIONS
+
+    for lang in ("fr", "en", "pt"):
+        for key in _MTLS_KEYS:
+            assert TRANSLATIONS[lang].get(key), f"{lang}:{key} missing or empty"
+
+
+@pytest.mark.parametrize("lang", ["fr", "en", "pt"])
+def test_mtls_keys_render_nonempty_in_all_languages(bp, lang):
+    from constructel_bridge import i18n
+
+    i18n.set_language(lang)
+    try:
+        for key in _MTLS_KEYS:
+            rendered = bp._mtls_message(key, path="/probe/pgpass")
+            assert rendered not in ("", key), f"{lang}:{key} not translated"
+            # No unsubstituted placeholder survives (tr() swallows KeyError)
+            assert "{" not in rendered and "}" not in rendered, (
+                f"{lang}:{key} has a raw placeholder"
+            )
+        assert "/probe/pgpass" in bp._mtls_message(
+            "mtls.pgpass_unwritable", path="/probe/pgpass"
+        )
+    finally:
+        i18n.set_language("en")
+
+
+def test_stub_uri_round_trip_preserves_params(bp):
+    from qgis.core import QgsDataSourceUri
+
+    source = (
+        "dbname='my db' host=db.example.com port=5432 "
+        "user='u1' password='p@ss w:d'"
+    )
+    once = QgsDataSourceUri(source).uri()
+    twice = QgsDataSourceUri(once).uri()
+    assert once == twice  # rebuild output is a stable fixpoint
+    reparsed = QgsDataSourceUri(once)
+    assert reparsed.host() == "db.example.com"
+    assert reparsed.username() == "u1"
+    assert reparsed.password() == "p@ss w:d"

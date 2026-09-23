@@ -261,6 +261,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Wizard --
         "wizard.title": "Constructel Bridge - Initial setup",
+
+        # -- mTLS diagnostics --
+        "mtls.cert_missing": "Client certificate file not found.",
+        "mtls.key_missing": "Client certificate private key file not found.",
+        "mtls.chain_invalid": "Client certificate is not signed by the configured CA.",
+        "mtls.expired": "Client certificate has expired.",
+        "mtls.not_yet_valid": "Client certificate is not yet valid.",
+        "mtls.missing_client_auth_eku": "Client certificate lacks the clientAuth extended key usage.",
+        "mtls.not_configured": "mTLS is not configured (no client certificate).",
+        "mtls.cert_required_by_server": "The server requires a valid client certificate, but ours was refused or is not configured.",
+        "mtls.pgpass_unwritable": "Cannot write the password file ({path}) - mTLS setup aborted.",
+        "mtls.activation_failed": "mTLS activation failed (PKI configuration not stored).",
     },
 
     # =====================================================================
@@ -519,6 +531,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Wizard --
         "wizard.title": "Constructel Bridge - Configuration initiale",
+
+        # -- Diagnostics mTLS --
+        "mtls.cert_missing": "Fichier du certificat client introuvable.",
+        "mtls.key_missing": "Fichier de la cle privee du certificat client introuvable.",
+        "mtls.chain_invalid": "Le certificat client n'est pas signe par l'autorite configuree.",
+        "mtls.expired": "Le certificat client a expire.",
+        "mtls.not_yet_valid": "Le certificat client n'est pas encore valide.",
+        "mtls.missing_client_auth_eku": "Le certificat client ne contient pas l'usage etendu clientAuth.",
+        "mtls.not_configured": "mTLS non configure (aucun certificat client).",
+        "mtls.cert_required_by_server": "Le serveur exige un certificat client valide, mais le notre a ete refuse ou n'est pas configure.",
+        "mtls.pgpass_unwritable": "Impossible d'ecrire le fichier de mots de passe ({path}) - configuration mTLS abandonnee.",
+        "mtls.activation_failed": "Echec de l'activation mTLS (configuration PKI non enregistree).",
     },
 
     # =====================================================================
@@ -777,5 +801,17 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # -- Wizard --
         "wizard.title": "Constructel Bridge - Configuracao inicial",
+
+        # -- Diagnosticos mTLS --
+        "mtls.cert_missing": "Ficheiro do certificado de cliente nao encontrado.",
+        "mtls.key_missing": "Ficheiro da chave privada do certificado de cliente nao encontrado.",
+        "mtls.chain_invalid": "O certificado de cliente nao foi assinado pela autoridade configurada.",
+        "mtls.expired": "O certificado de cliente expirou.",
+        "mtls.not_yet_valid": "O certificado de cliente ainda nao e valido.",
+        "mtls.missing_client_auth_eku": "O certificado de cliente nao contem o uso estendido clientAuth.",
+        "mtls.not_configured": "mTLS nao configurado (nenhum certificado de cliente).",
+        "mtls.cert_required_by_server": "O servidor exige um certificado de cliente valido, mas o nosso foi recusado ou nao esta configurado.",
+        "mtls.pgpass_unwritable": "Nao foi possivel escrever o ficheiro de palavras-passe ({path}) - configuracao mTLS abortada.",
+        "mtls.activation_failed": "Falha na ativacao mTLS (configuracao PKI nao guardada).",
     },
 }
