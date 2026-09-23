@@ -278,3 +278,30 @@ Le chantier mTLS (Bridge 1-3) est mis en pause. La priorité immédiate est de c
 - `credentials.json` (mots de passe partagés `wyre`/`be`, encodés en base64 — pas chiffrés) est embarqué dans `constructel_bridge.zip`, servi en clair sur le réseau interne et committé dans l'historique git du zip. Documenté comme connu et non résolu depuis le 2026-07-30 (`.superpowers/sdd/2026-08-17-wyre-ldap-auth/progress.md:90-92`).
 - `_on_before_commit()` résout la couche via `iface.activeLayer()` plutôt que via l'émetteur du signal — fragile si plusieurs couches sont éditées en parallèle (`bridge_plugin.py:1556`).
 - Incohérence de métadonnées : `metadata.txt:38` référence `github.com/wyre-ftth/wyre`, le remote git réel est `github.com/imagodata/Constructel-Qgis-repo.git`.
+
+### Suite du 2026-09-23 — Bridge 1 : dépendances Farois/PKI restantes
+
+Bridge 1 (cette PR) livre : validation de certificat client, config PKI-Paths,
+construction de ligne `.pgpass`, détection de migration — tout testé, sans
+dépendance à une PKI Farois réelle (preuve empirique contre une CA/Postgres
+jetables, voir `docs/superpowers/specs/2026-09-23-bridge1-spike-results.md`).
+
+**Ce qui reste bloquant avant un déploiement réel (hors scope de cette PR,
+côté Farois/ops) :**
+
+1. **Convention de livraison du certificat.** Aucun endroit du dépôt ne
+   définit où un certificat client réel atterrit sur le poste d'un
+   utilisateur après émission. `pki_manager.sh create-client <name>` n'a
+   jamais été exécuté — pas d'exemple d'artefact à inspecter. Le code de
+   `bridge_mtls.py` prend un chemin de répertoire en paramètre plutôt que
+   de supposer une convention ; il faut décider ce chemin avec les ops
+   avant que le plugin puisse chercher un certificat automatiquement.
+2. **PKI réelle jamais activée.** `docker/postgres/pg_hba_mtls.conf` et
+   `ssl_ca_file` restent inactifs en prod — cette PR ne les active pas et
+   ne le pourrait pas de toute façon (aucune CA Farois n'existe).
+3. **`pg_hba.conf` de prod est baked dans l'image Docker**, pas monté en
+   volume live — toute activation future nécessitera un rebuild/redeploy
+   de `ftth-postgres`, en plus de la CA elle-même.
+4. **Pas d'identité Azure AD/LDAP encore branchée** (Bridge 2) — le
+   « connecté comme … » de la spec reste, pour cette PR, dérivé du CN du
+   certificat uniquement, jamais validé contre un annuaire.
