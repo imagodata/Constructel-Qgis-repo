@@ -102,7 +102,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.btn_add": "Add layers",
         "init.already_loaded": "Already loaded in project",
         "init.confirm_title": "Constructel Bridge - Initialize project",
-        "init.confirm": "Initialize the current project with all WYRE FTTH layers?\n\n"
+        "init.confirm": "Initialize the current project with all Farois FTTH layers?\n\n"
                         "This will add layers, styles, relations and set CRS to EPSG:31370.",
         "init.success": "Project initialized: {count} layers, styles and relations configured.",
         "init.error": "Initialization error:\n{error}",
@@ -111,8 +111,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.user.title": "User profile",
         "onboard.user.subtitle": "Your identity will be associated with every layer modification.",
         "onboard.user.welcome_new": "<b>Welcome!</b> You are a new user.<br>"
-                                    "Your account has been created automatically in the WYRE database.",
-        "onboard.user.welcome_back": "<b>Welcome back!</b> Your account already exists in the WYRE database.",
+                                    "Your account has been created automatically in the Farois database.",
+        "onboard.user.welcome_back": "<b>Welcome back!</b> Your account already exists in the Farois database.",
         "onboard.user.field_id": "Username:",
         "onboard.user.field_firstname": "First name:",
         "onboard.user.field_firstname_hint": "First name (optional)",
@@ -172,7 +172,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.rs.repo_url": "URL:",
         "onboard.rs.auto_configure": "Configure this repository automatically",
         "onboard.rs.note": "<small>This repository contains layer styles, SVG symbols "
-                           "and layout templates specific to the WYRE FTTH project.<br>"
+                           "and layout templates specific to the Farois FTTH project.<br>"
                            "Internal server URL: <code>http://192.168.160.31:9081/</code></small>",
 
         # -- Onboarding: Page 4 - FilterMate Sharing --
@@ -358,7 +358,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.btn_add": "Ajouter les couches",
         "init.already_loaded": "Deja charge dans le projet",
         "init.confirm_title": "Constructel Bridge - Initialiser projet",
-        "init.confirm": "Initialiser le projet courant avec toutes les couches WYRE FTTH ?\n\n"
+        "init.confirm": "Initialiser le projet courant avec toutes les couches Farois FTTH ?\n\n"
                         "Cela ajoutera les couches, styles, relations et definira le CRS a EPSG:31370.",
         "init.success": "Projet initialise : {count} couches, styles et relations configures.",
         "init.error": "Erreur d'initialisation :\n{error}",
@@ -367,8 +367,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.user.title": "Profil utilisateur",
         "onboard.user.subtitle": "Votre identite sera associee a chaque modification de couche.",
         "onboard.user.welcome_new": "<b>Bienvenue !</b> Vous etes un nouvel utilisateur.<br>"
-                                    "Votre compte a ete cree automatiquement dans la base WYRE.",
-        "onboard.user.welcome_back": "<b>Bon retour !</b> Votre compte existe deja dans la base WYRE.",
+                                    "Votre compte a ete cree automatiquement dans la base Farois.",
+        "onboard.user.welcome_back": "<b>Bon retour !</b> Votre compte existe deja dans la base Farois.",
         "onboard.user.field_id": "Identifiant:",
         "onboard.user.field_firstname": "Prenom:",
         "onboard.user.field_firstname_hint": "Prenom (facultatif)",
@@ -430,7 +430,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.rs.repo_url": "URL:",
         "onboard.rs.auto_configure": "Configurer ce depot automatiquement",
         "onboard.rs.note": "<small>Ce depot contient les styles de couches, les symboles SVG "
-                           "et les modeles de mise en page specifiques au projet WYRE FTTH.<br>"
+                           "et les modeles de mise en page specifiques au projet Farois FTTH.<br>"
                            "URL du serveur interne: <code>http://192.168.160.31:9081/</code></small>",
 
         # -- Onboarding: Page 4 - Partage FilterMate --
@@ -616,7 +616,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.btn_add": "Adicionar camadas",
         "init.already_loaded": "Ja carregado no projeto",
         "init.confirm_title": "Constructel Bridge - Inicializar projeto",
-        "init.confirm": "Inicializar o projeto atual com todas as camadas WYRE FTTH?\n\n"
+        "init.confirm": "Inicializar o projeto atual com todas as camadas Farois FTTH?\n\n"
                         "Isto ira adicionar camadas, estilos, relacoes e definir o CRS para EPSG:31370.",
         "init.success": "Projeto inicializado: {count} camadas, estilos e relacoes configurados.",
         "init.error": "Erro de inicializacao:\n{error}",
@@ -625,8 +625,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.user.title": "Perfil do utilizador",
         "onboard.user.subtitle": "A sua identidade sera associada a cada modificacao de camada.",
         "onboard.user.welcome_new": "<b>Bem-vindo!</b> E um novo utilizador.<br>"
-                                    "A sua conta foi criada automaticamente na base de dados WYRE.",
-        "onboard.user.welcome_back": "<b>Bem-vindo de volta!</b> A sua conta ja existe na base de dados WYRE.",
+                                    "A sua conta foi criada automaticamente na base de dados Farois.",
+        "onboard.user.welcome_back": "<b>Bem-vindo de volta!</b> A sua conta ja existe na base de dados Farois.",
         "onboard.user.field_id": "Identificador:",
         "onboard.user.field_firstname": "Nome:",
         "onboard.user.field_firstname_hint": "Nome (opcional)",
@@ -688,7 +688,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.rs.repo_url": "URL:",
         "onboard.rs.auto_configure": "Configurar este repositorio automaticamente",
         "onboard.rs.note": "<small>Este repositorio contem os estilos de camadas, simbolos SVG "
-                           "e modelos de layout especificos do projeto WYRE FTTH.<br>"
+                           "e modelos de layout especificos do projeto Farois FTTH.<br>"
                            "URL do servidor interno: <code>http://192.168.160.31:9081/</code></small>",
 
         # -- Onboarding: Page 4 - Partilha FilterMate --

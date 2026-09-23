@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Constructel Bridge - Plugin QGIS pour connexion WYRE FTTH et tracking utilisateur.
+Constructel Bridge - Plugin QGIS pour connexion Farois FTTH et tracking utilisateur.
 """
 
 

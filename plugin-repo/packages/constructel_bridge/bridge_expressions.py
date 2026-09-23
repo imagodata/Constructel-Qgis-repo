@@ -2,7 +2,7 @@
 """Fonctions d'expression QGIS enregistrees par Constructel Bridge.
 
 Expose des fonctions reutilisables dans les expressions QGIS (FilterExpression
-ValueRelation, virtual fields, etc.) pour des besoins metier Wyre qui ne sont
+ValueRelation, virtual fields, etc.) pour des besoins metier Farois qui ne sont
 pas couverts par le moteur natif.
 
 Fonctions exposees:
@@ -14,7 +14,7 @@ Fonctions exposees:
 from qgis.core import QgsExpression, QgsProject, qgsfunction
 
 
-WYRE_GROUP = "Wyre"
+WYRE_GROUP = "Farois"
 
 
 @qgsfunction(args="auto", group=WYRE_GROUP, usesGeometry=False, referencedColumns=[])
@@ -61,14 +61,14 @@ _REGISTERED = [wyre_selected_common]
 
 
 def register_expressions():
-    """Enregistre les fonctions d'expression Wyre aupres de QGIS."""
+    """Enregistre les fonctions d'expression Farois aupres de QGIS."""
     for fn in _REGISTERED:
         if not QgsExpression.isFunctionName(fn.name()):
             QgsExpression.registerFunction(fn)
 
 
 def unregister_expressions():
-    """Desenregistre les fonctions Wyre (appele lors du unload du plugin)."""
+    """Desenregistre les fonctions Farois (appele lors du unload du plugin)."""
     for fn in _REGISTERED:
         if QgsExpression.isFunctionName(fn.name()):
             QgsExpression.unregisterFunction(fn.name())
