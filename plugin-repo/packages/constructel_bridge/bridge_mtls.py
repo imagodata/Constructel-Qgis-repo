@@ -9,6 +9,7 @@ depend on it or on QGIS being importable.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,3 +108,74 @@ def needs_mtls_migration(connection_settings: dict, authcfg_method: str | None) 
     if not authcfg:
         return True
     return authcfg_method != "PKI-Paths"
+
+
+def _pgpass_key(line: str) -> tuple[str, ...] | None:
+    """Split a pgpass line into fields on unescaped colons.
+
+    Returns the (host, port, dbname, user) key with backslash escapes
+    resolved, or None for blank lines, comments, and malformed lines
+    (fewer than 5 fields) — callers preserve those verbatim.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    fields: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in line:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == ":":
+            fields.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    fields.append("".join(current))
+    if len(fields) < 5:
+        return None
+    return tuple(fields[:4])
+
+
+def upsert_pgpass_entry(existing_text: str, new_line: str) -> str:
+    """Insert or replace our pgpass line, preserving everything else.
+
+    Lines match by host:port:dbname:user key (first 4 colon-separated
+    fields, backslash escapes honored). Comment, blank, and malformed
+    lines are preserved verbatim. The result ends with exactly one
+    newline. Pure text operation — file IO and permissions stay in
+    bridge_plugin.py.
+    """
+    if "\n" in new_line or "\r" in new_line:
+        raise ValueError("refusing to upsert pgpass line containing a line break")
+    new_key = _pgpass_key(new_line)
+    if new_key is None:
+        raise ValueError(f"refusing to upsert malformed pgpass line: {new_line!r}")
+    out_lines: list[str] = []
+    replaced = False
+    for line in existing_text.splitlines():
+        if not replaced and _pgpass_key(line) == new_key:
+            out_lines.append(new_line)
+            replaced = True
+        else:
+            out_lines.append(line)
+    if not replaced:
+        out_lines.append(new_line)
+    return "\n".join(out_lines) + "\n"
+
+
+def pgpass_file_path(os_name: str = os.name) -> Path:
+    """Location of the libpq password file: ~/.pgpass on POSIX,
+    %APPDATA%\\postgresql\\pgpass.conf on Windows.
+
+    `os_name` defaults to the live platform; tests pass it explicitly
+    because patching `os.name` itself breaks `pathlib.Path` construction
+    (`Path.__new__` dispatches on live `os.name`, so a patched "nt" makes
+    every `Path(...)` raise on POSIX).
+    """
+    if os_name == "nt":
+        return Path(os.getenv("APPDATA", "")) / "postgresql" / "pgpass.conf"
+    return Path.home() / ".pgpass"

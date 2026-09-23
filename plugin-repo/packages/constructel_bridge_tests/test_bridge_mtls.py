@@ -5,7 +5,9 @@ throwaway certs generated into a pytest tmp_path fixture — not mocks —
 since openssl's own exit codes and stderr text are exactly what the
 function under test parses.
 """
+import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,8 @@ from constructel_bridge.bridge_mtls import (
     build_pgpass_line,
     build_pki_paths_authcfg_config,
     needs_mtls_migration,
+    pgpass_file_path,
+    upsert_pgpass_entry,
     validate_client_certificate,
 )
 
@@ -154,3 +158,65 @@ def test_needs_migration_already_migrated_pki_connection():
 def test_needs_migration_no_authcfg_at_all():
     settings = {"host": "db.example.internal", "sslmode": "3", "authcfg": "", "savePassword": False}
     assert needs_mtls_migration(settings, "Basic") is True
+
+
+# --- upsert_pgpass_entry ------------------------------------------------
+
+
+def test_upsert_pgpass_entry_replaces_same_key():
+    existing = "other:5432:db:u:pw\ndb.example.internal:5432:farois_ftth:ftth_editor:oldpw\nother2:5432:db:u:pw\n"
+    new = "db.example.internal:5432:farois_ftth:ftth_editor:newpw"
+    assert upsert_pgpass_entry(existing, new) == (
+        "other:5432:db:u:pw\ndb.example.internal:5432:farois_ftth:ftth_editor:newpw\nother2:5432:db:u:pw\n"
+    )
+
+
+def test_upsert_pgpass_entry_appends_new_key():
+    existing = "other:5432:db:u:pw\n"
+    new = "db.example.internal:5432:farois_ftth:ftth_editor:s3cr3t"
+    assert upsert_pgpass_entry(existing, new) == existing + new + "\n"
+
+
+def test_upsert_pgpass_entry_empty_file():
+    assert upsert_pgpass_entry("", "h:5432:d:u:p") == "h:5432:d:u:p\n"
+
+
+def test_upsert_pgpass_entry_preserves_comments_blanks_and_malformed():
+    existing = "# a comment\n\ngarbage-without-colons\nh:5432:d:u:old\n"
+    assert upsert_pgpass_entry(existing, "h:5432:d:u:new") == (
+        "# a comment\n\ngarbage-without-colons\nh:5432:d:u:new\n"
+    )
+
+
+def test_upsert_pgpass_entry_escapes_honored_in_key():
+    existing = "my\\:host:5432:d:u:old\n"
+    assert upsert_pgpass_entry(existing, "my\\:host:5432:d:u:new") == "my\\:host:5432:d:u:new\n"
+
+
+def test_upsert_pgpass_entry_rejects_malformed_new_line():
+    with pytest.raises(ValueError):
+        upsert_pgpass_entry("h:5432:d:u:pw\n", "not-a-pgpass-line")
+
+
+def test_upsert_pgpass_entry_rejects_embedded_line_break():
+    # A newline inside new_line would inject a rogue second entry.
+    with pytest.raises(ValueError):
+        upsert_pgpass_entry("h:5432:d:u:pw\n", "h:5432:d:u:pw\ninjected:1:2:3:4")
+
+
+# --- pgpass_file_path ---------------------------------------------------
+
+
+def test_pgpass_file_path_posix(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert pgpass_file_path("posix") == tmp_path / ".pgpass"
+
+
+def test_pgpass_file_path_windows(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert pgpass_file_path("nt") == tmp_path / "postgresql" / "pgpass.conf"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="default follows live platform; nt covered by explicit-arg test")
+def test_pgpass_file_path_defaults_to_live_platform():
+    assert pgpass_file_path() == Path.home() / ".pgpass"
