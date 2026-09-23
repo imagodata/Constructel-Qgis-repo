@@ -12,6 +12,7 @@ import pytest
 from constructel_bridge.bridge_mtls import (
     build_pgpass_line,
     build_pki_paths_authcfg_config,
+    needs_mtls_migration,
     validate_client_certificate,
 )
 
@@ -138,3 +139,18 @@ def test_build_pgpass_line_escapes_colon_and_backslash():
     # ":" and "\\" in any field must be escaped with a preceding "\\".
     line = build_pgpass_line("db.example.internal", 5432, "farois_ftth", "ftth_editor", "p:a\\ss")
     assert line == "db.example.internal:5432:farois_ftth:ftth_editor:p\\:a\\\\ss"
+
+
+def test_needs_migration_old_basic_authcfg_password_connection():
+    settings = {"host": "db.example.internal", "sslmode": "3", "authcfg": "basic_cfg_id", "savePassword": False}
+    assert needs_mtls_migration(settings, "Basic") is True
+
+
+def test_needs_migration_already_migrated_pki_connection():
+    settings = {"host": "db.example.internal", "sslmode": "5", "authcfg": "pki_cfg_id", "savePassword": False}
+    assert needs_mtls_migration(settings, "PKI-Paths") is False
+
+
+def test_needs_migration_no_authcfg_at_all():
+    settings = {"host": "db.example.internal", "sslmode": "3", "authcfg": "", "savePassword": False}
+    assert needs_mtls_migration(settings, "Basic") is True

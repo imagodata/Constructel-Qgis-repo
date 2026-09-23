@@ -94,3 +94,16 @@ def build_pgpass_line(host: str, port: int, dbname: str, username: str, password
         return str(field).replace("\\", "\\\\").replace(":", "\\:")
 
     return f"{esc(host)}:{esc(port)}:{esc(dbname)}:{esc(username)}:{esc(password)}"
+
+
+def needs_mtls_migration(connection_settings: dict, authcfg_method: str | None) -> bool:
+    """True if an existing QGIS PG connection needs migrating to the
+    cert+.pgpass pattern: no authcfg at all, or an authcfg whose method
+    is "Basic" (the pre-Bridge-1 pattern). False if it already has a
+    "PKI-Paths" authcfg (already migrated). An unknown or None method
+    also returns True (fail-safe: re-migration is idempotent).
+    """
+    authcfg = connection_settings.get("authcfg", "")
+    if not authcfg:
+        return True
+    return authcfg_method != "PKI-Paths"
