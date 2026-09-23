@@ -1,0 +1,9 @@
+# Defense-in-depth: the Bridge 1-0 spike (see run_spike.sh / spike_compose.yml)
+# generates a throwaway CA + server/client certs under pki/ at runtime. That
+# material must never be committed, even accidentally -- it's destroyed by
+# Step 6 of the spike's own cleanup, but this backstops `git add .` mistakes.
+pki/
+*.crt
+*.key
+*.csr
+*.srl

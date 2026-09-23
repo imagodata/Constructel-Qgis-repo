@@ -1,0 +1,64 @@
+# Isolated, throwaway Postgres for the Bridge 1-0 spike. Port 5433 (not
+# 5432 -- never touches the real ftth-postgres). No named volume: destroying
+# the container destroys all data, by design.
+#
+# ENVIRONMENT-DRIVEN DEVIATIONS FROM THE TASK BRIEF (documented here so the
+# next reader is not surprised; none of them touch the security-relevant
+# controls under test -- the pg_hba.conf rule and the SSL mode -- see
+# docs/superpowers/specs/2026-09-23-bridge1-spike-results.md for the proof):
+#
+# 1. `image:` is `ftth-postgres:17.3.5-farois`, not `postgres:17`. This host
+#    cannot `docker pull` images that are not already cached locally
+#    (registry manifest fetch succeeds, but Docker Hub CDN blob downloads
+#    hang indefinitely over this host's outbound :443 -- a pre-existing,
+#    unrelated network restriction). `ftth-postgres:17.3.5-farois` is
+#    already cached and is real PostgreSQL 17.5 built on the postgres:17
+#    lineage (+ PostGIS). Our `-c ssl_*` command-line flags below still take
+#    precedence over any of the image's own defaults.
+#
+# 2. `WYRE_AUTO_INSTALL` / `FAROIS_AUTO_INSTALL` are set to "false". Unlike
+#    vanilla postgres:17, this production-derived image ships
+#    /docker-entrypoint-initdb.d/10_install_farois.sh, which by default
+#    installs the ~300-migration FAROIS production schema (and expects a
+#    `postgres` superuser role, which POSTGRES_USER=spike_test_user does not
+#    provide) -- unrelated noise for this spike. This flag (read by the
+#    image's own script) skips that installer; 00_extensions.sql and the
+#    image's own (unused, see server cert note) SSL bootstrap still run,
+#    harmlessly.
+#
+# 3. `-c hba_file=...` is deliberately NOT in the initial `command:` below.
+#    The official docker-entrypoint.sh bootstraps the database (creates
+#    POSTGRES_USER/POSTGRES_DB) via a *local* (Unix-socket) psql connection,
+#    which our restrictive spike_pg_hba.conf (hostssl/hostnossl only, no
+#    `local` line at all) would reject, breaking bootstrap on every start
+#    (there is no persistent volume, so this runs fresh every time). Instead
+#    run_spike.sh: (a) lets the container boot with the image's default,
+#    permissive pg_hba.conf so bootstrap succeeds; (b) once ready, runs
+#    `ALTER SYSTEM SET hba_file = '/etc/postgresql-certs/pg_hba.conf';`
+#    over the (still-default-hba) local socket; (c) restarts the container,
+#    since `hba_file` is postmaster-context (requires a restart, `SELECT
+#    pg_reload_conf()` alone is not sufficient) -- after which our exact,
+#    unmodified spike_pg_hba.conf governs every connection, proven via
+#    `SHOW hba_file;` in the results doc.
+services:
+  spike-postgres:
+    image: ftth-postgres:17.3.5-farois
+    environment:
+      POSTGRES_PASSWORD: spike_test_password
+      POSTGRES_USER: spike_test_user
+      POSTGRES_DB: spike_db
+      WYRE_AUTO_INSTALL: "false"
+      FAROIS_AUTO_INSTALL: "false"
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ./pki/server.crt:/etc/postgresql-certs/server.crt:ro
+      - ./pki/server.key:/etc/postgresql-certs/server.key:ro
+      - ./pki/ca.crt:/etc/postgresql-certs/ca.crt:ro
+      - ./spike_pg_hba.conf:/etc/postgresql-certs/pg_hba.conf:ro
+    command: >
+      postgres
+      -c ssl=on
+      -c ssl_cert_file=/etc/postgresql-certs/server.crt
+      -c ssl_key_file=/etc/postgresql-certs/server.key
+      -c ssl_ca_file=/etc/postgresql-certs/ca.crt
