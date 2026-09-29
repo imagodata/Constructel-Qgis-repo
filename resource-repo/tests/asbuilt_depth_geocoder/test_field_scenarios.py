@@ -1,0 +1,123 @@
+"""Scenarios reels du run du 29/09 (points en retrait de la rue, rues coupees)."""
+import sys
+from pathlib import Path
+
+sys.path.insert(
+    0, str(Path(__file__).parents[2] / "collections/asbuilt_depth_geocoder/processing")
+)
+from geocode_asbuilt_depth import (
+    LOCATE_RADIUS_M, LOW_CONFIDENCE_DISTANCE_M, ROAD_JOIN_TOLERANCE_M, OsmWay,
+    diagnose_unlocated, homonym_components_ambiguous, index_ways_by_name,
+    locate_on_ways, locate_rows_on_osm, normalize_street_name,
+)
+
+
+def _way(way_id, y, name=None, highway="residential", x0=-200.0, x1=200.0):
+    """Voie horizontale a l'ordonnee y (le point teste est en (0, 0))."""
+    return OsmWay(way_id=way_id, names=(normalize_street_name(name),) if name else (),
+                  highway=highway, coords=[(x0, y), (x1, y)])
+
+
+def _locate(ways, names=(), coords_only=False):
+    items = [] if coords_only else [("p", tuple(names), 0.0, 0.0)]
+    extra = [("p", 0.0, 0.0)] if coords_only else []
+    results, reasons, _ = locate_rows_on_osm(items, extra, ways)
+    return results.get("p"), reasons.get("p")
+
+
+def test_constantes_du_passage():
+    assert LOCATE_RADIUS_M >= 80 and LOW_CONFIDENCE_DISTANCE_M == 50
+    assert 10 <= ROAD_JOIN_TOLERANCE_M <= 15
+
+
+def test_a_am_ranzelborn_34_m_et_homonyme_a_90_m():
+    ways = [_way(1, 34, "Am Ranzelborn"), _way(2, -90, "Am Ranzelborn"),
+            _way(3, 24, None, highway="track")]
+    (match, method), _ = _locate(ways, ["Am Ranzelborn"])
+    assert method == "name" and round(match["distance"]) == 34 and match["way_id"] == 1
+
+
+def test_b_am_sonnenhang_33_et_50_m():
+    ways = [_way(1, 33, "Am Sonnenhang"), _way(2, -50, "Am Sonnenhang"),
+            _way(3, 16, None, highway="track")]
+    (match, method), _ = _locate(ways, ["Am Sonnenhang"])
+    assert method == "name" and round(match["distance"]) == 33
+
+
+def test_c_auf_dem_kamp_secondary_a_47_m():
+    ways = [_way(1, 47, "Auf dem Kamp", highway="secondary"), _way(2, 29, None, highway="path")]
+    (match, method), _ = _locate(ways, ["Auf dem Kamp"])
+    assert method == "name" and round(match["distance"]) == 47
+
+
+def test_d_dellenstrasse_39_m_prefere_aux_autres_noms_a_29_m():
+    ways = [_way(1, 39, "Dellenstraße", highway="tertiary"),
+            _way(2, 29, "Zur Stöck"), _way(3, -29, "Vennstraße")]
+    (match, method), _ = _locate(ways, ["Dellenstrasse"])
+    assert method == "name" and match["way_id"] == 1
+
+
+def test_e_zur_domaene_41_m():
+    (match, method), _ = _locate([_way(1, 41, "Zur Domäne")], ["Zur Domäne"])
+    assert method == "name" and round(match["distance"]) == 41
+    assert match["distance"] <= LOW_CONFIDENCE_DISTANCE_M      # confiance normale
+
+
+def test_f_klosterstrasse_aucune_voie_a_120_m():
+    ways = [_way(1, 125, "Hauptstraße"), _way(2, -130, "Kirchweg")]
+    result, reason = _locate(ways, ["Klosterstrasse"])
+    assert result is None and reason == "no_match"
+    cause, distance = diagnose_unlocated(0.0, 0.0, ["Klosterstrasse"], ways)
+    assert cause == "aucune voie à proximité" and round(distance) == 125
+
+
+def test_voie_du_meme_nom_entre_50_et_150_m_rattachee_faible_confiance():
+    (match, method), _ = _locate([_way(1, 120, "Rue X"), _way(2, 10, "Rue Y")], ["Rue X"])
+    assert method == "name" and match["distance"] > LOW_CONFIDENCE_DISTANCE_M
+
+
+def test_au_dela_de_150_m_non_localise_cause_trop_loin():
+    ways = [_way(1, 160, "Rue X")]
+    result, _ = _locate(ways, ["Rue X"])
+    assert result is None
+    cause, distance = diagnose_unlocated(0.0, 0.0, ["Rue X"], ways)
+    assert cause == "voie du même nom trop loin" and round(distance) == 160
+
+
+def test_nom_introuvable_mais_voies_proches():
+    ways = [_way(1, 10, "Rue Y"), _way(2, -12, "Rue Z")]
+    cause, distance = diagnose_unlocated(0.0, 0.0, ["Rue X"], ways)
+    assert cause == "nom introuvable" and round(distance) == 10
+
+
+def test_chemins_sans_nom_jamais_cible_ni_voisin_ambigu():
+    ways = [_way(1, 20, None, highway="track"), _way(2, 18, "Rue Y"),
+            _way(3, 3, None, highway="path")]
+    (match, method), _ = _locate(ways, coords_only=True)
+    assert method == "coords" and match["way_names"] == (normalize_street_name("Rue Y"),)
+
+
+# --- homonymes / raccord -----------------------------------------------------
+
+def test_regle_d_ambiguite_des_homonymes():
+    assert homonym_components_ambiguous(15.0, 15.0)
+    assert homonym_components_ambiguous(30.0, 40.0)            # ecart 10 < 15
+    assert homonym_components_ambiguous(40.0, 58.0)            # rapport 1,45 < 1,5
+    assert not homonym_components_ambiguous(34.0, 90.0)
+    assert not homonym_components_ambiguous(33.0, 50.0)        # ecart 17, rapport 1,52
+
+
+def test_homonymes_a_distance_comparable_ambigus():
+    ways = [_way(1, 20, "Rue X"), _way(2, -25, "Rue X")]
+    assert _locate(ways, ["Rue X"]) == (None, "ambiguous")
+
+
+def test_rue_coupee_au_carrefour_recollee_a_12_m():
+    # Deux troncons de la meme rue separes de 10 m (carrefour) : meme composante.
+    west = OsmWay(1, ("rue x",), "residential", [(-200.0, 20.0), (-5.0, 20.0)])
+    east = OsmWay(2, ("rue x",), "residential", [(5.0, 20.0), (200.0, 20.0)])
+    index = index_ways_by_name([west, east])
+    cache = {}
+    m1, _ = locate_on_ways(-50.0, 0.0, "Rue X", index, cache=cache)
+    m2, _ = locate_on_ways(50.0, 0.0, "Rue X", index, cache=cache)
+    assert m1["road_key"] == m2["road_key"] == "overpass:rue x:1"

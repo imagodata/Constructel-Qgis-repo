@@ -5,8 +5,11 @@ Algorithme QGIS Processing autonome (partageable via *QGIS Resource Sharing*).
 Il lit les rapports périodiques « To update Go Fiber As-Built » exportés aux
 formats Outlook ``.msg`` **ou** tableur ``.xlsx`` / ``.csv`` (même tableau
 WorkOrder / Intervention / Address / PostalCode / Place / profondeur), géocode
-les adresses via Nominatim (OpenStreetMap) et produit une couche de points
-EPSG:31370 colorée par profondeur de pose (feu tricolore + gris « manquante »).
+les adresses via Nominatim (OpenStreetMap) et pousse les points EPSG:31370,
+catégorisés par profondeur de pose (feu tricolore + gris « manquante »), dans
+la base PostgreSQL de la connexion QGIS ``be`` (points + segments d'axe de
+rue) ; aucune couche temporaire n'est produite, les deux couches de la base
+sont ajoutées au projet si elles n'y sont pas déjà.
 
 Le fichier est volontairement mono-fichier (contrainte Resource Sharing : un
 script Processing = un ``.py`` déposé tel quel). Toute la logique de parsing /
@@ -18,23 +21,33 @@ Dépendances runtime (auto-installées via pip au besoin) : ``extract-msg``
 (lecture ``.msg``) et ``openpyxl`` (lecture ``.xlsx``). Les ``.csv`` n'utilisent
 que la stdlib. Politique Nominatim : 1 req/s max + User-Agent identifiant ;
 renseigner ``CONTACT_EMAIL`` est fortement recommandé.
+
+Segments d'axe de rue : localisation via ``public.fn_asbuilt_locate_on_road``
+(table ``ref.osm_roads``) puis, en repli pour les points non couverts,
+extraction OSM via l'API Overpass (stdlib ``urllib``, lecture seule) et
+localisation en Python pur (:func:`locate_on_ways`). Chaque point est rangé
+d'un côté de la route ; les segments sont appariés par côté et dessinés
+décalés selon le type de voie (:data:`HIGHWAY_OFFSET_M`).
 """
 
 import csv
 import glob
+import hashlib
 import io
 import json
 import math
 import os
+import random
 import re
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Optional
 
@@ -44,6 +57,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 try:
     from qgis.core import (
+        Qgis,
         QgsApplication,
         QgsCategorizedSymbolRenderer,
         QgsCoordinateReferenceSystem,
@@ -52,23 +66,16 @@ try:
         QgsExpression,
         QgsFeature,
         QgsFeatureRequest,
-        QgsFeatureSink,
-        QgsField,
-        QgsFields,
         QgsGeometry,
         QgsPointXY,
-        QgsProcessing,
         QgsProcessingAlgorithm,
         QgsProcessingContext,
         QgsProcessingException,
         QgsProcessingLayerPostProcessorInterface,
         QgsProcessingParameterBoolean,
-        QgsProcessingParameterFeatureSink,
-        QgsProcessingParameterFeatureSource,
+        QgsProcessingParameterDefinition,
         QgsProcessingParameterFile,
-        QgsProcessingParameterFileDestination,
         QgsProcessingParameterString,
-        QgsProcessingUtils,
         QgsProject,
         QgsProviderRegistry,
         QgsRendererCategory,
@@ -76,7 +83,7 @@ try:
         QgsVectorLayer,
         QgsWkbTypes,
     )
-    from qgis.PyQt.QtCore import QCoreApplication, QDateTime, QVariant
+    from qgis.PyQt.QtCore import QCoreApplication, QDateTime
     from qgis.PyQt.QtGui import QColor
 
     HAS_QGIS = True
@@ -115,13 +122,9 @@ DEPTH_COLORS = {
     "vert": "#2A9D3D",
 }
 
-# Ordre d'affichage de la table de synthèse : du plus conforme au moins conforme,
-# la catégorie « manquante » (non mesurée) en dernier.
-DEPTH_SUMMARY_ORDER = ("vert", "orange", "rouge", "manquante")
-
 # Libellés lisibles de chaque catégorie (bornés par les seuils fixes ci-dessus).
-# Source UNIQUE des libellés : le rendu de repli (_build_depth_renderer) et la
-# table de synthèse xlsx. Le .qml livré (style/depth_category.qml) porte
+# Source UNIQUE des libellés du rendu de repli (_build_depth_renderer /
+# _apply_segments_style). Le .qml livré (style/depth_category.qml) porte
 # directement ces mêmes libellés en dur — plus de réalignement à l'exécution.
 DEPTH_CATEGORY_LABELS = {
     "manquante": "Manquante — non mesurée",
@@ -129,19 +132,6 @@ DEPTH_CATEGORY_LABELS = {
     "orange": f"Orange — limite ({THRESHOLD_ORANGE_CM:g}–{THRESHOLD_VERT_CM:g} cm)",
     "vert": f"Vert — conforme (≥ {THRESHOLD_VERT_CM:g} cm)",
 }
-
-# Repli défensif : clé de ventilation dans la table de synthèse par ville
-# quand un point géocodé n'a pas de ville renseignée (place vide/absente en
-# source, ou copiée sans valeur depuis une couche existante en mode additif).
-UNKNOWN_PLACE_LABEL = "(ville inconnue)"
-
-# Titres des feuilles de la table de synthèse xlsx. Le titre de la feuille pivot
-# sert AUSSI d'identifiant de couche (``layername``) au chargement OGR côté QGIS :
-# writer et loader DOIVENT référencer la même constante, sinon la couche table
-# ne se charge pas.
-SUMMARY_PIVOT_SHEET_TITLE = "Synthèse par ville"
-SUMMARY_PCT_SHEET_TITLE = "Pourcentages"
-SUMMARY_UNGEOCODED_SHEET_TITLE = "Adresses non géocodées"
 
 # Un identifiant d'intervention est un code numérique (observé : 8 chiffres).
 _INTERVENTION_RE = re.compile(r"^\d{5,}$")
@@ -172,13 +162,24 @@ class NominatimHit:
     ``postcode``/``city`` proviennent du détail d'adresse structuré Nominatim
     (``addressdetails=1``, cf. :func:`extract_nominatim_place`) — chaîne vide
     si Nominatim ne les a pas fournis pour ce résultat (repli sur les valeurs
-    du rapport source côté appelant, cf. ``_build_feature``).
+    du rapport source côté appelant, cf. ``_build_attribute_values``).
     """
 
     lat: float
     lon: float
     postcode: str = ""
     city: str = ""
+    # Métadonnées OSM du résultat (même réponse, addressdetails=1 — aucun appel
+    # supplémentaire), gardées EN MÉMOIRE pour le run afin de sécuriser le
+    # rattachement du point à son axe de rue (cf. assess_attachment).
+    road: str = ""          # nom de rue canonique OSM (address.road, sinon pedestrian…)
+    osm_type: str = ""      # node / way / relation
+    osm_id: int = 0
+    osm_class: str = ""     # class : highway, building, place, boundary…
+    osm_kind: str = ""      # type : residential, house, village…
+    addresstype: str = ""
+    importance: float = 0.0
+    precision: str = ""     # house / street / locality (cf. nominatim_precision)
 
 
 class NominatimBlockedError(RuntimeError):
@@ -337,16 +338,6 @@ def normalize_postal_code(raw: Optional[str]) -> str:
     return (raw or "").strip()
 
 
-def format_postal_codes(codes) -> str:
-    """Formate un ensemble de codes postaux normalisés pour affichage.
-
-    Dédoublonne, trie, joint par ``", "`` (ex. une ville associée à plusieurs
-    codes postaux dans le rapport source). Accepte tout itérable (``set``,
-    ``list``...). Fonction PURE — aucune dépendance PyQGIS, couverte par pytest.
-    """
-    return ", ".join(sorted(set(codes)))
-
-
 def build_geocode_query(
     address: str, postal_code: str, place: str, country: str = "Belgium"
 ) -> str:
@@ -409,22 +400,45 @@ def clean_duplicated_address(address: str) -> str:
     return last
 
 
-def dedupe_records(records: list[InterventionRecord]) -> list[InterventionRecord]:
-    """Dédoublonnage intra-batch par identifiant d'intervention (clé unique).
+def _record_completeness(rec: InterventionRecord) -> int:
+    """Nombre de champs exploitables d'une ligne (cf. dedupe_records)."""
+    return (
+        sum(bool((value or "").strip()) for value in (
+            rec.work_order, rec.address, rec.postal_code, rec.place,
+        ))
+        + (parse_depth_cm(rec.depth_raw) is not None)
+    )
 
-    Couvre le cas réel « même intervention répétée 3× dans un message » ainsi
-    que les doublons stricts. Les lignes sans identifiant d'intervention
-    exploitable sont écartées (parasites).
+
+def dedupe_records(records: list[InterventionRecord]) -> list[InterventionRecord]:
+    """Dédoublonnage du lot par identifiant d'intervention : UNE ligne par clé.
+
+    Couvre « même intervention répétée 3× dans un message » comme « même
+    intervention présente dans plusieurs fichiers du dossier ». Règle
+    DÉTERMINISTE pour choisir la ligne retenue :
+
+    1. la plus COMPLÈTE (:func:`_record_completeness` : WorkOrder, adresse,
+       code postal, localité non vides + profondeur interprétable) ;
+    2. à complétude égale, la DERNIÈRE occurrence dans l'ordre de lecture —
+       fichiers triés par chemin (:func:`_collect_input_files`) puis ordre
+       des lignes : un rapport plus récent nommé par date l'emporte.
+
+    L'ordre de sortie suit la PREMIÈRE apparition de chaque clé (stable).
+    Les lignes sans identifiant d'intervention exploitable sont écartées
+    (parasites). Fonction PURE.
     """
-    seen: set[str] = set()
-    out: list[InterventionRecord] = []
+    best: dict[str, InterventionRecord] = {}
+    order: list[str] = []
     for rec in records:
         key = (rec.intervention or "").strip()
-        if not key or key in seen:
+        if not key:
             continue
-        seen.add(key)
-        out.append(rec)
-    return out
+        if key not in best:
+            order.append(key)
+            best[key] = rec
+        elif _record_completeness(rec) >= _record_completeness(best[key]):
+            best[key] = rec
+    return [best[key] for key in order]
 
 
 # --- Parsing HTML ----------------------------------------------------------
@@ -835,9 +849,12 @@ def nominatim_geocode(
     user_agent: str,
     timeout: float = 15.0,
     base_url: str = NOMINATIM_URL,
+    structured: Optional[dict] = None,
 ) -> Optional[NominatimHit]:
     """Géocode une requête -> :class:`NominatimHit` ou ``None`` si introuvable.
 
+    ``structured`` (cf. :func:`build_structured_params`) : requête STRUCTURÉE
+    (street/postalcode/city/country) à la place du texte libre ``q``.
     Lève :class:`NominatimBlockedError` sur 403/429 (rate-limit / blocage) afin
     d'arrêter proprement plutôt que de marquer silencieusement tout en échec.
     ``addressdetails=1`` ajoute le détail d'adresse structuré (postcode,
@@ -845,8 +862,12 @@ def nominatim_geocode(
     """
     params = {
         "format": "json", "limit": "1", "countrycodes": "be",
-        "addressdetails": "1", "q": query,
+        "addressdetails": "1",
     }
+    if structured:
+        params.update(structured)
+    else:
+        params["q"] = query
     url = base_url + "?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(url, headers={"User-Agent": user_agent})
     try:
@@ -872,8 +893,126 @@ def nominatim_geocode(
         lat, lon = float(first["lat"]), float(first["lon"])
     except (KeyError, TypeError, ValueError):
         return None
-    postcode, city = extract_nominatim_place(first)
-    return NominatimHit(lat=lat, lon=lon, postcode=postcode, city=city)
+    return parse_nominatim_result(first, lat, lon)
+
+
+# Clés d'adresse Nominatim portant le nom de la VOIE, par ordre de préférence.
+_NOMINATIM_ROAD_KEYS = (
+    "road", "pedestrian", "residential", "footway", "path", "cycleway",
+    "living_street", "service", "square", "place",
+)
+
+
+def nominatim_precision(result) -> str:
+    """Précision d'un résultat Nominatim : 'house', 'street' ou 'locality'.
+
+    * house : bâtiment / adresse (class building, type house, addresstype
+      house|building, ou numéro de maison dans le détail d'adresse) ;
+    * street : la voie elle-même (class highway, addresstype road) — le
+      point est quelque part sur la rue, pas devant la maison ;
+    * locality : commune, village, code postal, quartier… — point au centre
+      d'une zone : AUCUN rattachement fiable à un axe. Fonction PURE.
+    """
+    if not isinstance(result, dict):
+        return "locality"
+    osm_class = str(result.get("class") or "")
+    kind = str(result.get("type") or "")
+    addresstype = str(result.get("addresstype") or "")
+    address = result.get("address") if isinstance(result.get("address"), dict) else {}
+    if (
+        osm_class == "building" or kind == "house" or addresstype in ("house", "building")
+        or address.get("house_number")
+    ):
+        return "house"
+    if osm_class == "highway" or addresstype in ("road", "street"):
+        return "street"
+    return "locality"
+
+
+def parse_nominatim_result(result, lat, lon) -> "NominatimHit":
+    """Construit le :class:`NominatimHit` complet (lieu + métadonnées OSM). PURE."""
+    postcode, city = extract_nominatim_place(result)
+    address = result.get("address") if isinstance(result.get("address"), dict) else {}
+    road = ""
+    for key in _NOMINATIM_ROAD_KEYS:
+        if address.get(key):
+            road = str(address[key]).strip()
+            break
+    try:
+        osm_id = int(result.get("osm_id") or 0)
+    except (TypeError, ValueError):
+        osm_id = 0
+    try:
+        importance = float(result.get("importance") or 0.0)
+    except (TypeError, ValueError):
+        importance = 0.0
+    return NominatimHit(
+        lat=lat, lon=lon, postcode=postcode, city=city, road=road,
+        osm_type=str(result.get("osm_type") or ""), osm_id=osm_id,
+        osm_class=str(result.get("class") or ""), osm_kind=str(result.get("type") or ""),
+        addresstype=str(result.get("addresstype") or ""), importance=importance,
+        precision=nominatim_precision(result),
+    )
+
+
+def reference_street_names(address_street, hit=None) -> tuple:
+    """Noms de rue de RÉFÉRENCE d'un point, par ordre de confiance (dédoublonnés).
+
+    Nom canonique OSM renvoyé par Nominatim (``hit.road``) d'abord, puis le
+    nom extrait de l'adresse brute (variante) ; deux noms identiques après
+    normalisation n'en font qu'un. Fonction PURE.
+    """
+    names = []
+    for name in ((hit.road if hit is not None else ""), address_street):
+        if name and normalize_street_name(name) not in {normalize_street_name(n) for n in names}:
+            names.append(name)
+    return tuple(names)
+
+
+def postal_mismatch(record_postal, hit) -> bool:
+    """Code postal de l'adresse différent de celui renvoyé par Nominatim au point ?"""
+    mine = extract_postal4(record_postal)
+    theirs = extract_postal4(hit.postcode if hit is not None else "")
+    return bool(mine and theirs and mine != theirs)
+
+
+def build_structured_params(address, postal_code, place, country="Belgium"):
+    """Paramètres de requête Nominatim STRUCTURÉE, ou ``None`` si trop incomplets.
+
+    ``street`` = adresse (numéro + rue, notation belge acceptée), ``postalcode``
+    = 4 chiffres (du champ ou de l'adresse), ``city`` = localité,
+    ``country``. Il faut une adresse ET au moins le code postal ou la localité,
+    sinon la requête libre (``q``) est plus sûre. Fonction PURE.
+    """
+    street = fix_szett_artifact((address or "").strip()).strip()
+    postal4 = extract_postal4(postal_code) or extract_postal4(street) or ""
+    if postal4 and street.endswith(postal4):
+        street = street[: -len(postal4)].rstrip(" ,")
+    city = (place or "").strip()
+    if not street or not (postal4 or city):
+        return None
+    params = {"street": street, "country": country}
+    if postal4:
+        params["postalcode"] = postal4
+    if city:
+        params["city"] = city
+    return params
+
+
+def describe_structured(params) -> str:
+    """Trace lisible d'une requête structurée (journal, colonne geocode_query)."""
+    return "; ".join(
+        f"{key}={params[key]}" for key in ("street", "postalcode", "city", "country")
+        if params.get(key)
+    )
+
+
+def in_belgium_wgs84(lat, lon) -> bool:
+    """Résultat Nominatim plausible pour la Belgique (lat 49,4–51,6 ; lon 2,5–6,5) ?"""
+    try:
+        return 49.4 <= float(lat) <= 51.6 and 2.5 <= float(lon) <= 6.5
+    except (TypeError, ValueError):
+        return False
 
 
 def geocode_with_dedup_fallback(
@@ -885,9 +1024,14 @@ def geocode_with_dedup_fallback(
     sleep_fn=None,
     country: str = "Belgium",
 ) -> tuple[Optional[NominatimHit], str, bool]:
-    """Géocode une adresse avec un repli « adresse dédupliquée » sur échec.
+    """Géocode une adresse : requête STRUCTURÉE, puis texte libre, puis repli dédupliqué.
 
-    Renvoie ``(hit, query, used_fallback)`` :
+    0. **Requête structurée** (:func:`build_structured_params` : street,
+       postalcode, city, country) quand les champs le permettent ; ``geocode_fn``
+       est alors appelée avec ``structured=params``. Échec -> étapes
+       suivantes (``sleep_fn`` avant l'appel suivant : 1 req/s).
+
+    Puis, comportement historique — renvoie ``(hit, query, used_fallback)`` :
 
     * **1er essai** — requête construite sur l'adresse BRUTE
       (:func:`build_geocode_query`). Chemin nominal INCHANGÉ : si ce premier
@@ -908,6 +1052,14 @@ def geocode_with_dedup_fallback(
     renvoyer un :class:`NominatimHit` (ou ``None``) — cette fonction ne fait
     que le faire transiter, elle n'inspecte pas sa forme.
     """
+    structured = build_structured_params(address, postal_code, place, country=country)
+    if structured is not None:
+        label = describe_structured(structured)
+        hit = geocode_fn(label, user_agent, structured=structured)
+        if hit is not None:
+            return hit, label, False
+        if sleep_fn is not None:
+            sleep_fn()  # cadence Nominatim : 1 req/s avant l'appel suivant
     query = build_geocode_query(address, postal_code, place, country=country)
     hit = geocode_fn(query, user_agent)
     if hit is not None:
@@ -955,8 +1107,9 @@ def _style_save_error_message(result) -> str:
 # Nom du fichier de style livré dans la collection Resource Sharing. Le script
 # (``processing/geocode_asbuilt_depth.py``) et le style (``style/<ce nom>``) sont
 # frères sous ``collections/<id>/`` : ce ``.qml`` est la SOURCE DE VÉRITÉ UNIQUE du
-# rendu profondeur, appliquée par le script lui-même (post-traitement live ET
-# style embarqué dans le GeoPackage), et applicable à la main comme filet.
+# rendu profondeur, appliquée par le script lui-même (couche de la base 'be'
+# ajoutée au projet ET style par défaut synchronisé en base), et applicable à
+# la main comme filet.
 _DEPTH_STYLE_QML_NAME = "depth_category.qml"
 
 
@@ -1062,101 +1215,12 @@ def _named_style_loaded_ok(result) -> bool:
     return False
 
 
-def build_summary_matrix(
-    by_group: dict,
-    order: tuple = DEPTH_SUMMARY_ORDER,
-    last_row_label: Optional[str] = None,
-) -> dict:
-    """Agrège un comptage ``{groupe: Counter(catégorie)}`` en matrice pivot.
-
-    Groupe générique (ville, fichier source...) : une ligne par clé de
-    ``by_group``, une colonne par catégorie de profondeur, plus les totaux de
-    ligne et de colonne. C'est l'UNIQUE source de vérité du total général
-    (somme de tous les Counters) : aucun compteur global parallèle.
-
-    Retour (``dict``) — tout est déjà ordonné, prêt à écrire :
-
-    * ``categories`` : colonnes catégorie ordonnées = ``order`` puis toute
-      catégorie inattendue rencontrée, triée ;
-    * ``rows`` : ``list`` de ``{"group", "counts", "total"}`` — trié
-      alphabétiquement, sauf ``last_row_label`` (si fourni et présent) toujours
-      relégué en DERNIÈRE ligne (ex. une clé de repli « inconnue ») ;
-    * ``totals`` : ``{catégorie: total}`` colonne par colonne (ligne « Total ») ;
-    * ``grand_total`` : total général (somme de toutes les cellules).
-
-    Fonction PURE (aucune dépendance PyQGIS / openpyxl) : couverte par pytest.
-    Accepte indifféremment des valeurs ``Counter`` ou ``dict`` (via ``.get``).
-    """
-    # Colonnes : ordre canonique + extras inattendus (triés) pour ne rien perdre.
-    seen_categories: set = set()
-    for counter in by_group.values():
-        seen_categories.update(counter)
-    extras = sorted(str(c) for c in seen_categories - set(order))
-    categories = list(order) + extras
-
-    # Lignes : tri alpha, last_row_label (s'il est présent) relégué en dernier.
-    real_groups = sorted(g for g in by_group if g != last_row_label)
-    ordered_groups = real_groups + (
-        [last_row_label] if last_row_label is not None and last_row_label in by_group else []
-    )
-
-    totals = {cat: 0 for cat in categories}
-    rows = []
-    for group in ordered_groups:
-        counter = by_group[group]
-        counts = {cat: int(counter.get(cat, 0)) for cat in categories}
-        row_total = sum(counts.values())
-        for cat in categories:
-            totals[cat] += counts[cat]
-        rows.append({"group": group, "counts": counts, "total": row_total})
-
-    grand_total = sum(totals.values())
-    return {
-        "categories": categories,
-        "rows": rows,
-        "totals": totals,
-        "grand_total": grand_total,
-    }
-
-
-# Intitulés IDENTIQUES a ceux attendus en ENTREE (WorkOrder/Intervention/
-# Address/PostalCode/Place/profondeur, cf. shortHelpString) : ce CSV est
-# concu pour etre corrige a la main PUIS RE-IMPORTE tel quel comme dossier
-# d'entree. La colonne Depth est INDISPENSABLE a ce round-trip : sans elle,
-# _extract_records_from_tables rejette toute ligne d'en-tete faute de
-# colonne profondeur (les 4 colonnes WorkOrder/Intervention/Address/Depth
-# sont TOUTES requises) -- bug reel observe en prod (0 interventions lues
-# sur un CSV corrige a la main, 03/08). GeocodeQuery/SourceMessage restent
-# en fin de ligne : ignorees par le classifieur d'en-tete (traçabilite
-# seulement, sans risque de collision avec les colonnes reconnues).
-UNGEOCODED_CSV_HEADER = (
-    "Intervention", "WorkOrder", "Address", "PostalCode", "Place", "Depth",
-    "GeocodeQuery", "SourceMessage",
-)
-
-
-def build_ungeocoded_rows(entries) -> list[list[str]]:
-    """Construit les lignes CSV (en-tête inclus) des adresses non géocodées.
-
-    ``entries`` : itérable de ``(InterventionRecord, query)`` où ``query`` est
-    la requête Nominatim qui a échoué (traçabilité — reflète déjà le repli
-    « adresse dédupliquée » si celui-ci a été tenté). Fonction PURE — aucune
-    dépendance PyQGIS, couverte par pytest.
-    """
-    rows: list[list[str]] = [list(UNGEOCODED_CSV_HEADER)]
-    for rec, query in entries:
-        rows.append(
-            [rec.intervention, rec.work_order, rec.address, rec.postal_code,
-             rec.place, rec.depth_raw, query, rec.source_message]
-        )
-    return rows
-
-
 def build_ungeocoded_message(entries) -> str:
     """Message compact, pret a copier-coller, listant les adresses non geocodees.
 
-    ``entries`` : meme forme que build_ungeocoded_rows -- iterable de
-    (InterventionRecord, query). Fonction pure, testable hors QGIS.
+    ``entries`` : iterable de (InterventionRecord, query), ``query`` etant la
+    requete Nominatim en echec. Affiche dans le journal du run. Fonction pure,
+    testable hors QGIS.
     """
     if not entries:
         return "Aucune adresse non géocodée."
@@ -1203,9 +1267,8 @@ def build_ungeocoded_email(entries, contact_email, n_ok) -> str:
 def _build_attribute_values(rec, query, status, hit):
     """Valeurs d'attributs pures dérivées d'une intervention géocodée.
 
-    Aucune dépendance PyQGIS — réutilisée à la fois pour la ``QgsFeature``
-    OUTPUT et pour l'upsert vers ``public.geofiber_asbuilt_depth_points``
-    (connexion ``be``).
+    Aucune dépendance PyQGIS — valeurs de l'upsert vers
+    ``public.geofiber_asbuilt_depth_points`` (connexion ``be``).
     """
     depth_cm = parse_depth_cm(rec.depth_raw)
     return {
@@ -1230,10 +1293,142 @@ LONG_SEGMENT_THRESHOLD_M = 100.0
 ROAD_START_SENTINEL = "__ROAD_START__"
 ROAD_END_SENTINEL = "__ROAD_END__"
 
+# Côté de la route d'un point, relatif au SENS de l'axe fusionné (sens des
+# position_m croissantes) : 'L' = à gauche, 'R' = à droite. CONVENTION : un
+# point situé sur l'axe (distance au point projeté < SIDE_ON_AXIS_TOLERANCE_M)
+# est rangé à droite ('R').
+SIDE_LEFT = "L"
+SIDE_RIGHT = "R"
+SIDE_ON_AXIS_TOLERANCE_M = 0.01
+
+# Décalage latéral (m) des segments dessinés, par type de voie OSM (tag
+# ``highway``) : chaque segment est translaté perpendiculairement vers le côté
+# de son point, pour séparer visuellement les deux trottoirs. Les ``*_link``
+# (bretelles) prennent la valeur de leur voie mère. Constantes modifiables.
+HIGHWAY_OFFSET_M = {
+    "motorway": 8.0,
+    "trunk": 8.0,
+    "primary": 6.0,
+    "secondary": 5.0,
+    "tertiary": 4.0,
+    "residential": 3.0,
+    "unclassified": 3.0,
+    "living_street": 3.0,
+    "service": 2.0,
+    "track": 2.0,
+    "path": 2.0,
+    "pedestrian": 2.0,
+}
+DEFAULT_HIGHWAY_OFFSET_M = 3.0
+
+# Paramètres de la localisation PAR NOM (base et Overpass). Run réel du 29/09 :
+# les points géocodés (numéro de maison) sont souvent en RETRAIT de la rue de
+# 30 à 50 m, et les rues sont coupées en tronçons non raccordés à 1 m près ->
+# rayon élargi, raccord élargi, ambiguïté entre homonymes seulement quand leurs
+# distances sont comparables.
+# * LOCATE_RADIUS_M : rayon de recherche d'une voie de MÊME NOM (base via le
+#   paramètre p_search_radius de fn_asbuilt_locate_on_road, et Overpass) ;
+# * LOW_CONFIDENCE_DISTANCE_M : au-delà, rattachement ASSUMÉ mais marqué « faible
+#   confiance » (journal + compteur), pas rejeté ;
+# * ROAD_JOIN_TOLERANCE_M : raccord des tronçons de même nom (rues coupées au
+#   carrefour), composante bornée à ROAD_COMPONENT_MAX_WAYS ;
+# * COMPONENT_AMBIGUITY_GAP_M / _RATIO : deux composantes homonymes NON
+#   connectées ne rendent le point ambigu que si la 2e est à distance
+#   comparable (écart < 15 m OU rapport < 1,5) ; sinon la plus proche l'emporte.
+LOCATE_RADIUS_M = 150.0
+LOCATE_RADIUS_MAX_M = 200.0
+LOW_CONFIDENCE_DISTANCE_M = 50.0
+ROAD_JOIN_TOLERANCE_M = 12.0
+COMPONENT_AMBIGUITY_GAP_M = 15.0
+COMPONENT_AMBIGUITY_RATIO = 1.5
+ROAD_COMPONENT_MAX_WAYS = 500
+
+# Extraction OSM de repli via l'API Overpass (les voies obtenues peuvent
+# alimenter ref.osm_roads via fn_asbuilt_store_osm_ways, cf. _store_osm_ways).
+# Requêtes LÉGÈRES : filtrées par NOMS de rue (ceux des
+# adresses des points à localiser) dans une emprise serrée — une requête sur
+# tout le réseau d'une grande emprise a été mesurée en 504/time-out (run réel du
+# 29/09). Le serveur public répond AU HASARD OK / 504 / 429 à une même requête
+# (limitation de débit : 2 à 4 « slots ») : on réessaie donc généreusement sur
+# le même miroir avant de passer au suivant.
+# Miroirs vérifiés le 29/09 depuis l'extérieur : overpass-api.de (OK / 504 /
+# SSL EOF selon les appels) et overpass.openstreetmap.fr (OK 0,2–0,4 s).
+# ÉCARTÉS : overpass.osm.ch (extrait SUISSE seulement : réponse vide pour la
+# Belgique, qui serait prise pour « aucune voie » et mise en cache !),
+# maps.mail.ru, overpass.kumi.systems et overpass.private.coffee (délai dépassé
+# à chaque essai).
+OVERPASS_MIRRORS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+)
+OVERPASS_QUERY_TIMEOUT_S = 25        # [timeout:..] côté serveur
+OVERPASS_TIMEOUT_S = 35.0            # client, par tentative
+OVERPASS_FALLBACK_TIMEOUT_S = 20.0   # client, miroirs de repli
+OVERPASS_PRIMARY_ATTEMPTS = 4        # tentatives sur le miroir principal (429/502/503/504)
+OVERPASS_FALLBACK_ATTEMPTS = 2       # tentatives sur chaque miroir de repli
+OVERPASS_BACKOFF_S = 4.0             # attentes 4 s, 8 s, 16 s (+ gigue) entre tentatives
+OVERPASS_RETRY_HTTP_CODES = (429, 502, 503, 504)
+OVERPASS_MAX_WAIT_S = 60.0           # plafond de toute attente (Retry-After, slot libre)
+OVERPASS_PAUSE_S = 1.0               # politesse entre deux requêtes réseau
+OVERPASS_MAX_CONSECUTIVE_FAILURES = 8  # coupe-circuit (seulement si AUCUN succès du run)
+OVERPASS_GIVE_UP_PAUSE_S = 30.0      # dernière pause avant de renoncer
+OVERPASS_TILE_M = 2000.0             # tuiles du repli par coordonnées
+OVERPASS_MAX_REQUEST_SPAN_M = 3000.0  # côté max de l'emprise d'une requête par noms
+OVERPASS_BBOX_MARGIN_M = 250.0
+OVERPASS_BBOX_GRID_M = 100.0         # emprise arrondie : requêtes stables (cache)
+OVERPASS_MAX_NAMES_PER_QUERY = 40
+OVERPASS_CACHE_DIRNAME = "asbuilt_overpass_cache"
+OVERPASS_CACHE_TTL_S = 30 * 24 * 3600
+# Clés de nom OSM comparées au nom de rue de l'adresse (name:de : Communauté
+# germanophone, zone à l'origine du repli).
+OSM_NAME_KEYS = ("name", "name:fr", "name:nl", "name:de")
+
+# Repli par COORDONNÉES (3e étape de la chaîne de localisation) : point encore
+# non localisé par nom -> voie carrossable OSM la plus proche dans ce rayon (m),
+# omis si une voie d'un autre nom est à moins de OSM_COORD_AMBIGUITY_M de plus
+# (carrefour). Chemins, pistes, trottoirs, pistes cyclables exclus.
+OSM_COORD_FALLBACK_RADIUS_M = 30.0
+OSM_COORD_AMBIGUITY_M = 5.0
+OSM_COORD_BBOX_EXTRA_M = 20.0
+OSM_COORD_HIGHWAYS = (
+    "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
+    "residential", "living_street", "service", "road",
+)
+
+# SCR UNIQUE de toutes les géométries manipulées ou écrites par le script :
+# Lambert belge 72 (BD72), EPSG:31370 — PAS Lambert 2008 (EPSG:3812). Nominatim
+# et Overpass (WGS84, EPSG:4326) sont systématiquement reprojetés vers lui.
+BELGIAN_LAMBERT_AUTHID = "EPSG:31370"
+# Écart toléré entre la reprojection QGIS et la formule Python de référence
+# (wgs84_to_lambert72_pure) : les opérations de datum BD72 usuelles diffèrent
+# de moins d'un mètre.
+LAMBERT_CROSSCHECK_TOLERANCE_M = 5.0
+
+# Plage de vraisemblance des coordonnées Lambert belge 72 (EPSG:31370) : une
+# géométrie hors plage trahit un SCR mal appliqué (degrés WGS84 non reprojetés,
+# axes inversés…). Borne basse à 10 km (la Belgique commence vers x≈20 km,
+# y≈20 km) : des degrés (≈ 2–7 ; 49–52) sont ainsi rejetés.
+LAMBERT72_X_RANGE = (10000.0, 300000.0)
+LAMBERT72_Y_RANGE = (10000.0, 250000.0)
+
+# Fusion des points co-localisés pour les segments (même adresse -> même point
+# projeté) : tolérance sur le point projeté, et gravité des catégories (le
+# nœud fusionné prend la PIRE : rouge > orange > vert).
+COLOCATED_TOLERANCE_M = 0.5
+DEPTH_SEVERITY = {"rouge": 0, "orange": 1, "vert": 2}
+
 
 @dataclass
 class RoadLocation:
-    """Un point de profondeur localise sur son axe de rue (fn_asbuilt_locate_on_road)."""
+    """Un point de profondeur localise sur son axe de rue.
+
+    Source : public.fn_asbuilt_locate_on_road (base 'be') ou, en repli, la
+    localisation Python sur les voies extraites d'Overpass
+    (:func:`locate_on_ways`). ``x``/``y`` = point PROJETE sur l'axe.
+    ``side`` = cote de la route du point geocode (cf. SIDE_LEFT/SIDE_RIGHT),
+    ``highway`` = type de voie OSM du troncon (decalage du dessin, cf.
+    :func:`offset_for_highway` ; vide = decalage par defaut).
+    """
 
     intervention_id: str
     depth_category: str
@@ -1241,6 +1436,8 @@ class RoadLocation:
     position_m: float
     x: float
     y: float
+    side: str = SIDE_RIGHT
+    highway: str = ""
 
 
 @dataclass
@@ -1260,7 +1457,17 @@ class SegmentHalf:
 
     ``length_m`` est la longueur TOTALE du segment (A-B ou point-bout de
     route), identique sur les 2 moities d'une meme paire — pas la longueur
-    de la moitie elle-meme.
+    de la moitie elle-meme. Quand la polyligne de l'axe est connue
+    (``axis_parts`` non vide), elle est mesuree LE LONG DE L'AXE (abscisses
+    curvilignes position_m) ; sinon (repli) c'est la corde entre points
+    projetes. ``is_long`` suit la meme mesure.
+
+    ``start_*``/``end_*`` : extremites SUR L'AXE (non decalees), dans le sens
+    de dessin. ``axis_parts`` : sous-ligne(s) de l'axe couverte(s) par la
+    moitie, orientee(s) dans le sens des position_m CROISSANTES (plusieurs
+    parties si l'axe est fragmente) ; vide -> corde droite (repli). La
+    geometrie enregistree (MultiLineString) est cette sous-ligne decalee de
+    ``offset_m`` vers ``side`` (cf. :func:`segment_half_geometry`).
     """
 
     point_a_intervention_id: str
@@ -1274,35 +1481,270 @@ class SegmentHalf:
     start_y: float
     end_x: float
     end_y: float
+    side: str = SIDE_RIGHT
+    offset_m: float = 0.0
+    axis_parts: tuple = ()
 
 
-def build_segment_halves(locations, road_extents) -> list:
-    """Construit les moities de segments d'axe de rue.
+def offset_for_highway(highway) -> float:
+    """Décalage latéral (m) pour un tag OSM ``highway`` (défaut si inconnu/vide)."""
+    value = (highway or "").strip().lower()
+    if value.endswith("_link"):
+        value = value[: -len("_link")]
+    return HIGHWAY_OFFSET_M.get(value, DEFAULT_HIGHWAY_OFFSET_M)
 
-    ``locations`` : points DEJA filtres (categorie != 'manquante') et
-    localises via fn_asbuilt_locate_on_road (un road_key manquant/vide est
-    filtre par l'appelant, cf. Task 7). ``road_extents`` : dict road_key ->
-    RoadExtent (bornes de la route fusionnee, pour les segments de bout de
-    route). Fonction PURE, aucune dependance PyQGIS.
+
+def side_of_point(dir_x, dir_y, vec_x, vec_y) -> str:
+    """Côté ('L'/'R') du vecteur projeté->point par rapport à la direction de l'axe.
+
+    Produit vectoriel ``dir × vec`` : positif -> gauche. Point sur l'axe
+    (``|vec|`` < SIDE_ON_AXIS_TOLERANCE_M) ou direction nulle -> 'R'
+    (convention). Fonction PURE.
     """
+    if math.hypot(vec_x, vec_y) < SIDE_ON_AXIS_TOLERANCE_M:
+        return SIDE_RIGHT
+    cross = dir_x * vec_y - dir_y * vec_x
+    return SIDE_LEFT if cross > 0.0 else SIDE_RIGHT
+
+
+def side_probe_points(x, y, px, py, eps=1.0):
+    """Points de sonde pour déduire le côté via fn_asbuilt_locate_on_road seule.
+
+    La fonction SQL ne renvoie pas la direction de l'axe ; on la sonde : soit
+    ``n`` = point - projeté (perpendiculaire à l'axe) et ``m`` = ``n`` tourné
+    de +90° (donc parallèle à l'axe). Le point est à GAUCHE ssi avancer le
+    long de ``m`` fait DÉCROÎTRE position_m (``t·m = -(t × n)``). Retourne
+    ``((x+, y+), (x-, y-))`` = projeté ± ``eps``·m unitaire, ou ``None`` si le
+    point est sur l'axe (-> 'R' par convention). Fonction PURE.
+    """
+    nx, ny = x - px, y - py
+    norm = math.hypot(nx, ny)
+    if norm < SIDE_ON_AXIS_TOLERANCE_M:
+        return None
+    mx, my = -ny / norm, nx / norm
+    return (px + eps * mx, py + eps * my), (px - eps * mx, py - eps * my)
+
+
+def side_from_probe_positions(pos_plus, pos_minus):
+    """'L' si position_m(projeté + m) < position_m(projeté - m), 'R' si >, None si indécidable."""
+    if pos_plus is None or pos_minus is None:
+        return None
+    if pos_plus < pos_minus - 1e-9:
+        return SIDE_LEFT
+    if pos_plus > pos_minus + 1e-9:
+        return SIDE_RIGHT
+    return None
+
+
+# --- Géométrie de l'axe : abscisse curviligne, sous-ligne, décalage (PUR) ----
+# Jointure des décalages aux sommets : onglet (miter) tant que sa longueur ne
+# dépasse pas OFFSET_MITER_LIMIT × le décalage, biseau (bevel) au-delà (angles
+# aigus) ; côté intérieur, le point d'onglet est omis quand il retomberait
+# au-delà d'un des deux tronçons adjacents (évite boucles et autointersections).
+OFFSET_MITER_LIMIT = 2.0
+
+
+def _as_parts(line):
+    """Accepte une polyligne ``[(x, y), …]`` ou une multipolyligne ``[[…], …]``."""
+    if not line:
+        return []
+    first = line[0]
+    if first and isinstance(first[0], (int, float)):
+        return [list(line)]
+    return [list(part) for part in line]
+
+
+def multiline_length(line) -> float:
+    """Longueur totale (m) d'une polyligne ou multipolyligne (parties bout à bout)."""
+    return sum(polyline_length(part) for part in _as_parts(line))
+
+
+def point_at_distance(line, s):
+    """Point à l'abscisse curviligne ``s`` (bornée) d'une (multi)polyligne.
+
+    Les parties d'une multipolyligne sont parcourues bout à bout, dans l'ordre
+    (même convention que position_m). Fonction PURE.
+    """
+    parts = [p for p in _as_parts(line) if p]
+    if not parts:
+        return None
+    s = max(0.0, float(s))
+    walked = 0.0
+    for part in parts:
+        for (x1, y1), (x2, y2) in zip(part, part[1:]):
+            seg = math.hypot(x2 - x1, y2 - y1)
+            if walked + seg >= s and seg > 0.0:
+                t = (s - walked) / seg
+                return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+            walked += seg
+    return tuple(parts[-1][-1])
+
+
+def polyline_substring(coords, s0, s1):
+    """Sous-ligne d'une polyligne entre les abscisses ``s0`` <= ``s1`` (bornées).
+
+    Sommets intermédiaires conservés ; ``s0 == s1`` -> ligne dégénérée
+    ``[p, p]``. Fonction PURE.
+    """
+    total = polyline_length(coords)
+    s0 = min(max(0.0, s0), total)
+    s1 = min(max(s0, s1), total)
+    start = point_at_distance(coords, s0)
+    if s1 - s0 <= 0.0:
+        return [start, start]
+    out = [start]
+    walked = 0.0
+    for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
+        walked += math.hypot(x2 - x1, y2 - y1)
+        if s0 < walked < s1:
+            out.append((x2, y2))
+    out.append(point_at_distance(coords, s1))
+    return out
+
+
+def multiline_substring(line, s0, s1) -> list:
+    """Sous-ligne(s) d'une (multi)polyligne entre ``s0`` <= ``s1`` -> liste de parties.
+
+    Une partie par tronçon de l'axe traversé (axe fragmenté -> plusieurs
+    parties) ; ``s0 == s1`` -> une partie dégénérée. Fonction PURE.
+    """
+    parts = [p for p in _as_parts(line) if len(p) >= 2]
+    if not parts:
+        return []
+    if s1 <= s0:
+        p = point_at_distance(parts, s0)
+        return [[p, p]]
+    out = []
+    offset = 0.0
+    for part in parts:
+        length = polyline_length(part)
+        lo, hi = max(s0, offset), min(s1, offset + length)
+        if hi > lo:
+            out.append(polyline_substring(part, lo - offset, hi - offset))
+        offset += length
+    return out
+
+
+def offset_polyline(coords, distance, side):
+    """Décalage parallèle d'une polyligne de ``distance`` m vers ``side`` ('L'/'R').
+
+    Gauche/droite relatives au SENS de ``coords``. Jointures : onglet borné
+    (:data:`OFFSET_MITER_LIMIT`) puis biseau côté extérieur ; côté intérieur,
+    intersection des deux décalages, omise si elle tombe au-delà d'un tronçon
+    adjacent (pas de boucle). Sommets confondus retirés ; ligne dégénérée ou
+    décalage nul -> copie inchangée. Fonction PURE.
+    """
+    pts = []
+    for p in coords:
+        if not pts or math.hypot(p[0] - pts[-1][0], p[1] - pts[-1][1]) > 1e-9:
+            pts.append((float(p[0]), float(p[1])))
+    if len(pts) < 2 or not distance:
+        return [tuple(p) for p in coords]
+    sign = 1.0 if side == SIDE_LEFT else -1.0
+    units, lengths, normals = [], [], []
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        length = math.hypot(x2 - x1, y2 - y1)
+        ux, uy = (x2 - x1) / length, (y2 - y1) / length
+        units.append((ux, uy))
+        lengths.append(length)
+        normals.append((sign * -uy * distance, sign * ux * distance))
+    out = [(pts[0][0] + normals[0][0], pts[0][1] + normals[0][1])]
+    for j in range(1, len(pts) - 1):
+        (ux0, uy0), (ux1, uy1) = units[j - 1], units[j]
+        (nx0, ny0), (nx1, ny1) = normals[j - 1], normals[j]
+        px, py = pts[j]
+        cross = ux0 * uy1 - uy0 * ux1
+        dot = ux0 * ux1 + uy0 * uy1
+        if abs(cross) < 1e-12 and dot > 0:
+            out.append((px + nx1, py + ny1))
+            continue
+        inner = sign * cross > 0
+        denom = 1.0 + dot
+        if inner:
+            if denom <= 1e-12:
+                continue
+            # Recul de l'intersection le long de chaque tronçon : d·tan(θ/2).
+            backoff = abs(distance) * math.sqrt(max(0.0, (1.0 - dot) / denom))
+            if backoff > lengths[j - 1] or backoff > lengths[j]:
+                continue  # onglet intérieur hors des tronçons : omis
+            out.append((px + (nx0 + nx1) / denom, py + (ny0 + ny1) / denom))
+        else:
+            ratio = math.sqrt(2.0 / denom) if denom > 1e-12 else float("inf")
+            if ratio <= OFFSET_MITER_LIMIT:
+                out.append((px + (nx0 + nx1) / denom, py + (ny0 + ny1) / denom))
+            else:  # biseau
+                out.append((px + nx0, py + ny0))
+                out.append((px + nx1, py + ny1))
+    out.append((pts[-1][0] + normals[-1][0], pts[-1][1] + normals[-1][1]))
+    return out
+
+
+def build_segment_halves(locations, road_extents, road_lines=None) -> list:
+    """Construit les moities de segments d'axe de rue, PAR COTE de la route.
+
+    ``locations`` : points localises (un road_key manquant/vide est filtre
+    par l'appelant, cf. Task 7). Les points gris (categorie 'manquante' ou
+    vide) sont normalement filtres en amont, AVANT localisation (aucun appel
+    SQL/Overpass pour eux) ; ils sont de toute facon ignores ici.
+    ``road_extents`` : dict road_key -> RoadExtent (bornes de la route
+    fusionnee, pour les segments de bout de route). ``road_lines`` : dict
+    road_key -> polyligne (ou multipolyligne) de l'axe FUSIONNE, orientee
+    comme les position_m ; route absente -> repli en cordes droites. Fonction
+    PURE, aucune dependance PyQGIS.
+
+    Appariement par ``(road_key, side)`` : les points de chaque cote forment
+    leur propre chaine (points consecutifs par position_m), avec leurs propres
+    segments de bout de route — deux points de cotes opposes ne sont jamais
+    relies. Avec l'axe : moitie 'a' = de A au MILIEU CURVILIGNE de A–B, 'b' =
+    du milieu a B, bouts de rue = du point a l'extremite de l'axe ;
+    ``length_m``/``is_long`` le long de l'axe. Sans axe : cordes, longueur
+    = distance entre points projetes. ``offset_m`` : decalage du dessin selon
+    le type de voie du point porteur de la moitie (:func:`offset_for_highway`).
+    """
+    road_lines = road_lines or {}
+    # Gardes défensives (en plus du filtre amont de _sync_segments) :
+    # * points GRIS (profondeur 'manquante' ou vide) ignorés — ni nœud, ni
+    #   voisin d'appariement, ni départ d'un segment de bout de rue ;
+    # * unicité : un même intervention_id localisé deux fois produirait des
+    #   clés (a, b, half, side) en double — seule la PREMIÈRE est gardée.
     by_road = defaultdict(list)
+    seen_ids = set()
     for loc in locations:
-        by_road[loc.road_key].append(loc)
+        if not loc.depth_category or loc.depth_category == "manquante":
+            continue
+        if loc.intervention_id in seen_ids:
+            continue
+        seen_ids.add(loc.intervention_id)
+        by_road[(loc.road_key, loc.side)].append(loc)
+
+    def parts_of(line, s0, s1):
+        return tuple(tuple(tuple(p) for p in part) for part in multiline_substring(line, s0, s1))
 
     halves: list[SegmentHalf] = []
-    for road_key, points in by_road.items():
+    for (road_key, side), points in by_road.items():
         ordered = sorted(points, key=lambda p: p.position_m)
+        line = road_lines.get(road_key)
 
         for a, b in zip(ordered, ordered[1:]):
-            length = math.hypot(b.x - a.x, b.y - a.y)
+            if line:
+                length = max(0.0, b.position_m - a.position_m)
+                mid_s = (a.position_m + b.position_m) / 2.0
+                mid_x, mid_y = point_at_distance(line, mid_s)
+                parts_a = parts_of(line, a.position_m, mid_s)
+                parts_b = parts_of(line, mid_s, b.position_m)
+            else:
+                length = math.hypot(b.x - a.x, b.y - a.y)
+                mid_x, mid_y = (a.x + b.x) / 2.0, (a.y + b.y) / 2.0
+                parts_a = parts_b = ()
             is_long = length >= LONG_SEGMENT_THRESHOLD_M
-            mid_x, mid_y = (a.x + b.x) / 2.0, (a.y + b.y) / 2.0
             halves.append(SegmentHalf(
                 point_a_intervention_id=a.intervention_id,
                 point_b_intervention_id=b.intervention_id,
                 half="a", depth_category=a.depth_category, is_long=is_long,
                 length_m=length, road_key=road_key,
                 start_x=a.x, start_y=a.y, end_x=mid_x, end_y=mid_y,
+                side=side, offset_m=offset_for_highway(a.highway),
+                axis_parts=parts_a,
             ))
             halves.append(SegmentHalf(
                 point_a_intervention_id=a.intervention_id,
@@ -1310,17 +1752,33 @@ def build_segment_halves(locations, road_extents) -> list:
                 half="b", depth_category=b.depth_category, is_long=is_long,
                 length_m=length, road_key=road_key,
                 start_x=mid_x, start_y=mid_y, end_x=b.x, end_y=b.y,
+                side=side, offset_m=offset_for_highway(b.highway),
+                axis_parts=parts_b,
             ))
 
         extent = road_extents.get(road_key)
-        if extent is None:
+        if extent is None and not line:
             continue
         first, last = ordered[0], ordered[-1]
-        for point, sentinel, (end_x, end_y) in (
-            (first, ROAD_START_SENTINEL, (extent.start_x, extent.start_y)),
-            (last, ROAD_END_SENTINEL, (extent.end_x, extent.end_y)),
-        ):
-            length = math.hypot(end_x - point.x, end_y - point.y)
+        if line:
+            total = multiline_length(line)
+            start_pt = point_at_distance(line, 0.0)
+            end_pt = point_at_distance(line, total)
+            ends = (
+                (first, ROAD_START_SENTINEL, start_pt, first.position_m,
+                 parts_of(line, 0.0, first.position_m)),
+                (last, ROAD_END_SENTINEL, end_pt, max(0.0, total - last.position_m),
+                 parts_of(line, last.position_m, total)),
+            )
+        else:
+            ends = tuple(
+                (point, sentinel, end, math.hypot(end[0] - point.x, end[1] - point.y), ())
+                for point, sentinel, end in (
+                    (first, ROAD_START_SENTINEL, (extent.start_x, extent.start_y)),
+                    (last, ROAD_END_SENTINEL, (extent.end_x, extent.end_y)),
+                )
+            )
+        for point, sentinel, (end_x, end_y), length, parts in ends:
             halves.append(SegmentHalf(
                 point_a_intervention_id=point.intervention_id,
                 point_b_intervention_id=sentinel,
@@ -1328,25 +1786,1976 @@ def build_segment_halves(locations, road_extents) -> list:
                 is_long=length >= LONG_SEGMENT_THRESHOLD_M,
                 length_m=length, road_key=road_key,
                 start_x=point.x, start_y=point.y, end_x=end_x, end_y=end_y,
+                side=side, offset_m=offset_for_highway(point.highway),
+                axis_parts=parts,
             ))
     return halves
 
 
-def plan_segment_sync(fresh, existing_keys):
-    """Separe les moities fraichement calculees en (a upsert, a supprimer).
+def segment_half_geometry(half):
+    """Géométrie ENREGISTRÉE d'une moitié : tuple de parties ``((x, y), …)`` (MultiLineString).
 
-    ``fresh`` : liste de SegmentHalf issue de build_segment_halves (cet appel).
-    ``existing_keys`` : cles (point_a_intervention_id, point_b_intervention_id,
-    half) actuellement en base. Fonction PURE. L'upsert est TOUJOURS rejoue pour
-    toute cle de ``fresh`` (idempotent cote SQL via ON CONFLICT DO UPDATE) ; la
-    suppression ne vise QUE les cles presentes en base mais absentes de
-    ``fresh`` (segments devenus obsoletes — point re-geocode ailleurs, etc.).
+    * Axe connu (``axis_parts``) : chaque partie de la sous-ligne de l'axe
+      est décalée parallèlement de ``half.offset_m`` vers ``half.side``
+      (:func:`offset_polyline`, gauche/droite relatives au SENS DE L'AXE =
+      position_m croissantes), puis l'ensemble est remis dans le sens de
+      dessin (un bout de route vers ROAD_START est dessiné à rebours).
+    * Repli (corde) : une seule partie, translation perpendiculaire à la
+      corde ; direction nulle ou décalage nul -> extrémités sur l'axe.
+
+    Fonction PURE.
     """
-    fresh_keys = {
-        (h.point_a_intervention_id, h.point_b_intervention_id, h.half) for h in fresh
+    reverse = half.point_b_intervention_id == ROAD_START_SENTINEL
+    if half.axis_parts:
+        parts = [
+            offset_polyline(list(part), half.offset_m, half.side) if half.offset_m
+            else [tuple(p) for p in part]
+            for part in half.axis_parts
+        ]
+        if reverse:
+            parts = [list(reversed(part)) for part in reversed(parts)]
+        return tuple(tuple((float(x), float(y)) for x, y in part) for part in parts)
+    sx, sy, ex, ey = half.start_x, half.start_y, half.end_x, half.end_y
+    dx, dy = ex - sx, ey - sy
+    if reverse:
+        dx, dy = -dx, -dy
+    norm = math.hypot(dx, dy)
+    if norm == 0.0 or not half.offset_m:
+        return (((sx, sy), (ex, ey)),)
+    # Normale gauche de la direction de l'axe ; côté droit = opposé.
+    sign = 1.0 if half.side == SIDE_LEFT else -1.0
+    ox = sign * half.offset_m * (-dy / norm)
+    oy = sign * half.offset_m * (dx / norm)
+    return (((sx + ox, sy + oy), (ex + ox, ey + oy)),)
+
+
+def merge_colocated(locations, tol=COLOCATED_TOLERANCE_M):
+    """Fusionne les points CO-LOCALISÉS en un seul nœud pour les segments.
+
+    Deux interventions distinctes au même point projeté (typiquement la même
+    adresse, géocodée au même endroit) produiraient sinon un segment de
+    longueur nulle. Par (road_key, side), les points triés par (position_m,
+    intervention_id) sont regroupés tant qu'ils restent à ``tol`` m au plus
+    du PREMIER point du groupe (ancre). Nœud fusionné :
+
+    * intervention_id, position et point projeté du plus PETIT id du groupe
+      (représentant déterministe) ;
+    * catégorie = la PIRE du groupe (rouge > orange > vert, cf.
+      :data:`DEPTH_SEVERITY` ; une catégorie inconnue n'est jamais retenue
+      comme pire qu'une connue).
+
+    Les points restent tous en base ; seuls les segments utilisent le nœud.
+    Retourne ``(nœuds, membres)`` : ``membres`` = dict id représentant ->
+    tuple trié des ids du groupe (groupes de ≥ 2 seulement). Fonction PURE.
+    """
+    groups = defaultdict(list)
+    for loc in locations:
+        groups[(loc.road_key, loc.side)].append(loc)
+    nodes = []
+    members = {}
+    for key in sorted(groups, key=lambda k: (str(k[0]), str(k[1]))):
+        clusters = []
+        for loc in sorted(groups[key], key=lambda l: (l.position_m, l.intervention_id)):
+            if clusters:
+                anchor = clusters[-1][0]
+                if math.hypot(loc.x - anchor.x, loc.y - anchor.y) <= tol:
+                    clusters[-1].append(loc)
+                    continue
+            clusters.append([loc])
+        for cluster in clusters:
+            rep = min(cluster, key=lambda l: l.intervention_id)
+            worst = min(
+                cluster, key=lambda l: DEPTH_SEVERITY.get(l.depth_category, len(DEPTH_SEVERITY))
+            ).depth_category
+            nodes.append(RoadLocation(
+                intervention_id=rep.intervention_id, depth_category=worst,
+                road_key=rep.road_key, position_m=rep.position_m, x=rep.x, y=rep.y,
+                side=rep.side, highway=rep.highway,
+            ))
+            if len(cluster) > 1:
+                members[rep.intervention_id] = tuple(sorted(l.intervention_id for l in cluster))
+    return nodes, members
+
+
+def colocated_raw_groups(points, tol=COLOCATED_TOLERANCE_M) -> dict:
+    """Groupes de points probablement fusionnés, estimés SANS relocalisation.
+
+    ``points`` : ``(intervention_id, nom_de_rue, x, y)`` (point GÉOCODÉ, avant
+    projection). Même rue (nom normalisé) et même position à ``tol`` près
+    -> même point projeté, donc même nœud fusionné (:func:`merge_colocated`).
+    Sert au mode incrémental : un membre non représentant n'apparaît dans
+    aucun segment, il ne doit pas être pris pour « jamais localisé », et un
+    membre sale rend tout son groupe sale. Retourne dict id -> frozenset du
+    groupe (groupes de ≥ 2 seulement). Fonction PURE.
+    """
+    by_street = defaultdict(list)
+    for intervention_id, street, x, y in points:
+        by_street[normalize_street_name(street)].append((x, y, intervention_id))
+    result = {}
+    for street, pts in by_street.items():
+        if not street:
+            continue
+        clusters = []
+        for x, y, intervention_id in sorted(pts):
+            if clusters and math.hypot(x - clusters[-1][0][0], y - clusters[-1][0][1]) <= tol:
+                clusters[-1].append((x, y, intervention_id))
+            else:
+                clusters.append([(x, y, intervention_id)])
+        for cluster in clusters:
+            if len(cluster) > 1:
+                group = frozenset(p[2] for p in cluster)
+                for intervention_id in group:
+                    result[intervention_id] = group
+    return result
+
+
+def with_companions(ids, companions) -> set:
+    """``ids`` complété par tous les membres de leurs groupes co-localisés."""
+    out = set(ids)
+    for intervention_id in list(out):
+        out |= companions.get(intervention_id, frozenset())
+    return out
+
+
+def filter_protected_deletions(to_delete, existing, protected_roads):
+    """Retire de la purge les segments des routes protégées -> ``(gardés, n_bloqués)``.
+
+    Routes protégées : celles où figurait un point non localisé faute de
+    réponse Overpass (échec isolé) — leurs segments ne sont pas purgés ce run.
+    Fonction PURE.
+    """
+    kept = [key for key in to_delete if existing[key].get("road_key") not in protected_roads]
+    return kept, len(to_delete) - len(kept)
+
+
+def crs_needs_fix(authid) -> bool:
+    """Le SCR d'une couche des tables 'be' doit-il être forcé en EPSG:31370 ?
+
+    Tout autre authid — vide (SCR invalide/inconnu), EPSG:3857 hérité du fond
+    de carte, EPSG:4326… — trahit une couche mal géoréférencée (coordonnées
+    Lambert 72 affichées ailleurs). Fonction PURE.
+    """
+    return (authid or "").strip().upper() != BELGIAN_LAMBERT_AUTHID
+
+
+def split_ungeocoded(entries, existing_point_ids):
+    """Règle « si géocodé, garder que géocodé » -> ``(à_pousser, conservés)``.
+
+    ``entries`` : (InterventionRecord, requête) en échec de géocodage à CE run.
+    Une intervention qui a déjà un point géocodé en base
+    (``existing_point_ids``) n'est PAS poussée dans les non géocodées : le
+    point existant est conservé, l'échec de re-géocodage ignoré. Fonction PURE.
+    """
+    existing = {str(i) for i in existing_point_ids}
+    to_push = [e for e in entries if str(e[0].intervention) not in existing]
+    kept = [e for e in entries if str(e[0].intervention) in existing]
+    return to_push, kept
+
+
+@dataclass
+class Connector:
+    """Ligne du point GÉOCODÉ vers l'extrémité de son segment (axe décalé).
+
+    Un connecteur par point réel : les membres d'un nœud fusionné (points
+    co-localisés) ont chacun le leur, vers l'extrémité du nœud. ``length_m``
+    = longueur du connecteur ; géométrie LineString EPSG:31370 à 2 sommets.
+    """
+
+    intervention_id: str
+    depth_category: str
+    side: str
+    road_key: str
+    length_m: float
+    start_x: float
+    start_y: float
+    end_x: float
+    end_y: float
+
+
+def segment_endpoints(halves) -> dict:
+    """Extrémité DESSINÉE (axe décalé) de chaque nœud, d'après ses moitiés de segment.
+
+    Premier sommet de la moitié 'a' qui part du nœud (paires et bouts de
+    rue : un bout vers ROAD_START est dessiné depuis le point), à défaut
+    dernier sommet de la moitié 'b' qui y arrive. Fonction PURE.
+    """
+    ends = {}
+    for half in halves:
+        if half.half == "a":
+            geometry = segment_half_geometry(half)
+            if geometry and geometry[0]:
+                ends.setdefault(half.point_a_intervention_id, tuple(geometry[0][0]))
+    for half in halves:
+        if half.half == "b" and half.point_b_intervention_id not in ends:
+            geometry = segment_half_geometry(half)
+            if geometry and geometry[-1]:
+                ends[half.point_b_intervention_id] = tuple(geometry[-1][-1])
+    return ends
+
+
+def build_connectors(points, locations, halves, merged_members=None) -> list:
+    """Connecteurs point géocodé -> extrémité du segment tel que dessiné.
+
+    ``points`` : dict id -> (x, y, catégorie) des points RÉELS (EPSG:31370,
+    géocodés) ; ``locations`` : nœuds localisés (après fusion des
+    co-localisés) ; ``halves`` : moitiés construites à partir de ces nœuds —
+    l'extrémité est lue sur leur géométrie DÉCALÉE (:func:`segment_endpoints`),
+    donc au point projeté orthogonalement sur l'axe décalé du côté et de la
+    distance du type de voie ; ``merged_members`` : dict id représentant ->
+    ids du groupe (:func:`merge_colocated`). Nœud sans moitié (route sans
+    bornes connues) : extrémité = point projeté décalé vers le point géocodé.
+    Points gris ou inconnus de ``points`` : aucun connecteur. PURE.
+    """
+    merged_members = merged_members or {}
+    ends = segment_endpoints(halves)
+    connectors = []
+    seen = set()
+    for loc in locations:
+        end = ends.get(loc.intervention_id)
+        if end is None:
+            px, py = points.get(loc.intervention_id, (loc.x, loc.y, ""))[:2]
+            dx, dy = px - loc.x, py - loc.y
+            norm = math.hypot(dx, dy)
+            offset = offset_for_highway(loc.highway)
+            end = (loc.x + offset * dx / norm, loc.y + offset * dy / norm) if norm > 0 else (loc.x, loc.y)
+        for member in merged_members.get(loc.intervention_id, (loc.intervention_id,)):
+            if member in seen or member not in points:
+                continue
+            x, y, category = points[member]
+            if not category or category == "manquante":
+                continue
+            seen.add(member)
+            connectors.append(Connector(
+                intervention_id=member, depth_category=category, side=loc.side,
+                road_key=loc.road_key, length_m=math.hypot(end[0] - x, end[1] - y),
+                start_x=x, start_y=y, end_x=end[0], end_y=end[1],
+            ))
+    return sorted(connectors, key=lambda c: c.intervention_id)
+
+
+def connector_changed(connector, existing, tol=None) -> bool:
+    """Connecteur recalculé différent de la ligne en base ? (attributs + 2 sommets à tol)."""
+    tol = SEGMENT_COMPARE_TOLERANCE if tol is None else tol
+    if existing.get("depth_category") != connector.depth_category:
+        return True
+    if existing.get("side") != connector.side or existing.get("road_key") != connector.road_key:
+        return True
+    length = existing.get("length_m")
+    if not isinstance(length, (int, float)) or abs(length - connector.length_m) > tol:
+        return True
+    coords = existing.get("coords")
+    wanted = ((connector.start_x, connector.start_y), (connector.end_x, connector.end_y))
+    if not coords or len(coords) != 2:
+        return True
+    return any(
+        abs(a[0] - b[0]) > tol or abs(a[1] - b[1]) > tol for a, b in zip(coords, wanted)
+    )
+
+
+@dataclass
+class ConnectorSyncPlan:
+    to_insert: list
+    to_update: list
+    to_delete: list
+    unchanged: int
+
+
+def plan_connector_sync(fresh, existing, scope_ids=None, eligible_ids=None) -> ConnectorSyncPlan:
+    """Répartit les connecteurs recalculés en insert / update / delete / inchangés.
+
+    ``existing`` : dict intervention_id -> état en base. ``scope_ids`` : points
+    RELOCALISÉS à ce run (incrémental) ou None (complet). Suppression d'un
+    connecteur en base absent de ``fresh`` SEULEMENT s'il est dans le
+    périmètre, ou si son point n'est plus éligible (``eligible_ids`` : points
+    de couleur présents dans la table — devenu gris ou supprimé). Un
+    connecteur identique n'est jamais réécrit. Fonction PURE.
+    """
+    fresh_by_id = {c.intervention_id: c for c in fresh}
+    to_insert, to_update, unchanged = [], [], 0
+    for intervention_id, connector in sorted(fresh_by_id.items()):
+        current = existing.get(intervention_id)
+        if current is None:
+            to_insert.append(connector)
+        elif connector_changed(connector, current):
+            to_update.append(connector)
+        else:
+            unchanged += 1
+    to_delete = sorted(
+        i for i in existing
+        if i not in fresh_by_id and (
+            scope_ids is None or i in scope_ids
+            or (eligible_ids is not None and i not in eligible_ids)
+        )
+    )
+    return ConnectorSyncPlan(to_insert, to_update, to_delete, unchanged)
+
+
+_DEPTH_CONNECTORS_STYLE_QML_NAME = "depth_connectors.qml"
+
+
+def _collection_style_qml_path(file_name, profile_dir: Optional[str] = None) -> Optional[str]:
+    """Chemin d'un ``.qml`` de la collection (sibling ``../style/`` puis cache Resource Sharing)."""
+    candidates: list[str] = []
+    try:
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.append(os.path.normpath(os.path.join(module_dir, "..", "style", file_name)))
+    except NameError:  # pragma: no cover - __file__ absent (exec sans fichier)
+        pass
+    candidates.extend(
+        os.path.join(style_dir, file_name) for style_dir in _resource_sharing_style_dirs(profile_dir)
+    )
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def count_zero_length_pairs(halves) -> int:
+    """Nombre de PAIRES de points distincts au même point projeté (longueur nulle).
+
+    Cas typique : deux interventions à la même adresse, géocodées au même
+    point. Comptées une fois par paire (moitié 'a' seulement), segments de
+    bout de route exclus. Fonction PURE (journalisation).
+    """
+    return sum(
+        1 for h in halves
+        if h.half == "a" and h.length_m == 0.0
+        and h.point_b_intervention_id not in (ROAD_START_SENTINEL, ROAD_END_SENTINEL)
+    )
+
+
+def segment_key(half):
+    """Clé métier d'une moitié : (point_a, point_b, half, side) — cf. PK en base."""
+    return (
+        half.point_a_intervention_id, half.point_b_intervention_id,
+        half.half, half.side,
+    )
+
+
+SEGMENT_COMPARE_TOLERANCE = 1e-6
+
+
+@dataclass
+class SegmentSyncPlan:
+    """Plan d'écriture des segments (cf. :func:`plan_segment_sync`)."""
+
+    to_insert: list   # SegmentHalf absents de la base
+    to_update: list   # SegmentHalf présents mais différents
+    to_delete: list   # clés (a, b, half, side) obsolètes DANS le périmètre
+    unchanged: int    # présents et identiques : ni recalcul écrit, ni réécriture
+
+
+def parse_wkt_lines(text):
+    """WKT (E)WKT ``LINESTRING`` / ``MULTILINESTRING`` (2D, Z/M ignorés) -> liste de parties.
+
+    ``None`` si vide, illisible ou d'un autre type. Fonction PURE.
+    """
+    if not text:
+        return None
+    body = str(text).strip()
+    if body.upper().startswith("SRID="):
+        body = body.split(";", 1)[-1].strip()
+    match = re.match(r"^(MULTILINESTRING|LINESTRING)\s*(ZM|Z|M)?\s*\((.*)\)\s*$", body, re.I | re.S)
+    if not match:
+        return None
+    kind, inner = match.group(1).upper(), match.group(3)
+    raw_parts = re.findall(r"\(([^()]*)\)", inner) if kind == "MULTILINESTRING" else [inner]
+    parts = []
+    for raw in raw_parts:
+        coords = []
+        for pair in raw.split(","):
+            values = pair.split()
+            if len(values) < 2:
+                return None
+            try:
+                coords.append((float(values[0]), float(values[1])))
+            except ValueError:
+                return None
+        if len(coords) >= 2:
+            parts.append(coords)
+    return parts or None
+
+
+def is_multilinestring_type(geometry_type) -> bool:
+    """Type ``geometry_columns.type`` d'une colonne MultiLineString ? Fonction PURE."""
+    return (geometry_type or "").strip().upper().startswith("MULTILINESTRING")
+
+
+def road_line_matches(parts, road_length_m, tol_m=1.0) -> bool:
+    """La géométrie d'axe renvoyée par la base est-elle celle des position_m ?
+
+    Garde de cohérence avant de faire suivre l'axe aux segments : longueur
+    totale égale (à ``tol_m`` près) à road_length_m de fn_asbuilt_locate_on_road
+    — sinon (autre fusion, autre composante) repli sur les cordes. PURE.
+    """
+    try:
+        return bool(parts) and abs(multiline_length(parts) - float(road_length_m)) <= tol_m
+    except (TypeError, ValueError):
+        return False
+
+
+def looks_like_chord_segments(existing) -> bool:
+    """Segments en base TOUS en cordes (une partie, 2 sommets) — version antérieure ?"""
+    coords = [c.get("coords") for c in existing.values()]
+    return bool(coords) and all(
+        c and len(c) == 1 and len(c[0]) == 2 for c in coords
+    )
+
+
+def geometry_for_column(parts, multi_column=True):
+    """Parties effectivement écrites selon le type de la colonne ``geom``.
+
+    Colonne MultiLineString : toutes les parties. Colonne encore LineString
+    (migration non appliquée) : la PREMIÈRE partie seulement. Retourne
+    ``(parties, nb_parties_abandonnées)``. Fonction PURE.
+    """
+    parts = tuple(parts)
+    if multi_column or len(parts) <= 1:
+        return parts, 0
+    return parts[:1], len(parts) - 1
+
+
+def segment_half_changed(half, existing, tol=SEGMENT_COMPARE_TOLERANCE,
+                         multi_column=True) -> bool:
+    """Le segment recalculé ``half`` diffère-t-il de la ligne ``existing`` en base ?
+
+    ``existing`` : dict ``road_key``/``depth_category``/``is_long``/``length_m``
+    et ``coords`` (tuple de parties ``((x, y), …)`` lu en base, ou ``None``
+    si illisible -> différent). ``side`` fait partie de la clé, donc pas
+    comparé ici. Longueur et géométrie à ``tol`` près ; géométrie = celle
+    qui SERAIT écrite (:func:`segment_half_geometry` puis
+    :func:`geometry_for_column`) : même nombre de parties, mêmes nombres de
+    sommets, sommets à ``tol`` près. Fonction PURE.
+    """
+    if existing.get("road_key") != half.road_key:
+        return True
+    if existing.get("depth_category") != half.depth_category:
+        return True
+    if bool(existing.get("is_long")) != bool(half.is_long) or existing.get("is_long") is None:
+        return True
+    length = existing.get("length_m")
+    if not isinstance(length, (int, float)) or abs(length - half.length_m) > tol:
+        return True
+    coords = existing.get("coords")
+    fresh, _dropped = geometry_for_column(segment_half_geometry(half), multi_column)
+    if not coords or len(coords) != len(fresh):
+        return True
+    for old_part, new_part in zip(coords, fresh):
+        if len(old_part) != len(new_part):
+            return True
+        for (ex, ey), (fx, fy) in zip(old_part, new_part):
+            if abs(ex - fx) > tol or abs(ey - fy) > tol:
+                return True
+    return False
+
+
+def plan_segment_sync(fresh, existing, scope_roads=None, multi_column=True) -> SegmentSyncPlan:
+    """Répartit les moitiés recalculées en insert / update / delete / inchangées.
+
+    ``fresh`` : SegmentHalf de build_segment_halves (cet appel) — clés uniques.
+    ``existing`` : dict clé (a, b, half, side) -> état en base (cf.
+    :func:`segment_half_changed`). ``scope_roads`` : road_keys RECALCULÉES
+    (mode incrémental) ou ``None`` (reconstruction complète : tout est dans
+    le périmètre).
+
+    * insert : clé fraîche absente de la base ;
+    * update : clé présente mais contenu différent — un segment IDENTIQUE
+      n'est jamais réécrit (compté dans ``unchanged``) ;
+    * delete : clé en base, absente de ``fresh``, ET dans le périmètre (son
+      road_key est recalculé) : une purge ne touche JAMAIS une route propre,
+      dont les segments ne figurent pas dans ``fresh`` puisqu'elle n'a pas
+      été recalculée. Fonction PURE.
+    """
+    fresh_by_key = {}
+    for half in fresh:
+        fresh_by_key.setdefault(segment_key(half), half)
+    to_insert, to_update, unchanged = [], [], 0
+    for key, half in fresh_by_key.items():
+        current = existing.get(key)
+        if current is None:
+            to_insert.append(half)
+        elif segment_half_changed(half, current, multi_column=multi_column):
+            to_update.append(half)
+        else:
+            unchanged += 1
+    to_delete = sorted(
+        key for key, current in existing.items()
+        if key not in fresh_by_key
+        and (scope_roads is None or current.get("road_key") in scope_roads)
+    )
+    return SegmentSyncPlan(to_insert, to_update, to_delete, unchanged)
+
+
+def point_changed(old, new, tol=SEGMENT_COMPARE_TOLERANCE) -> bool:
+    """Un point upserté a-t-il changé d'une façon qui impacte les segments ?
+
+    ``old`` : état lu en base AVANT l'upsert (dict ``depth_category``/
+    ``address_raw``/``x``/``y``, ``x``/``y`` à ``None`` si géométrie
+    illisible) ou ``None`` (point nouveau). ``new`` : valeurs écrites. Seuls
+    comptent la catégorie (couleur, gris), l'adresse (nom de rue) et la
+    position. Fonction PURE.
+    """
+    if old is None:
+        return True
+    if (old.get("depth_category") or "") != (new.get("depth_category") or ""):
+        return True
+    if (old.get("address_raw") or "") != (new.get("address_raw") or ""):
+        return True
+    if old.get("x") is None or old.get("y") is None:
+        return True
+    return math.hypot(old["x"] - new["x"], old["y"] - new["y"]) > tol
+
+
+def index_existing_segments(existing):
+    """Index des segments en base -> (ids par road_key, road_keys par id, ids couverts).
+
+    Les sentinelles de bout de route ne sont pas des interventions. Fonction PURE.
+    """
+    road_ids = defaultdict(set)
+    id_roads = defaultdict(set)
+    for (point_a, point_b, _half, _side), current in existing.items():
+        road_key = current.get("road_key")
+        for intervention_id in (point_a, point_b):
+            if intervention_id in (ROAD_START_SENTINEL, ROAD_END_SENTINEL):
+                continue
+            road_ids[road_key].add(intervention_id)
+            id_roads[intervention_id].add(road_key)
+    return dict(road_ids), dict(id_roads), set(id_roads)
+
+
+def inconsistent_roads(existing) -> set:
+    """road_keys dont les segments en base ne forment pas une chaîne valide.
+
+    Une reconstruction saine donne, par (road_key, side) : au plus un segment
+    de début et un de fin de route, et pour chaque point au plus UNE moitié
+    'a' hors début de route (vers son successeur ou vers la fin de route) ;
+    et chaque point n'appartient qu'à UN SEUL (road_key, side). Une violation signale des segments PÉRIMÉS laissés en place par un run
+    dont la purge a été suspendue (garde-fous) : la route doit être refaite
+    au prochain run, même si aucun de ses points n'a changé. Fonction PURE.
+    """
+    starts = Counter()
+    ends = Counter()
+    outgoing = Counter()
+    groups_of_point = defaultdict(set)
+    for (point_a, point_b, half, side), current in existing.items():
+        group = (current.get("road_key"), side)
+        for intervention_id in (point_a, point_b):
+            if intervention_id not in (ROAD_START_SENTINEL, ROAD_END_SENTINEL):
+                groups_of_point[intervention_id].add(group)
+        if point_b == ROAD_START_SENTINEL:
+            starts[group] += 1
+        elif half == "a":
+            outgoing[(group, point_a)] += 1
+            if point_b == ROAD_END_SENTINEL:
+                ends[group] += 1
+    bad = {group[0] for group, n in starts.items() if n > 1}
+    bad |= {group[0] for group, n in ends.items() if n > 1}
+    bad |= {group[0] for (group, _point), n in outgoing.items() if n > 1}
+    for groups in groups_of_point.values():
+        if len(groups) > 1:  # point passé de côté ou de route
+            bad |= {group[0] for group in groups}
+    return bad
+
+
+def initial_dirty_ids(changed_ids, eligible_ids, locatable_ids, covered_ids) -> set:
+    """Points « sales » de départ du mode incrémental. Fonction PURE.
+
+    * ``changed_ids`` — nouveaux/modifiés par l'upsert de CE run (catégorie,
+      adresse ou position, cf. :func:`point_changed`) ;
+    * ``locatable_ids - covered_ids`` — points de couleur (``eligible_ids``)
+      AVEC nom de rue extractible (``locatable_ids``) absents de tout segment :
+      jamais localisés, ou segments perdus (retentés à chaque run) ;
+    * ``covered_ids - eligible_ids`` — points cités par des segments mais
+      désormais gris ou supprimés de la table : leurs routes sont à refaire.
+    """
+    return (
+        set(changed_ids)
+        | (set(locatable_ids) - set(covered_ids))
+        | (set(covered_ids) - set(eligible_ids))
+    )
+
+
+def expand_dirty_roads(dirty_ids, eligible_ids, road_ids, id_roads, locate, companions=None):
+    """Propage les points sales aux routes à recalculer, jusqu'au point fixe.
+
+    Pour chaque lot : les routes des segments EXISTANTS qui citent ses points,
+    plus les routes où ses points éligibles sont (re)localisés via ``locate``
+    (callable ``list[id] -> dict id -> road_key``, appelé seulement pour les
+    points jamais tentés) deviennent sales ; les AUTRES points de chaque
+    nouvelle route sale (connus par ses segments existants) sont ajoutés au
+    lot suivant, pour reconstruire la route en entier. Terminaison : les
+    ensembles ne font que croître. ``companions`` (cf.
+    :func:`colocated_raw_groups`) : tout point ajouté entraîne les membres de
+    son groupe co-localisé (le nœud fusionné doit être recalculé en entier).
+    Retourne ``(routes_sales, localisés)``,
+    ``localisés`` = dict id -> road_key. Fonction PURE (``locate`` injecté).
+    """
+    dirty_roads: set = set()
+    located: dict = {}
+    seen: set = set()
+    companions = companions or {}
+    pending = with_companions(dirty_ids, companions)
+    while pending:
+        batch = sorted(pending - seen)
+        seen.update(batch)
+        new_roads = set()
+        for intervention_id in batch:
+            new_roads.update(id_roads.get(intervention_id, ()))
+        to_locate = [i for i in batch if i in eligible_ids]
+        if to_locate:
+            result = locate(to_locate)
+            located.update(result)
+            new_roads.update(result.values())
+        pending = set()
+        for road_key in sorted(new_roads - dirty_roads):
+            dirty_roads.add(road_key)
+            pending.update(road_ids.get(road_key, ()))
+        pending = with_companions(pending, companions) - seen
+    return dirty_roads, located
+
+
+# --- Repli Overpass : extraction OSM + localisation Python (PUR) -------------
+@dataclass
+class OsmWay:
+    """Une voie OSM nommée (tag ``highway``) extraite d'Overpass.
+
+    ``names`` : noms normalisés (:func:`normalize_street_name`) des clés
+    :data:`OSM_NAME_KEYS` présentes. ``coords`` : sommets ``(x, y)`` — en
+    WGS84 ``(lon, lat)`` à la sortie de :func:`parse_overpass_ways`, en
+    EPSG:31370 une fois reprojetés par l'appelant (seul repère dans lequel
+    les fonctions de localisation, en mètres, ont un sens).
+    """
+
+    way_id: int
+    names: tuple
+    highway: str
+    coords: list
+    # Tags OSM bruts (name, name:de, name:fr, name:nl, ref, maxspeed…) et
+    # géométrie WGS84 d'origine : nécessaires à l'alimentation de ref.osm_roads
+    # (fn_asbuilt_store_osm_ways reprojette elle-même depuis le WGS84).
+    tags: dict = field(default_factory=dict)
+    coords_wgs84: tuple = ()
+
+
+class OverpassError(RuntimeError):
+    """Levée quand aucun miroir Overpass n'a fourni de réponse exploitable."""
+
+
+def normalize_street_name(name) -> str:
+    """Nom de rue normalisé pour comparaison : minuscules, sans accents, ß -> ss.
+
+    Équivalent Python de ``lower(unaccent(...))`` côté SQL, espaces réduits.
+    Fonction PURE.
+    """
+    text = (name or "").lower().replace("ß", "ss")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return " ".join(text.split())
+
+
+# Paramètres Lambert belge 72 (EPSG:31370) et transformation de datum WGS84 ->
+# BD72 (EPSG « BD72 to WGS 84 (3) », 7 paramètres, convention coordinate frame,
+# appliquée en INVERSE) — identiques au pipeline PROJ retenu par QGIS pour
+# EPSG:4326 -> EPSG:31370 (précision annoncée : 1 m).
+_WGS84_A, _WGS84_F = 6378137.0, 1.0 / 298.257223563
+_INTL_A, _INTL_F = 6378388.0, 1.0 / 297.0
+_BD72_TO_WGS84 = {  # translations (m), rotations (secondes d'arc), échelle (ppm)
+    "tx": -106.8686, "ty": 52.2978, "tz": -103.7239,
+    "rx": -0.3366, "ry": 0.457, "rz": -1.8422, "ds": -1.2747,
+}
+_L72_LON0 = math.radians(4.36748666666667)
+_L72_LAT1 = math.radians(51.1666672333333)
+_L72_LAT2 = math.radians(49.8333339)
+_L72_X0, _L72_Y0 = 150000.013, 5400088.438
+
+
+def _geodetic_to_ecef(lon, lat, a, f):
+    e2 = f * (2 - f)
+    n = a / math.sqrt(1 - e2 * math.sin(lat) ** 2)
+    return (
+        n * math.cos(lat) * math.cos(lon),
+        n * math.cos(lat) * math.sin(lon),
+        n * (1 - e2) * math.sin(lat),
+    )
+
+
+def _ecef_to_geodetic(x, y, z, a, f):
+    e2 = f * (2 - f)
+    lon = math.atan2(y, x)
+    p = math.hypot(x, y)
+    lat = math.atan2(z, p * (1 - e2))
+    for _ in range(10):
+        n = a / math.sqrt(1 - e2 * math.sin(lat) ** 2)
+        lat = math.atan2(z + e2 * n * math.sin(lat), p)
+    return lon, lat
+
+
+def wgs84_to_lambert72_pure(lon, lat):
+    """WGS84 (lon, lat en degrés) -> Lambert belge 72 (x, y en m), en Python PUR.
+
+    Repli sans PyQGIS (tests, contrôles d'ordre de grandeur) : cartésiennes
+    WGS84 -> Helmert 7 paramètres inverse vers BD72 (ellipsoïde Hayford 1924)
+    -> conique conforme de Lambert 2SP (paramètres EPSG:31370). Même chaîne
+    que PROJ ; écart constaté < 1 cm sur la Belgique. Dans QGIS, le script
+    utilise :func:`wgs84_to_lambert` (QgsCoordinateTransform).
+    """
+    p = _BD72_TO_WGS84
+    sec = math.pi / (180.0 * 3600.0)
+    rx, ry, rz = p["rx"] * sec, p["ry"] * sec, p["rz"] * sec
+    scale = 1.0 + p["ds"] * 1e-6
+    xw, yw, zw = _geodetic_to_ecef(math.radians(lon), math.radians(lat), _WGS84_A, _WGS84_F)
+    # Inverse de X_w = T + scale * R X_bd (coordinate frame, petites rotations) :
+    # X_bd = R^T (X_w - T) / scale.
+    dx, dy, dz = (xw - p["tx"]) / scale, (yw - p["ty"]) / scale, (zw - p["tz"]) / scale
+    xb = dx - rz * dy + ry * dz
+    yb = rz * dx + dy - rx * dz
+    zb = -ry * dx + rx * dy + dz
+    lam, phi = _ecef_to_geodetic(xb, yb, zb, _INTL_A, _INTL_F)
+    e = math.sqrt(_INTL_F * (2 - _INTL_F))
+
+    def m(ph):
+        return math.cos(ph) / math.sqrt(1 - (e * math.sin(ph)) ** 2)
+
+    def t(ph):
+        es = e * math.sin(ph)
+        return math.tan(math.pi / 4 - ph / 2) / ((1 - es) / (1 + es)) ** (e / 2)
+
+    n = (math.log(m(_L72_LAT1)) - math.log(m(_L72_LAT2))) / (
+        math.log(t(_L72_LAT1)) - math.log(t(_L72_LAT2))
+    )
+    big_f = m(_L72_LAT1) / (n * t(_L72_LAT1) ** n)
+    r = _INTL_A * big_f * t(phi) ** n   # r0 = 0 (lat_0 = 90°)
+    theta = n * (lam - _L72_LON0)
+    return _L72_X0 + r * math.sin(theta), _L72_Y0 - r * math.cos(theta)
+
+
+def lambert72_to_wgs84_pure(x, y):
+    """Lambert belge 72 (x, y) -> WGS84 ``(lon, lat)`` en degrés, Python PUR.
+
+    Inverse exact de :func:`wgs84_to_lambert72_pure` (conique inverse, puis
+    Helmert BD72 -> WGS84 direct) ; sert aux tests de non-régression des
+    emprises de requête (ordre lat/lon). Fonction PURE.
+    """
+    e = math.sqrt(_INTL_F * (2 - _INTL_F))
+
+    def m(ph):
+        return math.cos(ph) / math.sqrt(1 - (e * math.sin(ph)) ** 2)
+
+    def t(ph):
+        es = e * math.sin(ph)
+        return math.tan(math.pi / 4 - ph / 2) / ((1 - es) / (1 + es)) ** (e / 2)
+
+    n = (math.log(m(_L72_LAT1)) - math.log(m(_L72_LAT2))) / (
+        math.log(t(_L72_LAT1)) - math.log(t(_L72_LAT2))
+    )
+    big_f = m(_L72_LAT1) / (n * t(_L72_LAT1) ** n)
+    dx, dy = x - _L72_X0, _L72_Y0 - y
+    r = math.copysign(math.hypot(dx, dy), n)
+    theta = math.atan2(dx, dy)
+    tt = (r / (_INTL_A * big_f)) ** (1.0 / n)
+    phi = math.pi / 2 - 2 * math.atan(tt)
+    for _ in range(15):
+        es = e * math.sin(phi)
+        phi = math.pi / 2 - 2 * math.atan(tt * ((1 - es) / (1 + es)) ** (e / 2))
+    lam = theta / n + _L72_LON0
+    p = _BD72_TO_WGS84
+    sec = math.pi / (180.0 * 3600.0)
+    rx, ry, rz = p["rx"] * sec, p["ry"] * sec, p["rz"] * sec
+    scale = 1.0 + p["ds"] * 1e-6
+    xb, yb, zb = _geodetic_to_ecef(lam, phi, _INTL_A, _INTL_F)
+    xw = p["tx"] + scale * (xb + rz * yb - ry * zb)
+    yw = p["ty"] + scale * (-rz * xb + yb + rx * zb)
+    zw = p["tz"] + scale * (ry * xb - rx * yb + zb)
+    lon, lat = _ecef_to_geodetic(xw, yw, zw, _WGS84_A, _WGS84_F)
+    return math.degrees(lon), math.degrees(lat)
+
+
+def lambert_bbox_to_wgs84(bbox, to_wgs84):
+    """Emprise Lambert 72 ``(xmin, ymin, xmax, ymax)`` -> ``(south, west, north, east)``.
+
+    ``to_wgs84(x, y) -> (lon, lat)`` (QGIS en production, formule pure en
+    test). Les 4 coins sont reprojetés (la reprojection tourne légèrement
+    l'emprise) ; ordre de sortie = celui d'Overpass : LATITUDES puis
+    longitudes. Fonction PURE.
+    """
+    xmin, ymin, xmax, ymax = bbox
+    corners = [to_wgs84(x, y) for x in (xmin, xmax) for y in (ymin, ymax)]
+    lons = [lon for lon, _lat in corners]
+    lats = [lat for _lon, lat in corners]
+    return min(lats), min(lons), max(lats), max(lons)
+
+
+def lambert72_plausible(x, y) -> bool:
+    """Coordonnées vraisemblables en EPSG:31370 (Belgique) ? Fonction PURE."""
+    try:
+        return (
+            LAMBERT72_X_RANGE[0] <= float(x) <= LAMBERT72_X_RANGE[1]
+            and LAMBERT72_Y_RANGE[0] <= float(y) <= LAMBERT72_Y_RANGE[1]
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+@dataclass
+class OverpassRequest:
+    """Une requête Overpass : noms de rue d'une tuile, emprise serrée (EPSG:31370)."""
+
+    bbox: tuple        # (xmin, ymin, xmax, ymax) en EPSG:31370
+    names: tuple       # noms de rue tels qu'extraits des adresses (triés)
+    ids: tuple         # intervention_id des points concernés (triés)
+
+
+def plan_overpass_requests(items, margin_m=OVERPASS_BBOX_MARGIN_M,
+                           max_names=OVERPASS_MAX_NAMES_PER_QUERY,
+                           max_span_m=OVERPASS_MAX_REQUEST_SPAN_M,
+                           grid_m=OVERPASS_BBOX_GRID_M) -> list:
+    """Regroupe les points à localiser en requêtes Overpass par NOMS, peu nombreuses.
+
+    ``items`` : ``(intervention_id, nom_de_rue, x, y[, localité])`` en
+    EPSG:31370 ; localité = place normalisée, à défaut code postal.
+
+    1. LOTS par couple (rue normalisée, localité normalisée) : deux rues
+       homonymes de localités différentes ne partagent jamais un lot ; emprise
+       d'un lot = SES points ± ``margin_m``.
+    2. REQUÊTES : lots empaquetés dans l'ordre (localité, rue) tant que la
+       requête reste sous ``max_names`` rues, sous ``max_span_m`` de côté
+       (emprise réunie) et SANS deux lots de même nom de rue (une homonyme
+       ne partage jamais l'emprise d'une autre) — tuiles adaptatives : une
+       localité entière tient souvent en une requête.
+
+    Emprise arrondie vers l'extérieur à ``grid_m`` m (une même zone redonne
+    la même requête : cache efficace). Ordre déterministe. Fonction PURE.
+    """
+    lots = defaultdict(list)
+    for item in items:
+        intervention_id, street, x, y = item[:4]
+        locality = item[4] if len(item) > 4 else ""
+        key = normalize_street_name(street)
+        if not key:
+            continue
+        lots[(normalize_street_name(locality), key)].append((intervention_id, street, x, y))
+
+    def bbox_of(members):
+        xs = [m[2] for m in members]
+        ys = [m[3] for m in members]
+        return (min(xs) - margin_m, min(ys) - margin_m, max(xs) + margin_m, max(ys) + margin_m)
+
+    def union(a, b):
+        return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+
+    def rounded(box):
+        return (
+            math.floor(box[0] / grid_m) * grid_m, math.floor(box[1] / grid_m) * grid_m,
+            math.ceil(box[2] / grid_m) * grid_m, math.ceil(box[3] / grid_m) * grid_m,
+        )
+
+    requests = []
+    current = None  # [bbox, noms normalisés, noms bruts, ids]
+    for (locality, key) in sorted(lots):
+        members = lots[(locality, key)]
+        box = bbox_of(members)
+        if current is not None:
+            merged = union(current[0], box)
+            fits = (
+                len(current[1]) < max_names
+                and key not in current[1]
+                and merged[2] - merged[0] <= max_span_m
+                and merged[3] - merged[1] <= max_span_m
+            )
+            if fits:
+                current[0] = merged
+                current[1].add(key)
+                current[2].update(m[1] for m in members)
+                current[3].update(m[0] for m in members)
+                continue
+            requests.append(current)
+        current = [box, {key}, {m[1] for m in members}, {m[0] for m in members}]
+    if current is not None:
+        requests.append(current)
+    return [
+        OverpassRequest(bbox=rounded(box), names=tuple(sorted(raw)), ids=tuple(sorted(ids)))
+        for box, _keys, raw, ids in requests
+    ]
+
+
+# Variantes tolérées dans le filtre de nom Overpass : accents (l'adresse les
+# omet souvent), ß/ss, apostrophe droite/typographique, tiret/espace. Groupes
+# d'ALTERNATION (pas de classes [..]) : sûrs même si le moteur regex du
+# serveur travaille octet par octet sur l'UTF-8.
+_ACCENT_VARIANTS = {
+    "a": "aàáâäãå", "c": "cç", "e": "eéèêë", "i": "iìíîï", "n": "nñ",
+    "o": "oòóôöõ", "u": "uùúûü", "y": "yýÿ",
+}
+_ERE_METACHARS = set("\\.^$|?*+()[]{}")
+
+
+def street_name_regex(name) -> str:
+    """Regex ERE (sans ancres) reconnaissant ``name`` et ses graphies usuelles.
+
+    Accents ignorés (chaque voyelle -> groupe de ses variantes accentuées,
+    minuscules ET majuscules, la casse ASCII étant gérée par le drapeau
+    ``,i`` de la requête), ``ß``/``ss`` équivalents, ``'``/``’`` et ``-``/
+    espace équivalents, métacaractères regex échappés. Fonction PURE.
+    """
+    base = unicodedata.normalize("NFKD", " ".join((name or "").split()))
+    base = "".join(ch for ch in base if not unicodedata.combining(ch))
+    out = []
+    i = 0
+    while i < len(base):
+        ch = base[i]
+        low = ch.lower()
+        if low == "ß" or (low == "s" and base[i:i + 2].lower() == "ss"):
+            out.append("(ss|ß|SS|ẞ)")
+            i += 1 if low == "ß" else 2
+            continue
+        if low in _ACCENT_VARIANTS:
+            variants = _ACCENT_VARIANTS[low]
+            out.append("(" + "|".join(variants + variants[1:].upper()) + ")")
+        elif ch in ("'", "’"):
+            out.append("('|’)")
+        elif ch in ("-", " "):
+            out.append("(-| )")
+        elif ch in _ERE_METACHARS:
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _ql_string(text) -> str:
+    """Littéral chaîne Overpass QL entre guillemets (échappe ``\\`` et ``"``)."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def build_overpass_query(names, south, west, north, east,
+                         timeout_s=OVERPASS_QUERY_TIMEOUT_S) -> str:
+    """Requête Overpass QL : voies ``highway`` portant l'un des ``names`` dans l'emprise.
+
+    Une clause par clé de :data:`OSM_NAME_KEYS`, TOUTES filtrées par la même
+    regex ``^(n1|n2|…)$`` insensible à la casse (:func:`street_name_regex`) :
+    seules les rues concernées sont renvoyées, pas le réseau entier.
+    Fonction PURE.
+    """
+    pattern = "^(" + "|".join(street_name_regex(n) for n in names) + ")$"
+    bbox = f"({south:.7f},{west:.7f},{north:.7f},{east:.7f})"
+    literal = _ql_string(pattern)
+    clauses = "".join(
+        f'way["highway"]["{key}"~{literal},i]{bbox};' for key in OSM_NAME_KEYS
+    )
+    return f"[out:json][timeout:{int(timeout_s)}];({clauses});out geom;"
+
+
+def parse_overpass_ways(data, keep_unnamed=False) -> list:
+    """Réponse JSON Overpass -> list[OsmWay] (coords en ``(lon, lat)``).
+
+    Ignore sans lever les éléments non ``way``, sans géométrie exploitable
+    (moins de 2 sommets valides) ou mal formés, et — sauf ``keep_unnamed``
+    (repli par coordonnées) — les voies sans nom. Fonction PURE.
+    """
+    elements = data.get("elements") if isinstance(data, dict) else None
+    ways = []
+    for element in elements or ():
+        if not isinstance(element, dict) or element.get("type") != "way":
+            continue
+        tags = element.get("tags") or {}
+        names = []
+        for key in OSM_NAME_KEYS:
+            normalized = normalize_street_name(tags.get(key))
+            if normalized and normalized not in names:
+                names.append(normalized)
+        if not names and not keep_unnamed:
+            continue
+        coords = []
+        for vertex in element.get("geometry") or ():
+            try:
+                coords.append((float(vertex["lon"]), float(vertex["lat"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if len(coords) < 2:
+            continue
+        try:
+            way_id = int(element["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        ways.append(OsmWay(
+            way_id=way_id, names=tuple(names),
+            highway=str(tags.get("highway") or ""), coords=coords,
+            tags=dict(tags), coords_wgs84=tuple(coords),
+        ))
+    return ways
+
+
+def parse_overpass_status(text):
+    """Attente (s) avant un slot libre d'après ``/api/status`` ; 0 si libre, None si inconnu.
+
+    Formats du serveur : « 2 slots available now. » ou « Slot available
+    after: 2026-09-29T12:00:05Z, in 7 seconds. » (une ligne par slot occupé :
+    on retient la plus courte). Fonction PURE.
+    """
+    if not text:
+        return None
+    now = re.search(r"(\d+)\s+slots?\s+available\s+now", text)
+    if now and int(now.group(1)) > 0:
+        return 0.0
+    waits = [float(v) for v in re.findall(r"in\s+(-?\d+)\s+seconds?", text)]
+    if waits:
+        return max(0.0, min(waits))
+    return None
+
+
+def retry_after_seconds(headers):
+    """Valeur numérique de l'en-tête ``Retry-After`` (secondes), sinon None. PURE."""
+    try:
+        value = headers.get("Retry-After") if headers is not None else None
+        return max(0.0, float(value)) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def overpass_wait_s(attempt, backoff_s=OVERPASS_BACKOFF_S, jitter=0.0,
+                    retry_after=None, slot_wait=None, max_wait=OVERPASS_MAX_WAIT_S):
+    """Attente avant la tentative suivante (exponentielle + gigue, Retry-After, slot).
+
+    ``backoff_s × 2^attempt`` (4 s, 8 s, 16 s…) + ``jitter`` ; au moins
+    ``Retry-After`` et l'attente de slot annoncée par /api/status ; plafonnée
+    à ``max_wait``. Fonction PURE.
+    """
+    wait = backoff_s * (2 ** attempt) + jitter
+    for extra in (retry_after, slot_wait):
+        if extra is not None:
+            wait = max(wait, extra)
+    return min(wait, max_wait)
+
+
+def _overpass_status_url(url) -> str:
+    return url.rsplit("/", 1)[0] + "/status"
+
+
+def overpass_fetch(query, user_agent, mirrors=OVERPASS_MIRRORS,
+                   timeout=OVERPASS_TIMEOUT_S,
+                   fallback_timeout=OVERPASS_FALLBACK_TIMEOUT_S,
+                   attempts=OVERPASS_PRIMARY_ATTEMPTS,
+                   fallback_attempts=OVERPASS_FALLBACK_ATTEMPTS,
+                   backoff_s=OVERPASS_BACKOFF_S,
+                   urlopen=None, sleep=None, rng=None, check_status=True):
+    """POST ``query`` sur les miroirs Overpass -> dict JSON du premier succès.
+
+    Par miroir (principal : ``attempts`` tentatives, délai ``timeout`` ;
+    repli : ``fallback_attempts``, ``fallback_timeout``) : sur HTTP
+    429/502/503/504 (surcharge, limitation de débit), nouvelle tentative sur
+    le MÊME miroir après :func:`overpass_wait_s` — 4 s, 8 s, 16 s + gigue,
+    au moins ``Retry-After`` et l'attente de slot lue sur ``/api/status``
+    (plafond 60 s). Avant la 1re tentative sur le principal, ``/api/status``
+    est aussi consulté (attente d'un slot libre). Autres erreurs (réseau,
+    délai dépassé, JSON invalide, ``remark`` d'erreur : éléments PARTIELS
+    inexploitables) : miroir suivant. :class:`OverpassError` si tous
+    échouent. ``urlopen``/``sleep``/``rng`` injectables (tests : aucune
+    attente réelle).
+    """
+    urlopen = urlopen or urllib.request.urlopen
+    sleep = sleep or time.sleep
+    rng = rng or random.random
+    body = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    headers = {
+        "User-Agent": user_agent,
+        "Content-Type": "application/x-www-form-urlencoded",
     }
-    to_delete = sorted(existing_keys - fresh_keys)
-    return list(fresh), to_delete
+
+    def slot_wait(url):
+        if not check_status:
+            return None
+        try:
+            request = urllib.request.Request(
+                _overpass_status_url(url), headers={"User-Agent": user_agent}
+            )
+            with urlopen(request, timeout=10) as response:
+                return parse_overpass_status(response.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+
+    errors = []
+    for index, url in enumerate(mirrors):
+        primary = index == 0
+        tries = max(1, attempts if primary else fallback_attempts)
+        if primary:
+            wait = slot_wait(url)
+            if wait:
+                sleep(min(wait, OVERPASS_MAX_WAIT_S))
+        for attempt in range(tries):
+            request = urllib.request.Request(url, data=body, headers=headers)
+            try:
+                with urlopen(request, timeout=timeout if primary else fallback_timeout) as response:
+                    data = json.loads(response.read().decode("utf-8", "replace"))
+            except urllib.error.HTTPError as exc:
+                errors.append(f"{url} : HTTP {exc.code}")
+                if exc.code in OVERPASS_RETRY_HTTP_CODES and attempt + 1 < tries:
+                    sleep(overpass_wait_s(
+                        attempt, backoff_s, jitter=rng() * backoff_s / 2,
+                        retry_after=retry_after_seconds(getattr(exc, "headers", None)),
+                        slot_wait=slot_wait(url) if exc.code in (429, 504) else None,
+                    ))
+                    continue
+                break
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                errors.append(f"{url} : {exc}")
+                break
+            if not isinstance(data, dict) or not isinstance(data.get("elements"), list):
+                errors.append(f"{url} : réponse inattendue")
+                break
+            remark = str(data.get("remark") or "")
+            if "error" in remark.lower():
+                errors.append(f"{url} : {remark}")
+                break
+            return data
+    raise OverpassError(" ; ".join(errors) or "aucun miroir Overpass configuré")
+
+
+def overpass_cache_path(cache_dir, query) -> str:
+    """Fichier de cache d'une requête : ``<cache_dir>/<sha256(requête)>.json``."""
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()
+    return os.path.join(cache_dir, f"{digest}.json")
+
+
+def overpass_cache_read(path, ttl_s=OVERPASS_CACHE_TTL_S, now=None):
+    """Réponse en cache si présente, lisible et de moins de ``ttl_s`` ; sinon ``None``.
+
+    Tolérant : fichier absent, périmé, corrompu ou mal formé -> ``None`` (la
+    requête sera simplement refaite), jamais d'exception. Fonction PURE (E/S
+    fichier locales seulement).
+    """
+    now = time.time() if now is None else now
+    try:
+        if now - os.path.getmtime(path) > ttl_s:
+            return None
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("elements"), list):
+        return None
+    return data
+
+
+def overpass_cache_write(path, data) -> bool:
+    """Écrit la réponse en cache (écriture atomique) ; échec silencieux -> False."""
+    tmp = f"{path}.tmp"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        os.replace(tmp, path)
+        return True
+    except (OSError, TypeError, ValueError):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def fetch_overpass_cached(query, user_agent, cache_dir=None, fetch=None, now=None):
+    """Réponse Overpass via le cache disque si possible -> ``(data, depuis_cache)``.
+
+    ``cache_dir`` None -> pas de cache. Seules les réponses RÉUSSIES sont mises
+    en cache ; une erreur de ``fetch`` (:class:`OverpassError`) remonte.
+    """
+    fetch = fetch or overpass_fetch
+    path = overpass_cache_path(cache_dir, query) if cache_dir else None
+    if path:
+        cached = overpass_cache_read(path, now=now)
+        if cached is not None:
+            return cached, True
+    data = fetch(query, user_agent)
+    if path:
+        overpass_cache_write(path, data)
+    return data, False
+
+
+@dataclass
+class OverpassOutcome:
+    """Résultat d'une requête planifiée (données, ou erreur isolée)."""
+
+    request: OverpassRequest
+    data: Optional[dict]
+    error: str
+    elapsed_s: float
+    from_cache: bool
+
+
+def run_overpass_requests(requests, fetch, is_canceled=None, pause=None, report=None,
+                          max_consecutive_failures=OVERPASS_MAX_CONSECUTIVE_FAILURES,
+                          give_up_pause=None, state=None, clock=None) -> list:
+    """Exécute les requêtes UNE PAR UNE, chaque échec restant ISOLÉ.
+
+    ``fetch(request) -> (data, depuis_cache)``, lève :class:`OverpassError`.
+    L'échec d'une requête n'interrompt pas les suivantes. Coupe-circuit
+    (service manifestement indisponible) : seulement après
+    ``max_consecutive_failures`` échecs CONSÉCUTIFS **et** si AUCUNE requête
+    du run n'a réussi ; on fait alors une dernière pause (``give_up_pause``,
+    30 s) et un dernier essai avant de marquer les restantes « non tentées ».
+    ``state`` (dict partagé entre les appels d'un même run : requêtes par
+    noms puis par coordonnées) porte succès / échecs consécutifs. Annulation :
+    requêtes restantes « annulé ». ``pause()`` après chaque requête RÉSEAU,
+    ``report(i, n, outcome)`` après chacune. Fonction PURE (effets injectés).
+    """
+    clock = clock or time.monotonic
+    state = state if state is not None else {}
+    state.setdefault("successes", 0)
+    state.setdefault("consecutive", 0)
+    state.setdefault("gave_last_chance", False)
+    outcomes = []
+    total = len(requests)
+    for index, request in enumerate(requests, start=1):
+        circuit = (
+            state["consecutive"] >= max_consecutive_failures and state["successes"] == 0
+        )
+        if circuit and not state["gave_last_chance"]:
+            state["gave_last_chance"] = True
+            if give_up_pause is not None:
+                give_up_pause()
+            circuit = False  # un dernier essai après la pause
+        if is_canceled is not None and is_canceled():
+            outcome = OverpassOutcome(request, None, "annulé", 0.0, False)
+        elif circuit:
+            outcome = OverpassOutcome(
+                request, None,
+                f"non tentée ({state['consecutive']} échecs consécutifs sans aucun "
+                "succès : Overpass indisponible)",
+                0.0, False,
+            )
+        else:
+            started = clock()
+            try:
+                data, from_cache = fetch(request)
+                outcome = OverpassOutcome(request, data, "", clock() - started, from_cache)
+                state["successes"] += 1
+                state["consecutive"] = 0
+            except OverpassError as exc:
+                outcome = OverpassOutcome(request, None, str(exc), clock() - started, False)
+                state["consecutive"] += 1
+            if pause is not None and not outcome.from_cache and index < total:
+                pause()
+        outcomes.append(outcome)
+        if report is not None:
+            report(index, total, outcome)
+    return outcomes
+
+
+def index_ways_by_name(ways) -> dict:
+    """nom normalisé -> voies portant ce nom (triées par way_id, déterministe)."""
+    index = defaultdict(list)
+    for way in sorted(ways, key=lambda w: w.way_id):
+        for name in way.names:
+            index[name].append(way)
+    return dict(index)
+
+
+def highway_allowed_for_coords(highway) -> bool:
+    """Type de voie éligible au repli par coordonnées (``*_link`` compris)."""
+    value = (highway or "").strip().lower()
+    if value.endswith("_link"):
+        value = value[: -len("_link")]
+    return value in OSM_COORD_HIGHWAYS
+
+
+def build_overpass_coord_query(south, west, north, east,
+                               timeout_s=OVERPASS_QUERY_TIMEOUT_S) -> str:
+    """Requête Overpass QL du repli par coordonnées : voies carrossables de l'emprise.
+
+    Filtre ``highway`` par regex (types de :data:`OSM_COORD_HIGHWAYS` et leurs
+    ``_link`` ; chemins, pistes, trottoirs exclus), sur une EMPRISE serrée —
+    PAS ``around`` : mesuré le 29/09 sur overpass-api.de, ``around:30`` + regex
+    renvoie 504 en ~9 s (y compris sur un seul point) quand la même recherche
+    par emprise répond en 0,4 s (5 points) à 2 s (tuile de 2 km, 174 voies).
+    La distance au rayon est appliquée ensuite en Python. Fonction PURE.
+    """
+    kinds = "|".join(OSM_COORD_HIGHWAYS)
+    bbox = f"({south:.7f},{west:.7f},{north:.7f},{east:.7f})"
+    return (
+        f"[out:json][timeout:{int(timeout_s)}];"
+        f'way["highway"~"^({kinds})(_link)?$"]{bbox};out geom;'
+    )
+
+
+def plan_coord_requests(items, tile_m=OVERPASS_TILE_M,
+                        margin_m=OSM_COORD_FALLBACK_RADIUS_M + OSM_COORD_BBOX_EXTRA_M,
+                        grid_m=OVERPASS_BBOX_GRID_M) -> list:
+    """Regroupe les points du repli par coordonnées en requêtes par tuile.
+
+    ``items`` : ``(intervention_id, x, y)`` en EPSG:31370. Une requête par tuile
+    de ``tile_m`` m, emprise = points de la tuile ± ``margin_m`` (rayon + marge),
+    arrondie vers l'extérieur à ``grid_m`` m (cache). Fonction PURE.
+    """
+    tiles = defaultdict(list)
+    for intervention_id, x, y in items:
+        tiles[(math.floor(x / tile_m), math.floor(y / tile_m))].append((intervention_id, x, y))
+    requests = []
+    for tile in sorted(tiles):
+        members = tiles[tile]
+        xs = [m[1] for m in members]
+        ys = [m[2] for m in members]
+        requests.append(OverpassRequest(
+            bbox=(
+                math.floor((min(xs) - margin_m) / grid_m) * grid_m,
+                math.floor((min(ys) - margin_m) / grid_m) * grid_m,
+                math.ceil((max(xs) + margin_m) / grid_m) * grid_m,
+                math.ceil((max(ys) + margin_m) / grid_m) * grid_m,
+            ),
+            names=(),
+            ids=tuple(sorted({m[0] for m in members})),
+        ))
+    return requests
+
+
+def _way_identity(way):
+    """Identité d'une voie pour l'ambiguïté : son nom principal, ou elle-même si sans nom."""
+    return ("name", way.names[0]) if way.names else ("way", way.way_id)
+
+
+def nearest_way(px, py, ways, radius=OSM_COORD_FALLBACK_RADIUS_M,
+                ambiguity_m=OSM_COORD_AMBIGUITY_M):
+    """Voie carrossable la plus proche du point, dans le rayon -> ``(voie, raison)``.
+
+    Seules les voies :func:`highway_allowed_for_coords` comptent. Aucune dans
+    ``radius`` -> ``(None, 'no_match')``. AMBIGU (carrefour) si une voie
+    d'IDENTITÉ différente (autre nom ; une voie sans nom n'est identique qu'à
+    elle-même) est à moins de ``ambiguity_m`` m de plus que la plus proche ->
+    ``(None, 'ambiguous')``. Les tronçons d'une même rue ne s'excluent pas.
+    Départage déterministe : distance puis way_id. Fonction PURE.
+    """
+    candidates = []
+    for way in ways:
+        if not highway_allowed_for_coords(way.highway):
+            continue
+        dist = project_on_polyline(px, py, way.coords)[0]
+        if dist <= radius:
+            candidates.append((dist, way.way_id, way))
+    if not candidates:
+        return None, "no_match"
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    best_dist, _best_id, best = candidates[0]
+    identity = _way_identity(best)
+    for dist, _way_id, way in candidates[1:]:
+        if dist - best_dist > ambiguity_m:
+            break
+        if _way_identity(way) != identity:
+            return None, "ambiguous"
+    return best, None
+
+
+def locate_on_single_way(px, py, way):
+    """Localisation sur une voie SANS NOM : un tronçon isolé, sans fusion.
+
+    road_key ``overpass-noname:<way_id>`` (stable d'un run à l'autre) ;
+    position, point projeté et côté comme :func:`locate_on_ways`, bornes =
+    celles de la voie. Fonction PURE.
+    """
+    _dist, position_m, qx, qy, dir_x, dir_y = project_on_polyline(px, py, way.coords)
+    coords = way.coords
+    return {
+        "road_key": f"overpass-noname:{way.way_id}",
+        "position_m": position_m,
+        "x": qx,
+        "y": qy,
+        "side": side_of_point(dir_x, dir_y, px - qx, py - qy),
+        "highway": way.highway,
+        "extent": RoadExtent(
+            length_m=polyline_length(coords),
+            start_x=coords[0][0], start_y=coords[0][1],
+            end_x=coords[-1][0], end_y=coords[-1][1],
+        ),
+    }
+
+
+def locate_rows_on_osm(name_items, coord_items, ways,
+                       radius=OSM_COORD_FALLBACK_RADIUS_M,
+                       ambiguity_m=OSM_COORD_AMBIGUITY_M,
+                       preferred_ways=None):
+    """Localisation Overpass complète d'un lot : OSM_ID, puis NOM, puis COORDONNÉES.
+
+    ``name_items`` : ``(id, nom(s)_de_rue, x, y)`` — un nom, ou un tuple de noms
+    de RÉFÉRENCE essayés dans l'ordre (nom canonique Nominatim puis nom de
+    l'adresse, cf. :func:`reference_street_names`) ; ``coord_items`` : ``(id,
+    x, y)`` (points sans nom exploitable). ``ways`` : TOUTES les voies
+    extraites (EPSG:31370) — un seul index, un seul cache : une rue a le MÊME
+    road_key quel que soit le chemin qui y mène. ``preferred_ways`` : dict id
+    -> way_id OSM renvoyé par Nominatim pour ce point (objet highway) : l'axe
+    le plus sûr.
+
+    0. voie désignée par Nominatim (si extraite et à moins de LOCATE_RADIUS_M) ;
+    1. par nom (:func:`locate_on_ways`), noms de référence dans l'ordre ;
+    2. sinon — ou sans nom — par coordonnées : voie carrossable la plus proche
+       dans ``radius`` (:func:`nearest_way`, ambiguïté au carrefour) ; voie
+       nommée -> :func:`locate_on_ways` avec le NOM OSM de cette voie (même
+       composante fusionnée, position, côté que par nom) ; voie sans nom ->
+       :func:`locate_on_single_way`. Le match note alors si une voie portant
+       un nom de référence du point existe à moins de LOCATE_RADIUS_MAX_M
+       (``same_name_nearby``, cf. :func:`assess_attachment`).
+
+    Chaque match porte ``method`` ('osm_id'|'name'|'coords'), ``way_names``,
+    ``distance``. Retourne ``(résultats, raisons, axes)`` : ``résultats`` =
+    dict id -> (match, method) ; ``raisons`` = dict id -> 'ambiguous'|
+    'no_match' des points non localisés ; ``axes`` = dict road_key ->
+    polyligne FUSIONNÉE de l'axe (orientée comme les position_m). PURE.
+    """
+    preferred_ways = preferred_ways or {}
+    by_id = {w.way_id: w for w in ways}
+    named_ways = [w for w in ways if w.names]
+    index = index_ways_by_name(named_ways)
+    cache = {}
+    noname_lines = {}
+    results = {}
+    reasons = {}
+    fallback = []
+    point_names = {}
+
+    def finish(intervention_id, match, method):
+        match["method"] = method
+        results[intervention_id] = (match, method)
+        reasons.pop(intervention_id, None)
+
+    for intervention_id, streets, x, y in name_items:
+        names = (streets,) if isinstance(streets, str) else tuple(n for n in streets if n)
+        point_names[intervention_id] = {normalize_street_name(n) for n in names}
+        way = by_id.get(preferred_ways.get(intervention_id))
+        if way is not None and project_on_polyline(x, y, way.coords)[0] <= LOCATE_RADIUS_M:
+            if way.names:
+                match, _reason = locate_on_ways(x, y, way.names[0], index, cache=cache)
+            else:
+                match = locate_on_single_way(x, y, way)
+                noname_lines[match["road_key"]] = list(way.coords)
+            if match is not None:
+                match.setdefault("way_names", way.names)
+                match.setdefault("distance", project_on_polyline(x, y, way.coords)[0])
+                finish(intervention_id, match, "osm_id")
+                continue
+        match = None
+        for name in names:
+            match, reason = locate_on_ways(x, y, name, index, cache=cache)
+            if match is not None:
+                break
+            if reasons.get(intervention_id) != "ambiguous":
+                reasons[intervention_id] = reason
+        if match is not None:
+            finish(intervention_id, match, "name")
+        else:
+            reasons.setdefault(intervention_id, "no_match")
+            fallback.append((intervention_id, x, y))
+    fallback.extend(coord_items)
+    for intervention_id, x, y in fallback:
+        way, reason = nearest_way(x, y, ways, radius, ambiguity_m)
+        if way is None:
+            # Un échec par nom « ambigu » reste l'information la plus utile.
+            if reasons.get(intervention_id) != "ambiguous":
+                reasons[intervention_id] = reason
+            continue
+        distance = project_on_polyline(x, y, way.coords)[0]
+        if way.names:
+            match, reason = locate_on_ways(x, y, way.names[0], index, cache=cache)
+        else:
+            match, reason = locate_on_single_way(x, y, way), None
+            noname_lines[match["road_key"]] = list(way.coords)
+        if match is None:
+            reasons[intervention_id] = reason
+            continue
+        wanted = point_names.get(intervention_id, set())
+        match["way_names"] = way.names
+        match["distance"] = distance
+        match["same_name_nearby"] = bool(wanted) and not (wanted & set(way.names)) and any(
+            project_on_polyline(x, y, other.coords)[0] <= LOCATE_RADIUS_MAX_M
+            for name in wanted for other in index.get(name, ())
+        )
+        finish(intervention_id, match, "coords")
+    lines = dict(cache.get("lines", {}))
+    lines.update(noname_lines)
+    used = {match["road_key"] for match, _method in results.values()}
+    return results, reasons, {key: line for key, line in lines.items() if key in used}
+
+
+_FREEWAY_CLASSES = ("motorway", "trunk")
+
+
+def assess_attachment(match, point_names=(), hit=None):
+    """Score de CONFIANCE d'un rattachement point -> axe, et cause de rejet éventuelle.
+
+    ``match`` : résultat de localisation (``method``, ``distance``,
+    ``way_names``, ``highway``, ``same_name_nearby``) ; ``point_names`` : noms
+    de référence du point ; ``hit`` : :class:`NominatimHit` du point si géocodé
+    À CE RUN (métadonnées en mémoire), sinon None. Rejet (retourne une cause)
+    si :
+
+    * le géocodage n'a trouvé qu'une LOCALITÉ (point au centre d'une zone) ;
+    * rattachement par coordonnées à plus de OSM_COORD_FALLBACK_RADIUS_M ;
+    * nom de la voie différent des noms de référence ET une voie portant l'un
+      d'eux existe à proximité (le point appartient sans doute à celle-ci) ;
+    * autoroute / voie rapide pour une adresse de bâtiment, sans nom commun.
+
+    Score (0–100, informatif) : 100 − 2/m de distance − 30 si nom différent −
+    20 si Nominatim n'a trouvé que la rue − 40 si classe implausible − 60 si
+    localité seulement. Retourne ``(score, cause_ou_None)``. Fonction PURE.
+    """
+    method = match.get("method", "")
+    distance = float(match.get("distance") or 0.0)
+    wanted = {normalize_street_name(n) for n in point_names if n}
+    way_names = set(match.get("way_names") or ())
+    name_ok = method in ("db", "name") or bool(wanted & way_names)
+    highway = str(match.get("highway") or "").lower()
+    if highway.endswith("_link"):
+        highway = highway[: -len("_link")]
+    precision = hit.precision if hit is not None else ""
+    freeway_odd = highway in _FREEWAY_CLASSES and precision == "house" and not name_ok
+    score = 100.0 - 2.0 * distance
+    score -= 0 if name_ok else 30
+    score -= 20 if precision == "street" else 0
+    score -= 40 if freeway_odd else 0
+    score -= 60 if precision == "locality" else 0
+    score = max(0.0, min(100.0, score))
+    if precision == "locality":
+        return score, "géocodage imprécis (localité seulement)"
+    if method == "coords" and distance > OSM_COORD_FALLBACK_RADIUS_M:
+        return score, f"voie la plus proche à {distance:.0f} m (> {OSM_COORD_FALLBACK_RADIUS_M:g} m)"
+    if method == "coords" and not name_ok and match.get("same_name_nearby"):
+        return score, "nom de voie différent et voie du même nom que l'adresse à proximité"
+    if freeway_odd:
+        return score, f"classe de voie implausible pour une adresse ({highway})"
+    return score, None
+
+
+# Types de voie acceptés dans ref.osm_roads (ceux importés par Farois :
+# classes MAJOR/ARTERIAL/LOCAL) — la fonction SQL filtre aussi.
+FAROIS_HIGHWAY_TYPES = (
+    "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+    "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
+    "residential",
+)
+OSM_STORE_BATCH_SIZE = 500
+
+
+def osm_oneway(value) -> bool:
+    """Tag OSM ``oneway`` -> booléen (yes/true/1/-1 = sens unique). PURE.
+
+    ``-1`` (sens unique inversé) et ``reversible`` seraient REJETÉS par un
+    cast ``::boolean`` côté SQL : on envoie toujours un vrai booléen JSON.
+    """
+    return str(value or "").strip().lower() in ("yes", "true", "1", "-1")
+
+
+def build_store_payload(ways, already_sent=()):
+    """Voies Overpass à envoyer à fn_asbuilt_store_osm_ways -> (objets JSON, ids).
+
+    Filtre : types :data:`FAROIS_HIGHWAY_TYPES`, géométrie WGS84 d'origine
+    (≥ 2 sommets), identifiant positif, pas déjà envoyée pendant le run
+    (``already_sent``), dédoublonnage par osm_id. ``wkt`` en WGS84
+    (``LINESTRING(lon lat, …)``) : la fonction SQL reprojette elle-même.
+    Fonction PURE.
+    """
+    sent = set(already_sent)
+    payload = []
+    for way in ways:
+        if way.way_id <= 0 or way.way_id in sent:
+            continue
+        if way.highway not in FAROIS_HIGHWAY_TYPES or len(way.coords_wgs84) < 2:
+            continue
+        sent.add(way.way_id)
+        tags = way.tags or {}
+        payload.append({
+            "osm_id": way.way_id,
+            "highway": way.highway,
+            "name": str(tags.get("name") or ""),
+            "name_de": str(tags.get("name:de") or ""),
+            "name_fr": str(tags.get("name:fr") or ""),
+            "name_nl": str(tags.get("name:nl") or ""),
+            "ref": str(tags.get("ref") or ""),
+            "maxspeed": str(tags.get("maxspeed") or ""),
+            "surface": str(tags.get("surface") or ""),
+            "lanes": str(tags.get("lanes") or ""),
+            "oneway": osm_oneway(tags.get("oneway")),
+            "wkt": "LINESTRING(" + ", ".join(
+                f"{lon:.7f} {lat:.7f}" for lon, lat in way.coords_wgs84
+            ) + ")",
+        })
+    return payload, [item["osm_id"] for item in payload]
+
+
+def store_osm_ways_sql(payload) -> str:
+    """Appel SQL de fn_asbuilt_store_osm_ways avec le lot en JSON, sans injection.
+
+    Le JSON (échappements JSON standard : guillemets, antislashs, contrôles)
+    est passé en chaîne « dollar-quoted » dont la balise est choisie ABSENTE du
+    texte — apostrophes et antislashs n'y ont aucun sens particulier. PURE.
+    """
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    tag, n = "osmw", 0
+    while f"${tag}$" in text:
+        n += 1
+        tag = f"osmw{n}"
+    return f"SELECT public.fn_asbuilt_store_osm_ways(${tag}${text}${tag}$::jsonb)"
+
+
+def build_overpass_ids_query(way_ids, timeout_s=OVERPASS_QUERY_TIMEOUT_S) -> str:
+    """Requête Overpass des voies désignées par Nominatim : ``way(id:…);out geom;``."""
+    ids = ",".join(str(int(i)) for i in sorted(set(way_ids)))
+    return f"[out:json][timeout:{int(timeout_s)}];way(id:{ids});out geom;"
+
+
+def project_on_polyline(px, py, coords):
+    """Projection orthogonale de ``(px, py)`` sur une polyligne.
+
+    Retourne ``(distance, position_m, qx, qy, dir_x, dir_y)`` : distance au
+    point projeté ``(qx, qy)``, abscisse curviligne de celui-ci depuis le
+    premier sommet, direction du tronçon porteur (sens de la polyligne). À
+    distance égale, le premier tronçon gagne (déterministe). Fonction PURE.
+    """
+    if len(coords) == 1:
+        x, y = coords[0]
+        return math.hypot(px - x, py - y), 0.0, x, y, 0.0, 0.0
+    best = None
+    walked = 0.0
+    for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
+        vx, vy = x2 - x1, y2 - y1
+        seg_sq = vx * vx + vy * vy
+        seg_len = math.sqrt(seg_sq)
+        t = 0.0
+        if seg_sq > 0.0:
+            t = min(1.0, max(0.0, ((px - x1) * vx + (py - y1) * vy) / seg_sq))
+        qx, qy = x1 + t * vx, y1 + t * vy
+        dist = math.hypot(px - qx, py - qy)
+        if best is None or dist < best[0]:
+            best = (dist, walked + t * seg_len, qx, qy, vx, vy)
+        walked += seg_len
+    return best
+
+
+def polyline_length(coords) -> float:
+    return sum(
+        math.hypot(x2 - x1, y2 - y1) for (x1, y1), (x2, y2) in zip(coords, coords[1:])
+    )
+
+
+def _ways_touch(a, b, tol):
+    """Deux voies se raccordent si une extrémité de l'une est à ``tol`` de l'autre."""
+    for end in (a.coords[0], a.coords[-1]):
+        if project_on_polyline(end[0], end[1], b.coords)[0] <= tol:
+            return True
+    for end in (b.coords[0], b.coords[-1]):
+        if project_on_polyline(end[0], end[1], a.coords)[0] <= tol:
+            return True
+    return False
+
+
+def connected_component(seed, candidates, tol=ROAD_JOIN_TOLERANCE_M,
+                        max_ways=ROAD_COMPONENT_MAX_WAYS) -> list:
+    """Composante connexe de ``seed`` parmi ``candidates`` (même nom), bornée.
+
+    Parcours en largeur, voisins explorés par way_id croissant : même
+    composante quel que soit le germe (hors troncature à ``max_ways``).
+    Fonction PURE.
+    """
+    pool = sorted(candidates, key=lambda w: w.way_id)
+    component = [seed]
+    seen = {seed.way_id}
+    queue = [seed]
+    while queue and len(component) < max_ways:
+        current = queue.pop(0)
+        for way in pool:
+            if way.way_id in seen or not _ways_touch(current, way, tol):
+                continue
+            seen.add(way.way_id)
+            component.append(way)
+            queue.append(way)
+            if len(component) >= max_ways:
+                break
+    return sorted(component, key=lambda w: w.way_id)
+
+
+def merge_component(ways, tol=ROAD_JOIN_TOLERANCE_M) -> list:
+    """Fusionne une composante en UNE polyligne orientée de façon déterministe.
+
+    Graphe : nœuds = extrémités de voies regroupées à ``tol`` près, arêtes =
+    voies. Départ : extrémité libre (degré 1) de plus petites coordonnées
+    ``(x, y)`` (ou plus petit nœud si la composante est une boucle) ; à
+    chaque nœud, on suit l'arête non visitée de plus petit way_id. Une rue
+    simple (chaîne de tronçons) est ainsi entièrement fusionnée ; pour une
+    composante ramifiée (fourche, chaussées séparées), seul le chemin parcouru
+    est retenu — les branches restantes sont ignorées (limite assumée, cf.
+    garde de distance dans :func:`locate_on_ways`). Fonction PURE.
+    """
+    nodes = []
+
+    def node_of(pt):
+        for idx, node in enumerate(nodes):
+            if math.hypot(pt[0] - node[0], pt[1] - node[1]) <= tol:
+                return idx
+        nodes.append(pt)
+        return len(nodes) - 1
+
+    edges = []
+    for way in sorted(ways, key=lambda w: w.way_id):
+        edges.append((node_of(way.coords[0]), node_of(way.coords[-1]), way))
+    degree = Counter()
+    for u, v, _ in edges:
+        degree[u] += 1
+        degree[v] += 1
+    free_ends = [n for n in range(len(nodes)) if degree[n] == 1]
+    start = min(free_ends or range(len(nodes)), key=lambda n: nodes[n])
+
+    path = []
+    visited = set()
+    current = start
+    while True:
+        incident = [
+            (way.way_id, idx) for idx, (u, v, way) in enumerate(edges)
+            if idx not in visited and current in (u, v)
+        ]
+        if not incident:
+            break
+        _, idx = min(incident)
+        visited.add(idx)
+        u, v, way = edges[idx]
+        coords = list(way.coords) if u == current else list(reversed(way.coords))
+        path.extend(coords if not path else coords[1:])
+        current = v if u == current else u
+    return path
+
+
+def homonym_components_ambiguous(d_best, d_other,
+                                 gap_m=COMPONENT_AMBIGUITY_GAP_M,
+                                 ratio=COMPONENT_AMBIGUITY_RATIO) -> bool:
+    """Deux composantes homonymes non connectées : ambiguïté réelle ?
+
+    Oui si la seconde est à distance COMPARABLE de la plus proche : écart <
+    ``gap_m`` OU rapport < ``ratio`` ; sinon la plus proche l'emporte (rue
+    coupée en tronçons, homonyme d'un autre quartier). Fonction PURE.
+    """
+    if d_other - d_best < gap_m:
+        return True
+    return d_best > 0 and d_other / d_best < ratio
+
+
+def diagnose_unlocated(px, py, names, ways, radius=OSM_COORD_FALLBACK_RADIUS_M):
+    """Cause lisible d'un point non localisé + distance à la voie nommée la plus proche.
+
+    ``names`` : noms de référence du point ; ``ways`` : voies extraites
+    (EPSG:31370). Retourne ``(cause, distance_m_ou_None)`` :
+
+    * « voie du même nom trop loin » — une voie portant l'un des noms existe
+      (distance = la plus proche de ce nom) ;
+    * « nom introuvable » — aucune voie de ce nom, mais des voies carrossables
+      dans ``radius`` (distance = voie nommée la plus proche) ;
+    * « aucune voie à proximité » — rien de carrossable dans ``radius``.
+
+    L'ambiguïté est diagnostiquée en amont (raison 'ambiguous'). PURE.
+    """
+    wanted = {normalize_street_name(n) for n in names if n}
+    same, named = None, None
+    carrossable_near = False
+    for way in ways:
+        dist = project_on_polyline(px, py, way.coords)[0]
+        if wanted & set(way.names):
+            same = dist if same is None else min(same, dist)
+        if way.names:
+            named = dist if named is None else min(named, dist)
+        if highway_allowed_for_coords(way.highway) and dist <= radius:
+            carrossable_near = True
+    if same is not None:
+        return "voie du même nom trop loin", same
+    if carrossable_near:
+        return "nom introuvable", named
+    return "aucune voie à proximité", named
+
+
+def locate_on_ways(px, py, street_name, ways_by_name, radius=LOCATE_RADIUS_M,
+                   tol=ROAD_JOIN_TOLERANCE_M, max_ways=ROAD_COMPONENT_MAX_WAYS,
+                   cache=None):
+    """Équivalent Python de fn_asbuilt_locate_on_road sur des voies OSM (EPSG:31370).
+
+    1. voies dont un nom normalisé égale celui de la rue, à ``radius`` m au
+       plus (défaut 40, borné à LOCATE_RADIUS_MAX_M) ; aucune -> ``no_match`` ;
+    2. germe = la plus proche (puis plus petit way_id) ; composante connexe
+       des voies du même nom (raccord ``tol``, bornée à ``max_ways``) ;
+    3. rues homonymes NON connectées dans le rayon -> ``ambiguous`` (omis) ;
+    4. fusion déterministe (:func:`merge_component`), mise en cache par
+       road_key : TOUS les points d'une même rue partagent la même ligne, donc
+       des position_m comparables ; point à plus de ``radius`` de la ligne
+       fusionnée (germe sur une branche écartée) -> ``no_match`` ;
+    5. projection orthogonale -> position_m, point projeté, côté (produit
+       vectoriel direction locale × projeté->point), highway du germe.
+
+    Retourne ``(match, reason)`` : ``match`` = dict road_key/position_m/x/y/
+    side/highway/extent (RoadExtent), ``reason`` None ; ou ``(None,
+    'no_match'|'ambiguous')``. ``cache`` : dict partagé entre appels d'un
+    même lot. Fonction PURE.
+    """
+    radius = min(max(float(radius), 0.0), LOCATE_RADIUS_MAX_M)
+    cache = {} if cache is None else cache
+    lines = cache.setdefault("lines", {})
+    key_of_way = cache.setdefault("key_of_way", {})
+
+    name = normalize_street_name(street_name)
+    candidates = ways_by_name.get(name, []) if name else []
+    near = []
+    for way in candidates:
+        dist = project_on_polyline(px, py, way.coords)[0]
+        if dist <= radius:
+            near.append((dist, way.way_id, way))
+    if not near:
+        return None, "no_match"
+    near.sort(key=lambda item: (item[0], item[1]))
+    seed = near[0][2]
+
+    road_key = key_of_way.get((name, seed.way_id))
+    if road_key is None:
+        component = connected_component(seed, candidates, tol, max_ways)
+        road_key = f"overpass:{name}:{component[0].way_id}"
+        for way in component:
+            key_of_way[(name, way.way_id)] = road_key
+        lines[road_key] = merge_component(component, tol)
+    if any(key_of_way.get((name, way.way_id)) != road_key for _, _, way in near):
+        # Voisins pas encore rattachés : les classer avant de conclure.
+        for _, _, way in near:
+            if (name, way.way_id) not in key_of_way:
+                component = connected_component(way, candidates, tol, max_ways)
+                other_key = f"overpass:{name}:{component[0].way_id}"
+                for member in component:
+                    key_of_way.setdefault((name, member.way_id), other_key)
+                lines.setdefault(other_key, merge_component(component, tol))
+        # Distance la plus courte de chaque AUTRE composante homonyme du rayon.
+        others = {}
+        for dist, _way_id, way in near:
+            key = key_of_way.get((name, way.way_id))
+            if key != road_key:
+                others[key] = min(dist, others.get(key, dist))
+        best = near[0][0]
+        if others and homonym_components_ambiguous(best, min(others.values())):
+            return None, "ambiguous"
+
+    line = lines[road_key]
+    dist, position_m, qx, qy, dir_x, dir_y = project_on_polyline(px, py, line)
+    if dist > radius:
+        return None, "no_match"
+    return {
+        "road_key": road_key,
+        "position_m": position_m,
+        "x": qx,
+        "y": qy,
+        "side": side_of_point(dir_x, dir_y, px - qx, py - qy),
+        "highway": seed.highway,
+        "way_id": seed.way_id,
+        "way_names": seed.names,
+        "distance": dist,
+        "extent": RoadExtent(
+            length_m=polyline_length(line),
+            start_x=line[0][0], start_y=line[0][1],
+            end_x=line[-1][0], end_y=line[-1][1],
+        ),
+    }, None
+
+
+def build_locate_failure_warning(n_rows, n_located, n_no_street, n_no_match,
+                                 overpass_status=None):
+    """Avertissement actionnable quand AUCUN point n'a pu être localisé sur un axe.
+
+    Retourne ``None`` s'il n'y a rien à signaler (aucun point à localiser, ou
+    au moins un point localisé). Sinon, un message expliquant pourquoi aucun
+    segment ne sera créé, ventilé selon la cause dominante :
+
+    * ``n_no_match`` > 0 — aucun tronçon nommé correspondant près des points,
+      ni dans ``ref.osm_roads`` (constaté : table limitée à Bruxelles alors que
+      les points sont dans l'est du pays), ni via le repli Overpass selon
+      ``overpass_status`` (``None`` = non tenté, ``'ok'`` = tenté sans
+      résultat, ``'failed'`` = injoignable) ;
+    * ``n_no_street`` seul — aucun nom de rue extractible des adresses
+      (format d'adresse inattendu), la couverture OSM n'est pas en cause.
+
+    Les échecs de connexion/fonction sont signalés séparément par l'appelant
+    (``reportError``) : ce message ne les couvre pas. Fonction PURE.
+    """
+    if n_rows <= 0 or n_located > 0:
+        return None
+    message = (
+        f"Segments : aucun des {n_rows} point(s) à localiser n'a pu être "
+        f"rattaché à un axe de rue ({n_no_street} sans nom de rue extractible "
+        f"de l'adresse, {n_no_match} sans tronçon nommé correspondant à "
+        "proximité) — aucun segment ne peut être créé."
+    )
+    if n_no_match > 0:
+        if overpass_status == "failed":
+            message += (
+                " La table ref.osm_roads ne couvre pas ces points et "
+                "l'extraction OSM de repli (API Overpass) a échoué : vérifiez "
+                "l'accès Internet/proxy puis relancez, ou importez les routes "
+                "OSM de la zone dans ref.osm_roads."
+            )
+        elif overpass_status == "ok":
+            message += (
+                " Ni ref.osm_roads ni l'extraction OSM de repli (API Overpass) "
+                "ne contiennent de voie portant ces noms à proximité : "
+                "vérifiez l'orthographe des rues dans les rapports (ou les "
+                "noms OSM de la zone)."
+            )
+        else:
+            message += (
+                " Cause la plus probable : la table ref.osm_roads ne contient "
+                "pas de routes à proximité de ces points (couverture OSM "
+                "partielle). Importez les routes OSM de la zone concernée "
+                "dans ref.osm_roads, puis relancez l'algorithme."
+            )
+    else:
+        message += (
+            " Aucun nom de rue n'a pu être extrait des adresses : vérifiez le "
+            "format de la colonne Address des rapports."
+        )
+    return message
+
+
+def _normalize_pg_identity(ident):
+    """Normalise un dict d'identité de table PostgreSQL (cf. same_postgres_table).
+
+    Schéma vide -> ``public`` (table non qualifiée), port vide -> ``5432``,
+    hôte en minuscules (insensible à la casse, contrairement aux noms de
+    schéma/table/base, sensibles à la casse côté PostgreSQL).
+    """
+    return {
+        "schema": (ident.get("schema") or "").strip() or "public",
+        "table": (ident.get("table") or "").strip(),
+        "database": (ident.get("database") or "").strip(),
+        "host": (ident.get("host") or "").strip().lower(),
+        "port": (ident.get("port") or "").strip() or "5432",
+        "service": (ident.get("service") or "").strip(),
+    }
+
+
+def same_postgres_table(a, b) -> bool:
+    """Indique si deux sources PostgreSQL désignent la MÊME table.
+
+    ``a``/``b`` : dicts ``schema``/``table``/``database``/``host``/``port``/
+    ``service`` (extraits d'un ``QgsDataSourceUri`` par l'appelant). La
+    comparaison porte sur la source de données, jamais sur le nom de couche
+    (renommable librement dans le projet) :
+
+    * schéma et table identiques — obligatoire ;
+    * puis identité du serveur : même ``service`` si les deux en ont un, sinon
+      même hôte + port + base si aucun n'en a ;
+    * cas MIXTE (l'une via ``service``, l'autre via hôte) : non décidable sans
+      résoudre le fichier de services -> repli sur la seule base (non vide et
+      identique), pour privilégier l'absence de DOUBLON dans le projet.
+
+    Une colonne géométrique ou un filtre (``sql``) différent n'y changent rien :
+    la table est considérée comme déjà présente. Fonction PURE.
+    """
+    na, nb = _normalize_pg_identity(a), _normalize_pg_identity(b)
+    if not na["table"] or na["schema"] != nb["schema"] or na["table"] != nb["table"]:
+        return False
+    if na["service"] and nb["service"]:
+        return na["service"] == nb["service"] and na["database"] == nb["database"]
+    if not na["service"] and not nb["service"]:
+        return (
+            na["host"] == nb["host"]
+            and na["port"] == nb["port"]
+            and na["database"] == nb["database"]
+        )
+    return bool(na["database"]) and na["database"] == nb["database"]
 
 
 # ===========================================================================
@@ -1354,7 +3763,13 @@ def plan_segment_sync(fresh, existing_keys):
 # ===========================================================================
 if HAS_QGIS:
 
-    OUTPUT_CRS = "EPSG:31370"
+    # Drapeau « paramètre avancé » : enum Qgis.ProcessingParameterFlag depuis
+    # QGIS 3.36, QgsProcessingParameterDefinition.FlagAdvanced avant.
+    try:
+        _ADVANCED_PARAMETER_FLAG = Qgis.ProcessingParameterFlag.Advanced
+    except AttributeError:  # QGIS < 3.36
+        _ADVANCED_PARAMETER_FLAG = QgsProcessingParameterDefinition.FlagAdvanced
+
     BE_CONNECTION_NAME = "be"
     BE_TABLE_SCHEMA = "public"
     BE_TABLE_NAME = "geofiber_asbuilt_depth_points"
@@ -1365,6 +3780,15 @@ if HAS_QGIS:
 
     SEGMENTS_TABLE_SCHEMA = "public"
     SEGMENTS_TABLE_NAME = "geofiber_asbuilt_depth_segments"
+
+    CONNECTORS_TABLE_SCHEMA = "public"
+    CONNECTORS_TABLE_NAME = "geofiber_asbuilt_depth_connectors"
+
+    # Noms lisibles des deux couches de la base 'be' ajoutées au projet en fin
+    # d'exécution (cf. _load_be_layers_in_project) — seulement si absentes.
+    BE_POINTS_LAYER_NAME = "Profondeur As-Built — points"
+    BE_SEGMENTS_LAYER_NAME = "Profondeur As-Built — segments d'axe de rue"
+    BE_CONNECTORS_LAYER_NAME = "Profondeur As-Built — connecteurs"
 
     # Fragments (minuscules) de messages d'erreur PostgreSQL/libpq, en anglais et
     # en francais (lc_messages du serveur), signalant que fn_asbuilt_locate_on_road
@@ -1384,58 +3808,36 @@ if HAS_QGIS:
         "connection to server",
     )
 
-    _SEGMENT_FIELD_SPECS = [
-        ("point_a_intervention_id", QVariant.String),
-        ("point_b_intervention_id", QVariant.String),
-        ("half", QVariant.String),
-        ("depth_category", QVariant.String),
-        ("is_long", QVariant.Bool),
-        ("length_m", QVariant.Double),
-        ("road_key", QVariant.String),
-    ]
+    def _str_or_empty(value) -> str:
+        """Valeur d'attribut texte, NULL (QVariant) ou autre -> chaîne vide."""
+        return value if isinstance(value, str) else ""
 
-    _UNGEOCODED_FIELD_SPECS = [
-        ("intervention_id", QVariant.String),
-        ("work_order", QVariant.String),
-        ("address_raw", QVariant.String),
-        ("postal_code", QVariant.String),
-        ("place", QVariant.String),
-        ("depth_raw", QVariant.String),
-        ("geocode_query", QVariant.String),
-        ("source_message", QVariant.String),
-    ]
+    def _point_state(feat) -> dict:
+        """État d'un point en base utile aux segments (cf. point_changed)."""
+        x = y = None
+        geom = feat.geometry()
+        if geom is not None and not geom.isEmpty():
+            try:
+                pt = geom.asPoint()
+                x, y = pt.x(), pt.y()
+            except (TypeError, ValueError):
+                pass
+        return {
+            "depth_category": _str_or_empty(feat["depth_category"]),
+            "address_raw": _str_or_empty(feat["address_raw"]),
+            "x": x, "y": y,
+        }
 
-    _FIELD_SPECS = [
-        ("intervention_id", QVariant.String),
-        ("work_order", QVariant.String),
-        ("address_raw", QVariant.String),
-        ("postal_code", QVariant.String),
-        ("place", QVariant.String),
-        ("depth_cm", QVariant.Double),
-        ("depth_category", QVariant.String),
-        ("geocode_query", QVariant.String),
-        ("geocode_status", QVariant.String),
-        ("source_message", QVariant.String),
-    ]
-
-    def _build_output_fields() -> "QgsFields":
-        fields = QgsFields()
-        for name, qtype in _FIELD_SPECS:
-            fields.append(QgsField(name, qtype))
-        return fields
-
-    def _build_segment_output_fields() -> "QgsFields":
-        fields = QgsFields()
-        for name, qtype in _SEGMENT_FIELD_SPECS:
-            fields.append(QgsField(name, qtype))
-        return fields
-
-    def _build_feature(fields, values, point):
-        feat = QgsFeature(fields)
-        feat.setGeometry(QgsGeometry.fromPointXY(point))
-        for name, value in values.items():
-            feat.setAttribute(name, value)
-        return feat
+    def _pg_identity(ds_uri) -> dict:
+        """Identité de table d'un ``QgsDataSourceUri`` postgres (cf. same_postgres_table)."""
+        return {
+            "schema": ds_uri.schema(),
+            "table": ds_uri.table(),
+            "database": ds_uri.database(),
+            "host": ds_uri.host(),
+            "port": ds_uri.port(),
+            "service": ds_uri.service(),
+        }
 
     def _build_depth_renderer() -> "QgsCategorizedSymbolRenderer":
         """Rendu catégorisé de REPLI, construit en Python depuis ``DEPTH_COLORS``.
@@ -1464,8 +3866,9 @@ if HAS_QGIS:
         via ``feedback`` (si fourni) sans jamais lever. Retourne ``True`` si le
         ``.qml`` a été appliqué, ``False`` sur repli Python.
 
-        Utilisée aux DEUX points de style (post-traitement live ET style embarqué
-        dans le GeoPackage) : ils partagent donc exactement la même source.
+        Utilisée aux DEUX points de style (couche de la base 'be' ajoutée au
+        projet ET style par défaut synchronisé dans ``layer_styles``, cf.
+        :func:`_sync_style_to_db`) : ils partagent donc exactement la même source.
         """
         try:
             profile_dir = QgsApplication.qgisSettingsDirPath()
@@ -1533,8 +3936,11 @@ if HAS_QGIS:
                 "Style segments introuvable à côté du script — repli sur un "
                 "renderer categorise minimal."
             )
+        # Pas de catégorie « manquante » : les points gris ne produisent aucun
+        # segment (comme dans style/depth_segments.qml).
         categories = []
-        for value, color in DEPTH_COLORS.items():
+        for value in ("vert", "orange", "rouge"):
+            color = DEPTH_COLORS[value]
             symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.LineGeometry)
             symbol.setColor(QColor(color))
             categories.append(
@@ -1567,8 +3973,8 @@ if HAS_QGIS:
         _upsert_geocoded_records) : un echec loggue une info sans jamais faire
         echouer le run. Ne fonctionne que si layer est connectee en direct sur
         postgres (c'est le cas pour les couches upsertees via 'be', cf.
-        _upsert_geocoded_records / _sync_segments). Meme appel + interpretation
-        que _embed_style_in_output (cf. _save_style_to_db).
+        _upsert_geocoded_records / _sync_segments). Appel + interpretation du
+        retour : cf. _save_style_to_db.
         """
         try:
             error = _save_style_to_db(layer, name, description)
@@ -1583,19 +3989,129 @@ if HAS_QGIS:
         )
         return True
 
+    def lambert_transforms(transform_context=None):
+        """Transformations (WGS84 -> Lambert 72, Lambert 72 -> WGS84), créées une fois par run.
+
+        Contexte de transformation du projet (choix de l'opération de datum,
+        ici « BD72 to WGS 84 » comme PROJ), SANS lien avec le SCR du projet ni
+        de ses couches.
+        """
+        context = transform_context or QgsProject.instance().transformContext()
+        wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+        lambert = QgsCoordinateReferenceSystem(BELGIAN_LAMBERT_AUTHID)
+        return (
+            QgsCoordinateTransform(wgs84, lambert, context),
+            QgsCoordinateTransform(lambert, wgs84, context),
+        )
+
+    def wgs84_to_lambert(lon, lat, transform=None):
+        """WGS84 -> Lambert belge 72 (x, y en m). SEUL point d'entrée des reprojections.
+
+        ORDRE DES AXES : QgsPointXY(x = lon, y = lat) — QGIS travaille toujours
+        en (longitude, latitude) pour EPSG:4326, quel que soit l'ordre « officiel »
+        de l'EPSG. ``transform`` : premier élément de :func:`lambert_transforms`.
+        Lève QgsCsException sur échec.
+        """
+        transform = transform or lambert_transforms()[0]
+        point = transform.transform(QgsPointXY(lon, lat))
+        return point.x(), point.y()
+
+    def lambert_to_wgs84(x, y, transform=None):
+        """Lambert belge 72 -> WGS84 ``(lon, lat)`` (emprises des requêtes Overpass)."""
+        transform = transform or lambert_transforms()[1]
+        point = transform.transform(QgsPointXY(x, y))
+        return point.x(), point.y()
+
+    def _force_target_crs(layer, feedback=None, label="", always_log=False):
+        """Force le SCR EPSG:31370 sur une couche des tables 'be' ; retourne l'authid constaté.
+
+        Les tables 'be' sont TOUTES en SRID 31370 (points, segments,
+        ref.osm_roads), mais le SCR que QGIS attribue à la couche peut dériver :
+        introspection peu fiable de la connexion (estimatedmetadata), URI sans
+        srid, SCR invalide remplacé au chargement par celui du projet ou du fond
+        de carte (constaté : points affichés en EPSG:3857, dans le golfe de
+        Guinée). On ne lit donc jamais ``layer.crs()`` comme une vérité : on
+        FORCE 31370 (:func:`crs_needs_fix`) et on avertit si l'authid différait.
+        Le SCR du PROJET n'est jamais modifié.
+        """
+        crs = layer.crs()
+        authid = crs.authid() if crs is not None and crs.isValid() else ""
+        if crs_needs_fix(authid):
+            layer.setCrs(QgsCoordinateReferenceSystem(BELGIAN_LAMBERT_AUTHID))
+            if crs_needs_fix(layer.crs().authid()):
+                # Repli : réassigner la source puis forcer à nouveau.
+                try:
+                    layer.setDataSource(layer.source(), layer.name(), "postgres")
+                except Exception:  # pragma: no cover - défensif
+                    pass
+                layer.setCrs(QgsCoordinateReferenceSystem(BELGIAN_LAMBERT_AUTHID))
+            if feedback is not None:
+                feedback.pushWarning(
+                    f"Couche {label} : SCR {authid or 'invalide/inconnu'} constaté, "
+                    f"corrigé en {BELGIAN_LAMBERT_AUTHID} (coordonnées Lambert 72 en base)."
+                )
+        elif feedback is not None and always_log:
+            feedback.pushInfo(f"Couche {label} : SCR {BELGIAN_LAMBERT_AUTHID} (forcé).")
+        return authid
+
+    def _apply_connectors_style(layer, feedback=None) -> bool:
+        """Style connecteurs (``style/depth_connectors.qml`` ; repli : fin pointillé catégorisé)."""
+        try:
+            profile_dir = QgsApplication.qgisSettingsDirPath()
+        except Exception:  # pragma: no cover - défensif
+            profile_dir = None
+        qml_path = _collection_style_qml_path(_DEPTH_CONNECTORS_STYLE_QML_NAME, profile_dir)
+        if qml_path is not None:
+            try:
+                if _named_style_loaded_ok(layer.loadNamedStyle(qml_path)):
+                    return True
+            except Exception:  # pragma: no cover - défensif
+                pass
+        if feedback is not None:
+            feedback.pushInfo("Style connecteurs non appliqué — repli sur un rendu minimal.")
+        categories = []
+        for value in ("vert", "orange", "rouge"):
+            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.LineGeometry)
+            symbol.setColor(QColor(DEPTH_COLORS[value]))
+            symbol.setWidth(0.35)
+            categories.append(QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS[value]))
+        layer.setRenderer(QgsCategorizedSymbolRenderer("depth_category", categories))
+        return False
+
+    class _ConnectorsLayerStyler(QgsProcessingLayerPostProcessorInterface):
+        """Post-traitement de la couche connecteurs chargée : SCR 31370 forcé puis style."""
+
+        def __init__(self):
+            super().__init__()
+
+        def postProcessLayer(self, layer, context, feedback):  # noqa: N802
+            try:
+                _force_target_crs(layer, feedback, layer.name(), always_log=True)
+                _apply_connectors_style(layer, feedback)
+                layer.triggerRepaint()
+            except Exception:  # pragma: no cover - défensif (rendu non bloquant)
+                pass
+
     class _SegmentsLayerStyler(QgsProcessingLayerPostProcessorInterface):
         """Applique le style segments (source : ``style/depth_segments.qml``).
 
-        Pendant de :class:`_DepthLayerStyler` pour la sortie OUTPUT_SEGMENTS :
-        post-traitement de la couche chargée automatiquement par QGIS en fin
-        d'exécution, délégué à :func:`_apply_segments_style` (même source de
-        vérité que le style synchronisé en base).
+        Pendant de :class:`_DepthLayerStyler` pour la couche
+        ``public.geofiber_asbuilt_depth_segments`` : post-traitement de la couche
+        ajoutée au projet en fin d'exécution (cf. _load_be_layers_in_project),
+        délégué à :func:`_apply_segments_style` (même source de vérité que le
+        style synchronisé en base).
         """
 
         def __init__(self):
             super().__init__()
 
         def postProcessLayer(self, layer, context, feedback):  # noqa: N802
+            # SCR re-vérifié APRÈS l'ajout au projet (Processing peut réassigner
+            # un SCR au chargement), puis style.
+            try:
+                _force_target_crs(layer, feedback, layer.name(), always_log=True)
+            except Exception:  # pragma: no cover - défensif
+                pass
             try:
                 _apply_segments_style(layer, feedback)
                 layer.triggerRepaint()
@@ -1605,16 +4121,25 @@ if HAS_QGIS:
     class _DepthLayerStyler(QgsProcessingLayerPostProcessorInterface):
         """Applique le style profondeur (source : ``style/depth_category.qml``).
 
-        Post-traitement de la couche chargée automatiquement par QGIS en fin
-        d'exécution. Délègue à :func:`_apply_depth_style` — donc la MÊME source de
-        vérité (le ``.qml``) que le style embarqué dans le GeoPackage, garantissant
-        un rendu identique entre l'affichage immédiat et les ouvertures ultérieures.
+        Post-traitement de la couche ``public.geofiber_asbuilt_depth_points``
+        ajoutée au projet en fin d'exécution (cf. _load_be_layers_in_project).
+        Délègue à :func:`_apply_depth_style` — donc la MÊME source de vérité (le
+        ``.qml``) que le style par défaut synchronisé en base, garantissant un
+        rendu identique entre l'affichage immédiat et les ouvertures ultérieures.
+        Ré-appliqué APRÈS l'ajout au projet par l'interface Processing, pour
+        avoir le dernier mot sur tout style par défaut qu'elle appliquerait.
         """
 
         def __init__(self):
             super().__init__()
 
         def postProcessLayer(self, layer, context, feedback):  # noqa: N802
+            # SCR re-vérifié APRÈS l'ajout au projet (Processing peut réassigner
+            # un SCR au chargement), puis style.
+            try:
+                _force_target_crs(layer, feedback, layer.name(), always_log=True)
+            except Exception:  # pragma: no cover - défensif
+                pass
             try:
                 _apply_depth_style(layer, feedback)
                 layer.triggerRepaint()
@@ -1663,9 +4188,9 @@ if HAS_QGIS:
         ce lxml (roue pip, libxml2 embarqué) coexiste dans le MÊME processus
         que le libxml2 déjà chargé par GDAL/OGR (bundle QGIS) — conflit binaire
         qui se manifeste comme un CRASH NATIF (« access violation » Windows,
-        PAS une exception Python catchable) dès le premier
-        ``openpyxl.Workbook()`` (cf. ``_write_summary_xlsx``), pouvant aussi
-        toucher la lecture ``.xlsx`` en entrée (même mécanisme interne).
+        PAS une exception Python catchable), observé à l'écriture
+        (``openpyxl.Workbook()``) et pouvant toucher la lecture ``.xlsx`` en
+        entrée (même mécanisme interne) — seul usage restant d'openpyxl ici.
 
         On bloque donc l'import de ``lxml`` — AVANT le tout premier
         ``import openpyxl`` du process, seul moment où le choix lxml/stdlib se
@@ -1771,16 +4296,16 @@ if HAS_QGIS:
             time.sleep(min(0.1, remaining))
 
     class GeocodeAsBuiltDepthAlgorithm(QgsProcessingAlgorithm):
-        """Géocode un lot de rapports As-Built ``.msg`` et colore par profondeur."""
+        """Géocode un lot de rapports As-Built et pousse les points par profondeur en base 'be'.
+
+        Aucune couche de sortie temporaire : les points (et segments d'axe de
+        rue) vivent dans la base 'be', dont les deux couches sont ajoutées au
+        projet en fin d'exécution si elles n'y sont pas déjà.
+        """
 
         INPUT_FOLDER = "INPUT_FOLDER"
-        EXISTING_LAYER = "EXISTING_LAYER"
         CONTACT_EMAIL = "CONTACT_EMAIL"
-        PUSH_TO_BE = "PUSH_TO_BE"
-        OUTPUT = "OUTPUT"
-        SUMMARY = "SUMMARY"
-        UNGEOCODED = "UNGEOCODED"
-        OUTPUT_SEGMENTS = "OUTPUT_SEGMENTS"
+        FULL_REBUILD = "FULL_REBUILD"
 
         # -- métadonnées --------------------------------------------------
         def name(self):
@@ -1806,102 +4331,172 @@ if HAS_QGIS:
         def shortHelpString(self):
             return self.tr(
                 "Géocode les rapports périodiques « To update Go Fiber As-Built » "
-                "et produit une couche de points EPSG:31370 colorée par "
-                "profondeur de pose.\n\n"
-                "FORMATS D'ENTRÉE — le dossier est balayé (non récursif) pour les "
-                "fichiers .msg (Outlook), .xlsx / .xls (Excel) et .csv. Le .msg "
-                "gère les corps HTML et texte brut (message direct ou transféré "
-                "« FW: »). Les .xls binaires legacy (Excel pré-2007) ne sont pas "
-                "lus directement — ré-exportez-les en .xlsx ou .csv.\n\n"
-                "FORMAT ATTENDU — un tableau avec les colonnes : WorkOrder, "
-                "Intervention, Address, PostalCode, Place, et une colonne de "
-                "profondeur (intitulé contenant « depth » ou « profondeur », "
-                "ex : « Tube depth in the T-branch (cm) »). Les en-têtes sont "
-                "détectés par intitulé (insensible à la casse), pas par "
-                "position.\n\n"
-                "PROFONDEUR — une valeur avec séparateur décimal est interprétée "
-                "en mètres (0.60 -> 60 cm) ; sinon en centimètres (70 -> 70 cm). "
-                "Catégories (seuils fixes) : manquante (< 10 cm), rouge (< 50 cm), "
-                "orange (< 55 cm), vert (≥ 55 cm).\n\n"
-                "MODE ADDITIF — fournir une couche déjà géocodée dans "
-                "EXISTING_LAYER : les interventions déjà présentes (clé "
-                "= Intervention) ne sont pas re-géocodées.\n\n"
-                "BASE 'be' (PUSH_TO_BE, optionnel, activé par défaut) — chaque "
-                "intervention géocodée avec succès (nouveau géocodage OU déjà "
-                "présente en mode additif) est aussi poussée dans "
-                "public.geofiber_asbuilt_depth_points via la connexion QGIS "
-                "'be' (plugin Constructel Bridge). Écrasement complet de la "
-                "ligne en cas de conflit sur l'identifiant d'intervention : "
-                "rejouer un rapport avec une adresse dégradée écrase une "
-                "géométrie précédemment correcte. Désactivez PUSH_TO_BE pour "
-                "un run de test sans risque d'altérer la base de production. "
-                "Connexion absente/injoignable -> avertissement, section "
-                "ignorée, OUTPUT reste produit normalement.\n\n"
-                "NON GÉOCODÉES EN BASE (avec PUSH_TO_BE) — chaque intervention "
-                "non géocodée de ce run est aussi poussée dans "
-                "public.geofiber_asbuilt_ungeocoded (identifiants source, "
-                "adresse brute, requête Nominatim en échec), écrasée en cas de "
-                "conflit sur l'identifiant d'intervention. Une ligne n'est pas "
-                "retirée de cette table si l'intervention est géocodée plus "
-                "tard.\n\n"
-                "SEGMENTS D'AXE DE RUE (avec PUSH_TO_BE) — après l'upsert, TOUTE "
-                "la table public.geofiber_asbuilt_depth_points (pas seulement ce "
-                "run) est relue : chaque point de profondeur connue est projeté "
-                "sur l'axe de sa rue (nom extrait de l'adresse, numéro/boîte/code "
-                "postal retirés), puis les points consécutifs d'une même rue sont "
-                "reliés par un segment coupé en deux moitiés, chacune colorée "
-                "selon la profondeur de son point ; les bouts de rue sont "
-                "prolongés depuis le premier/dernier point. Segments ≥ "
-                f"{LONG_SEGMENT_THRESHOLD_M:g} m affichés en pointillé "
-                "(interpolation peu fiable). Résultat synchronisé intégralement "
-                "dans public.geofiber_asbuilt_depth_segments : upsert des segments "
-                "recalculés, suppression des segments devenus obsolètes — "
-                "suppression désactivée pour le run si la localisation ou la "
-                "lecture des points est incomplète. Un point sans nom de rue "
-                "exploitable ou sans tronçon correspondant est simplement omis "
-                "(compté dans le journal). OUTPUT_SEGMENTS (optionnel) : couche "
-                "des segments recalculés de ce run, stylée comme en base ; vide "
-                "si PUSH_TO_BE est désactivé.\n\n"
-                "STYLES EN BASE (avec PUSH_TO_BE) — ATTENTION : à chaque run, les "
-                "styles « depth_category » (points) et « depth_segments » "
-                "(segments) sont réécrits dans la table layer_styles de la base "
-                "'be' (saveStyleToDatabase, useAsDefault=True) : ils ÉCRASENT le "
-                "style par défaut de ces deux tables. Une retouche manuelle "
-                "enregistrée comme style par défaut dans QGIS sera perdue au run "
-                "suivant — modifiez plutôt les .qml livrés dans la collection.\n\n"
-                "TABLE DE SYNTHÈSE (SUMMARY, optionnel) — si un chemin .xlsx est "
-                "fourni, un classeur de synthèse est écrit et chargé "
-                "automatiquement comme couche (table) dans le projet. Feuille 1 "
-                "« Synthèse par fichier » : matrice pivot — une ligne par fichier "
-                "de rapport traité (plus une ligne « (couche existante) » pour les "
-                "points recopiés en mode additif), une colonne par catégorie de "
-                "profondeur, une colonne Total (par fichier) et une ligne Total "
-                "(somme de chaque catégorie sur toutes les sources = total "
-                "général). Feuille 2 « Pourcentages » : nombre et pourcentage par "
-                "catégorie sur le total général. Laissé vide -> aucun fichier "
-                "écrit.\n\n"
-                "ADRESSES NON GÉOCODÉES (optionnel) — si un chemin .csv est "
-                "fourni, une ligne par intervention non géocodée y est écrite "
-                "(identifiants source + requête Nominatim en échec), pour "
-                "corriger l'adresse à la main puis relancer. Laissé vide -> "
-                "aucun fichier écrit.\n\n"
-                "DÉPENDANCES — modules Python 'extract-msg' (.msg) et 'openpyxl' "
-                "(.xlsx en lecture, ET écriture de la table de synthèse), "
-                "installés automatiquement via pip au besoin. Les .csv "
-                "n'utilisent que la stdlib.\n\n"
-                "NOMINATIM — géocodage via OpenStreetMap, 1 requête/seconde. "
-                "Renseignez CONTACT_EMAIL (recommandé par la politique d'usage "
-                "d'OSM/Nominatim).\n\n"
-                "REPLI « ADRESSE DÉDUPLIQUÉE » — si le géocodage d'une adresse "
-                "échoue ET que celle-ci contient des segments « / » répétés (bug "
-                "d'export : nom de rue dupliqué, ex « Malmedyer Straße/Malmedyer "
-                "Straße 203 »), un second essai est tenté avec le dernier segment "
-                "seul (« Malmedyer Straße 203 ») ; le repli est tracé dans le "
-                "journal. La notation belge numéro/boîte (ex « Rue de la Gare "
-                "12/3 ») N'EST PAS concernée : le repli ne s'applique QUE si les "
-                "segments qui précèdent le dernier sont identiques entre eux "
-                "(véritable répétition), pour ne jamais réduire une adresse "
-                "légitime au seul numéro de boîte."
+                "et enregistre les points, catégorisés par profondeur de pose, "
+                "dans la base 'be'. Aucun fichier ni couche temporaire n'est "
+                "produit : le résultat est en base (et dans le journal).\n\n"
+                "ENTRÉES — dossier balayé (non récursif) : .msg (Outlook, corps "
+                "HTML ou texte, message direct ou « FW: »), .xlsx et .csv ; les "
+                ".xls binaires legacy sont à ré-exporter en .xlsx ou .csv. "
+                "Tableau attendu : WorkOrder, Intervention, Address, PostalCode, "
+                "Place et une colonne de profondeur (intitulé contenant « depth » "
+                "ou « profondeur »), repérés par intitulé, casse ignorée. Une "
+                "même Intervention présente plusieurs fois (lignes ou fichiers) "
+                "n'est traitée qu'UNE fois : la ligne la plus complète, à "
+                "égalité la dernière (fichiers triés par nom).\n\n"
+                "PROFONDEUR — valeur avec séparateur décimal = mètres (0.60 → "
+                "60 cm), sinon centimètres. Catégories (seuils fixes) : vert "
+                f"≥ {THRESHOLD_VERT_CM:g} cm, orange {THRESHOLD_ORANGE_CM:g}–"
+                f"{THRESHOLD_VERT_CM:g} cm, rouge < {THRESHOLD_ORANGE_CM:g} cm, "
+                f"manquante (absente ou < {THRESHOLD_MISSING_CM:g} cm).\n\n"
+                "BASE 'be' (connexion QGIS du plugin Constructel Bridge, "
+                "OBLIGATOIRE : absente ou inutilisable -> échec immédiat, avant "
+                "tout géocodage). Ordre garanti : 1) chaque intervention géocodée "
+                "est upsertée dans public.geofiber_asbuilt_depth_points (écrasement "
+                "complet sur même intervention : un rapport rejoué avec une "
+                "adresse dégradée écrase une géométrie correcte) ; les non "
+                "géocodées vont dans public.geofiber_asbuilt_ungeocoded, une "
+                "ligne par intervention. Règle « si géocodé, garder que "
+                "géocodé » : une intervention présente dans les points n'est "
+                "JAMAIS dans les non géocodées (nettoyage en début d'étape ; un "
+                "échec de re-géocodage d'un point existant est ignoré, le point "
+                "est conservé). Leur liste et un email prêt à envoyer sont aussi "
+                "affichés dans le journal ; 2) les segments des routes "
+                "impactées sont régénérés à partir des points de la table (cf. "
+                "SEGMENTS) ; 3) les styles sont "
+                "réécrits en base ; 4) les couches points et segments de la base "
+                "sont ajoutées au projet, stylées, UNIQUEMENT si elles n'y sont "
+                "pas déjà (comparaison sur la source de données, pas sur le nom : "
+                "un projet qui les contient déjà n'est pas modifié). Un échec "
+                "partiel en cours de route (une étape, Overpass, un style) est "
+                "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
+                "SEGMENTS D'AXE DE RUE — recalcul INCRÉMENTAL : seules les routes "
+                "impactées (points nouveaux ou modifiés par ce run, points jamais "
+                "localisés, points devenus gris ou supprimés, et les autres points "
+                "de ces routes) sont relocalisées et recalculées, et seuls les "
+                "segments réellement différents sont réécrits ; le premier run "
+                "(table vide) est complet. Case AVANCÉE « Reconstruire tous les "
+                "segments » : à cocher après un changement de règle (seuils, "
+                "décalages, côtés) ou de ref.osm_roads, que l'incrémental ne "
+                "détecte pas. Les points gris (profondeur manquante) "
+                "sont ignorés pour les segments ; chaque point de profondeur connue est projeté "
+                "orthogonalement sur l'axe de sa rue (nom extrait de l'adresse) "
+                "et rangé du côté gauche ou droit de la route (point sur l'axe : "
+                "droite). Par rue ET par côté, les points consécutifs sont reliés "
+                "par un segment coupé en deux moitiés colorées chacune selon son "
+                "point, et les bouts de rue sont prolongés ; deux points de côtés "
+                "opposés ne sont jamais reliés. Plusieurs interventions au MÊME "
+                f"point projeté (à {COLOCATED_TOLERANCE_M:g} m, même rue et même "
+                "côté — typiquement la même adresse) sont fusionnées en un seul "
+                "nœud (plus petit identifiant, catégorie la PIRE du groupe : rouge "
+                "> orange > vert) : pas de segment de longueur nulle ; les points "
+                "restent tous en base. Chaque segment SUIT L'AXE DE RUE (sous-ligne "
+                "de l'axe entre les deux points ; moitié = jusqu'au milieu "
+                "mesuré le long de l'axe), en MultiLineString EPSG:31370, décalé "
+                "parallèlement vers son côté selon le type de voie OSM "
+                "(autoroute/voie rapide "
+                f"{HIGHWAY_OFFSET_M['motorway']:g} m, primaire "
+                f"{HIGHWAY_OFFSET_M['primary']:g} m, secondaire "
+                f"{HIGHWAY_OFFSET_M['secondary']:g} m, tertiaire "
+                f"{HIGHWAY_OFFSET_M['tertiary']:g} m, résidentielle "
+                f"{HIGHWAY_OFFSET_M['residential']:g} m, desserte/chemin "
+                f"{HIGHWAY_OFFSET_M['service']:g} m, autre "
+                f"{DEFAULT_HIGHWAY_OFFSET_M:g} m). Segments ≥ "
+                f"{LONG_SEGMENT_THRESHOLD_M:g} m (mesurés sur l'axe) en pointillé "
+                "(interpolation peu fiable) ; longueur mesurée le long de l'axe. "
+                "Routes de ref.osm_roads : axe lu via la fonction "
+                "public.fn_asbuilt_road_geometry (migration road_geom) ; absente -> "
+                "cordes droites décalées (avertissement). Colonne geom encore "
+                "LineString -> première partie seulement (migration MultiLineString "
+                "recommandée). Après ces migrations, cochez une fois « Reconstruire "
+                "tous les segments ». Écriture dans "
+                "public.geofiber_asbuilt_depth_segments : insertion / mise à jour "
+                "des segments changés, purge des segments obsolètes des seules "
+                "routes recalculées (suspendue si la localisation ou la lecture "
+                "est incomplète).\n"
+                "LOCALISATION en 3 étapes : 1) ref.osm_roads (base 'be') par nom "
+                "de rue — nom de RÉFÉRENCE = nom canonique OSM renvoyé par "
+                "Nominatim pour le point, puis nom lu dans l'adresse (les deux sont "
+                f"essayés s'ils diffèrent), voie du même nom cherchée jusqu'à "
+                f"{LOCATE_RADIUS_M:g} m (points géocodés souvent en retrait de la "
+                f"rue ; au-delà de {LOW_CONFIDENCE_DISTANCE_M:g} m le rattachement est "
+                "conservé mais signalé « faible confiance ») ; tronçons de même nom "
+                f"raccordés à {ROAD_JOIN_TOLERANCE_M:g} m près ; deux rues homonymes "
+                "non raccordées ne rendent le point ambigu que si elles sont à "
+                f"distance comparable (écart < {COMPONENT_AMBIGUITY_GAP_M:g} m ou "
+                f"rapport < {COMPONENT_AMBIGUITY_RATIO:g}) ; 2) API Overpass : d'abord la voie "
+                "désignée par Nominatim (identifiant OSM, l'axe le plus sûr), puis "
+                "par NOM (lots par rue ET localité : deux "
+                "rues homonymes de villages différents ne se confondent pas ; "
+                "accents, ß/ss, apostrophes et tirets tolérés) ; 3) Overpass par "
+                f"COORDONNÉES : voie carrossable la plus proche à "
+                f"{OSM_COORD_FALLBACK_RADIUS_M:g} m (chemins, pistes et trottoirs "
+                "exclus ; omis si une voie d'un autre nom est aussi proche — "
+                "carrefour), y compris sans nom de rue dans l'adresse ; une rue a le "
+                "même identifiant quel que soit le chemin. LIMITE : un point mal "
+                "géocodé par Nominatim se rattache à la mauvaise route. CONFIANCE : "
+                "chaque rattachement est noté (distance à l'axe, nom de la voie "
+                "comparé aux noms de référence, classe de voie plausible, précision "
+                "du géocodage) grâce aux métadonnées déjà renvoyées par Nominatim "
+                "(aucun appel supplémentaire) ; un rattachement à faible confiance "
+                "est écarté (géocodage à la localité seulement, voie trouvée par "
+                "coordonnées à plus de 30 m ou d'un autre nom alors qu'une voie du "
+                "nom attendu est proche, autoroute pour une adresse) et le journal en "
+                "donne le nombre et 5 exemples ; un code postal d'adresse différent "
+                "de celui du point géocodé est signalé. Voies Overpass : envoyées "
+                "au fil de l'eau vers ref.osm_roads (types de voie Farois, jamais "
+                "d'écrasement) si la fonction public.fn_asbuilt_store_osm_ways "
+                "existe — sinon simple information ; après la première "
+                "alimentation, cochez « Reconstruire tous les segments ». Overpass : "
+                f"accès Internet requis ; au plus {OVERPASS_MAX_NAMES_PER_QUERY} rues par "
+                "requête ; serveur public instable (réponses OK / 504 / 429 au "
+                "hasard) : plusieurs tentatives avec attente croissante, attente "
+                "d'un slot libre, miroir de repli. Réponses en CACHE dans le "
+                f"profil QGIS ({OVERPASS_CACHE_DIRNAME}, "
+                f"{OVERPASS_CACHE_TTL_S // 86400} jours) : relancer le script après "
+                "un échec partiel ne refait que les requêtes manquantes. Un échec "
+                "de requête est ISOLÉ (les autres continuent, purge suspendue pour "
+                "les seules routes concernées). Journal et progression par "
+                "requête, bilan final ; si aucun point n'est localisé, un "
+                "avertissement en donne la cause ; en fin d'étape, les points non "
+                "localisés sont listés par cause (aucune voie à proximité, nom "
+                "introuvable, voie du même nom trop loin, ambigu) avec 10 exemples.\n"
+                "CONNECTEURS — pour chaque point localisé, une ligne fine en "
+                "pointillé relie le point géocodé à l'extrémité de son segment "
+                "(point projeté sur l'axe décalé) ; table "
+                "public.geofiber_asbuilt_depth_connectors (migration_connectors : "
+                "absente -> simple information), même logique incrémentale que les "
+                "segments, couche « Profondeur As-Built — connecteurs » ajoutée au "
+                "projet si absente (sous les segments et les points).\n"
+                "PRÉREQUIS : colonne « side » sur "
+                "public.geofiber_asbuilt_depth_segments (clé primaire point_a, "
+                "point_b, half, side). Absente -> avertissement « migration "
+                "requise », segments ni recalculés ni modifiés.\n\n"
+                "SCR — toutes les coordonnées sont reprojetées en Lambert belge 72 "
+                "(EPSG:31370 ; pas Lambert 2008) : les couches de "
+                "la base reçoivent explicitement ce SCR (URI srid=31370 ET SCR de "
+                "couche forcé, re-vérifié après chargement ; un autre SCR constaté "
+                "est corrigé et signalé), les points Nominatim et les voies "
+                "Overpass (WGS84, x = longitude, y = latitude) sont reprojetés "
+                "vers 31370 (contrôle croisé avec une formule de référence), et "
+                "toute coordonnée hors de la plage belge est signalée. Le SCR du projet "
+                "n'est jamais modifié.\n\n"
+                "STYLES — source de vérité : les .qml livrés "
+                "(style/depth_category.qml, style/depth_segments.qml). Ils sont "
+                "réécrits à chaque run comme style par défaut des deux tables (layer_styles de la base 'be') : une "
+                "retouche enregistrée comme style par défaut dans QGIS sera "
+                "perdue — modifiez plutôt les .qml.\n\n"
+                "NOMINATIM — requête STRUCTURÉE (rue, code postal, localité, "
+                "Belgique) puis texte libre ; résultat hors Belgique = échec. "
+                "1 requête/s ; renseignez CONTACT_EMAIL. Chaque run "
+                "géocode TOUTES les interventions du dossier : ne laissez dans le dossier que "
+                "les rapports à traiter. Adresse à "
+                "segments « / » répétés (bug d'export, ex. « Malmedyer "
+                "Straße/Malmedyer Straße 203 ») : second essai avec le dernier "
+                "segment seul ; la notation numéro/boîte (« Rue de la Gare "
+                "12/3 ») n'est pas concernée.\n\n"
+                "DÉPENDANCES — 'extract-msg' (.msg) et 'openpyxl' (lecture des "
+                ".xlsx), installés via pip au besoin, seulement si le dossier "
+                "contient ces formats."
             )
 
         # -- paramètres ---------------------------------------------------
@@ -1914,13 +4509,6 @@ if HAS_QGIS:
                 )
             )
             self.addParameter(
-                QgsProcessingParameterFeatureSource(
-                    self.EXISTING_LAYER,
-                    self.tr("Couche déjà géocodée (mode additif, optionnel)"),
-                    optional=True,
-                )
-            )
-            self.addParameter(
                 QgsProcessingParameterString(
                     self.CONTACT_EMAIL,
                     self.tr("Email de contact (User-Agent Nominatim, recommandé)"),
@@ -1928,120 +4516,40 @@ if HAS_QGIS:
                     optional=True,
                 )
             )
-            self.addParameter(
-                QgsProcessingParameterBoolean(
-                    self.PUSH_TO_BE,
-                    self.tr(
-                        "Pousser les interventions géocodées vers la base "
-                        "'be' (Constructel Bridge)"
-                    ),
-                    defaultValue=True,
-                )
+            # Parametre AVANCE : force la reconstruction de TOUS les segments
+            # (ancien comportement) — a cocher apres un changement de regle
+            # (seuils, decalages, cotes, ref.osm_roads) que le mode incremental,
+            # qui ne recalcule que les routes des points modifies, ne detecte pas.
+            full_rebuild = QgsProcessingParameterBoolean(
+                self.FULL_REBUILD,
+                self.tr("Reconstruire tous les segments (après un changement de règle)"),
+                defaultValue=False,
             )
-            self.addParameter(
-                QgsProcessingParameterFeatureSink(
-                    self.OUTPUT,
-                    self.tr("Interventions géocodées"),
-                )
-            )
-            # Sortie facultative : table de synthèse ventilée par fichier source
-            # (matrice pivot fichier × catégorie + totaux) ; chargée en couche
-            # (table) dans le projet. Laissée vide -> aucun fichier écrit.
-            self.addParameter(
-                QgsProcessingParameterFileDestination(
-                    self.SUMMARY,
-                    self.tr(
-                        "Table de synthèse par fichier source (.xlsx, optionnel)"
-                    ),
-                    fileFilter="Classeur Excel (*.xlsx)",
-                    optional=True,
-                    createByDefault=True,
-                )
-            )
-            # Sortie facultative : une ligne par intervention non géocodée
-            # (identifiants source + requête Nominatim qui a échoué), pour
-            # permettre une retouche manuelle de l'adresse avant un nouveau
-            # passage. Laissée vide -> aucun fichier écrit.
-            self.addParameter(
-                QgsProcessingParameterFileDestination(
-                    self.UNGEOCODED,
-                    self.tr("Adresses non géocodées (.csv, optionnel)"),
-                    fileFilter="CSV (*.csv)",
-                    optional=True,
-                    createByDefault=True,
-                )
-            )
-            self.addParameter(
-                QgsProcessingParameterFeatureSink(
-                    self.OUTPUT_SEGMENTS,
-                    self.tr("Segments d'axe de rue (optionnel)"),
-                    type=QgsProcessing.TypeVectorLine,
-                    optional=True,
-                )
-            )
+            full_rebuild.setFlags(full_rebuild.flags() | _ADVANCED_PARAMETER_FLAG)
+            self.addParameter(full_rebuild)
 
         # -- traitement ---------------------------------------------------
         def processAlgorithm(self, parameters, context, feedback):
             folder = self.parameterAsFile(parameters, self.INPUT_FOLDER, context)
             contact_email = self.parameterAsString(parameters, self.CONTACT_EMAIL, context)
             user_agent = build_user_agent(contact_email)
-            push_to_be = self.parameterAsBoolean(parameters, self.PUSH_TO_BE, context)
-            # Chemin de la table de synthèse (paramètre optionnel) : chaîne vide
-            # si l'utilisateur ne l'a pas renseigné -> aucune sortie xlsx.
-            summary_path = self.parameterAsFileOutput(
-                parameters, self.SUMMARY, context
-            )
-            # Chemin du CSV des adresses non géocodées (paramètre optionnel) :
-            # chaîne vide si l'utilisateur ne l'a pas renseigné -> aucune sortie.
-            ungeocoded_path = self.parameterAsFileOutput(
-                parameters, self.UNGEOCODED, context
-            )
+            full_rebuild = self.parameterAsBoolean(parameters, self.FULL_REBUILD, context)
+            self._segments_multi = None  # sonde du type de colonne, une fois par run
+            self._connectors_available = None  # sonde de la table connecteurs
+            # Metadonnees Nominatim/OSM des points geocodes A CE RUN (en memoire
+            # seulement) : nom de rue canonique, objet OSM, precision.
+            self._nominatim_hits = {}
+            postal_mismatches: list = []
+            # La base 'be' est l'UNIQUE destination : sans elle, rien a faire.
+            # Verifiee AVANT la lecture et le geocodage (couteux, 1 req/s).
+            self._require_be(feedback)
 
-            out_crs = QgsCoordinateReferenceSystem(OUTPUT_CRS)
-            fields = _build_output_fields()
-            (sink, dest_id) = self.parameterAsSink(
-                parameters,
-                self.OUTPUT,
-                context,
-                fields,
-                QgsWkbTypes.Point,
-                out_crs,
-            )
-            if sink is None:
-                raise QgsProcessingException(
-                    self.invalidSinkError(parameters, self.OUTPUT)
-                )
-
-            # --- couche existante : recopie + set des ids déjà présents ---
-            existing_source = self.parameterAsSource(
-                parameters, self.EXISTING_LAYER, context
-            )
-            known_ids: set[str] = set()
-            # Interventions geocodees avec succes -- nouveau geocodage (boucle
-            # plus bas) OU deja presentes en mode additif (_copy_existing) --
-            # pour l'upsert vers la connexion 'be' (cf.
-            # self._upsert_geocoded_records) : (dict de valeurs d'attributs,
-            # QgsPointXY reprojete en OUTPUT_CRS).
+            # Interventions geocodees avec succes par ce run, pour l'upsert vers
+            # la connexion 'be' (cf. self._upsert_geocoded_records) : (dict de
+            # valeurs d'attributs, QgsPointXY reprojete en BELGIAN_LAMBERT_AUTHID). Seule
+            # trace EN MEMOIRE des points de ce run : aucune couche de sortie
+            # temporaire n'est produite, la base 'be' est l'unique destination.
             geocoded_for_db: list[tuple[dict, "QgsPointXY"]] = []
-            # Distribution des catégories de profondeur PAR VILLE (place
-            # normalisée) pour la table de synthèse. Clé = valeur normalisée de
-            # la ville (ou UNKNOWN_PLACE_LABEL si absente). Alimentée aux deux
-            # points de comptage ci-dessous ; le total général se dérive en
-            # sommant tous les Counters (source de vérité unique, cf.
-            # build_summary_matrix).
-            by_place: dict[str, Counter] = defaultdict(Counter)
-            # Code(s) postal(aux) normalisé(s) rencontré(s) pour chaque ville
-            # (affichés à côté du nom de ville dans la table de synthèse).
-            postal_by_place: dict[str, set] = defaultdict(set)
-            if existing_source is not None:
-                known_ids, existing_for_db = self._copy_existing(
-                    existing_source, sink, fields, out_crs, feedback,
-                    by_place, postal_by_place,
-                )
-                geocoded_for_db.extend(existing_for_db)
-                feedback.pushInfo(
-                    f"{len(known_ids)} interventions déjà présentes dans la couche existante."
-                )
 
             # --- collecte des entrées (.msg / .xlsx / .xls / .csv) -------
             input_paths = _collect_input_files(folder)
@@ -2084,12 +4592,16 @@ if HAS_QGIS:
             )
 
             # --- géocodage ----------------------------------------------
-            wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
-            transform = QgsCoordinateTransform(wgs84, out_crs, QgsProject.instance())
-            n_ok = n_nf = n_skip = 0
+            # WGS84 (Nominatim) -> Lambert belge 72, contexte de transformation
+            # du projet (datums), quel que soit le SCR du projet.
+            to_lambert, _ = lambert_transforms(context.transformContext())
+            n_ok = n_nf = 0
+            out_of_range: list[str] = []  # contrôle de vraisemblance Lambert 72
+            divergent: list[str] = []     # contrôle croisé QGIS / Python pur
             total = max(len(deduped), 1)
-            # Adresses non géocodées accumulées pour l'export CSV optionnel
-            # (cf. self.UNGEOCODED) : (InterventionRecord, requête en échec).
+            # Adresses non géocodées de ce run : (InterventionRecord, requête en
+            # échec) — message/email copiables du journal et upsert dans
+            # public.geofiber_asbuilt_ungeocoded.
             ungeocoded: list[tuple[InterventionRecord, str]] = []
 
             # Cadence Nominatim (1 req/s) en respectant l'annulation utilisateur.
@@ -2101,9 +4613,6 @@ if HAS_QGIS:
             for i, rec in enumerate(deduped):
                 if feedback.isCanceled():
                     break
-                if rec.intervention in known_ids:
-                    n_skip += 1
-                    continue
                 try:
                     hit, query, used_fallback = geocode_with_dedup_fallback(
                         rec.address,
@@ -2114,23 +4623,43 @@ if HAS_QGIS:
                     )
                 except NominatimBlockedError as exc:
                     raise QgsProcessingException(str(exc))
-                if hit is None:
+                reject = None
+                if hit is not None:
+                    # Résultat HORS BELGIQUE (Nominatim a pu trouver une rue
+                    # homonyme ailleurs) = échec, pas un point poussé.
+                    if not in_belgium_wgs84(hit.lat, hit.lon):
+                        reject = f"résultat hors Belgique (lat {hit.lat:.5f}, lon {hit.lon:.5f})"
+                    else:
+                        # UNIQUE reprojection WGS84 (x = lon, y = lat) -> Lambert 72.
+                        x, y = wgs84_to_lambert(hit.lon, hit.lat, to_lambert)
+                        if not lambert72_plausible(x, y):
+                            out_of_range.append(rec.intervention)
+                            reject = (
+                                f"coordonnées Lambert 72 hors plage ({x:.0f}, {y:.0f})"
+                                " — SCR suspect"
+                            )
+                if hit is None or reject:
                     n_nf += 1
                     ungeocoded.append((rec, query))
                     feedback.pushWarning(
                         f"Non géocodé (intervention {rec.intervention}) : {query}"
+                        + (f" — {reject}" if reject else "")
                     )
                 else:
-                    point = transform.transform(QgsPointXY(hit.lon, hit.lat))
+                    point = QgsPointXY(x, y)
+                    self._nominatim_hits[rec.intervention] = hit
+                    if postal_mismatch(rec.postal_code, hit):
+                        postal_mismatches.append(
+                            f"{rec.intervention} ({rec.postal_code} ≠ {hit.postcode})"
+                        )
+                    # Contrôle croisé avec la projection Python pure (même
+                    # chaîne BD72/Lambert 72 que PROJ) : un écart trahit une
+                    # reprojection mal configurée.
+                    px, py = wgs84_to_lambert72_pure(hit.lon, hit.lat)
+                    if math.hypot(px - x, py - y) > LAMBERT_CROSSCHECK_TOLERANCE_M:
+                        divergent.append(rec.intervention)
                     values = _build_attribute_values(rec, query, "ok", hit)
-                    feature = _build_feature(fields, values, point)
-                    sink.addFeature(feature, QgsFeatureSink.FastInsert)
                     geocoded_for_db.append((values, point))
-                    known_ids.add(rec.intervention)
-                    place_key = feature["place"] or UNKNOWN_PLACE_LABEL
-                    by_place[place_key][str(feature["depth_category"])] += 1
-                    if feature["postal_code"]:
-                        postal_by_place[place_key].add(feature["postal_code"])
                     n_ok += 1
                     if used_fallback:
                         feedback.pushInfo(
@@ -2142,150 +4671,126 @@ if HAS_QGIS:
                 _rate_limit_pause()  # politique Nominatim : 1 req/s
 
             feedback.pushInfo(
-                f"{n_ok} interventions géocodées, {n_nf} échecs, "
-                f"{n_skip} déjà présentes ignorées."
+                f"{n_ok} interventions géocodées, {n_nf} échecs."
             )
+            if postal_mismatches:
+                feedback.pushWarning(
+                    f"{len(postal_mismatches)} point(s) dont le code postal de l'adresse "
+                    "diffère de celui renvoyé par Nominatim au point (géocodage "
+                    f"possiblement dans une autre commune) : {', '.join(postal_mismatches[:5])}"
+                )
+            if divergent:
+                feedback.pushWarning(
+                    f"{len(divergent)} point(s) dont la reprojection QGIS vers "
+                    f"{BELGIAN_LAMBERT_AUTHID} s'écarte de plus de "
+                    f"{LAMBERT_CROSSCHECK_TOLERANCE_M:g} m de la formule de référence "
+                    f"(transformation de datum inattendue ?) : {', '.join(divergent[:10])}"
+                )
+            if out_of_range:
+                feedback.pushWarning(
+                    f"{len(out_of_range)} point(s) rejeté(s) : hors de la plage Lambert 72 "
+                    f"après reprojection vers {BELGIAN_LAMBERT_AUTHID} (SCR suspect) : "
+                    f"{', '.join(out_of_range[:10])}"
+                    + ("…" if len(out_of_range) > 10 else "")
+                )
             feedback.pushInfo(build_ungeocoded_message(ungeocoded))
 
-            # Segments d'axe de rue recalcules — synchro complete (relit TOUTE la
-            # table public.geofiber_asbuilt_depth_points, pas seulement le lot de
-            # ce run), rempli le sink OUTPUT_SEGMENTS optionnel plus bas une fois
-            # `outputs` initialise. N'a de sens QUE si push_to_be (les points
-            # fraichement geocodes de CE run ne sont en base 'be' qu'apres
-            # _upsert_geocoded_records, et la resynchro relit depuis la base).
-            fresh_segments: list = []
-            if push_to_be and not feedback.isCanceled():
+            # --- base 'be' : ORDRE GARANTI --------------------------------
+            # 1) points (+ non geocodees), 2) PUIS regeneration COMPLETE des
+            # segments depuis TOUS les points de la table (pas seulement ce
+            # run : les points de CE run n'y sont qu'apres l'etape 1), 3) styles
+            # en base, 4) couches du projet. Chaque etape a son propre garde :
+            # un echec (avertissement) n'empeche pas les suivantes -- en
+            # particulier, un upsert en echec n'empeche pas de regenerer les
+            # segments a partir des points deja en base. Annulation : rien
+            # n'est ecrit.
+            if not feedback.isCanceled():
+                feedback.pushInfo(
+                    f"Étape 1/4 — points : upsert de {len(geocoded_for_db)} "
+                    f"intervention(s) géocodée(s) dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} "
+                    f"et de {len(ungeocoded)} non géocodée(s) dans "
+                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
+                )
+                # Regle « si geocode, garder que geocode » : aucune intervention
+                # presente dans les points ne reste dans les non geocodees
+                # (nettoie aussi l'historique, sans script separe).
+                self._purge_ungeocoded_already_geocoded(feedback)
+                written_ids: set = set()
+                # None = points modifies INCONNUS (upsert interrompu) : les
+                # segments sont alors entierement reconstruits par prudence.
+                changed_ids = None
                 try:
-                    self._upsert_geocoded_records(geocoded_for_db, feedback)
+                    written_ids, changed_ids = self._upsert_geocoded_records(
+                        geocoded_for_db, feedback
+                    )
                 except Exception as exc:
                     feedback.pushWarning(
-                        f"Base 'be' : erreur inattendue lors de l'upsert ({exc}) — "
-                        "OUTPUT reste disponible."
+                        f"Points : erreur inattendue lors de l'upsert ({exc}) — "
+                        "segments reconstruits entièrement par prudence."
                     )
+                try:
+                    self._remove_resolved_ungeocoded(written_ids, feedback)
+                except Exception as exc:
+                    feedback.pushWarning(
+                        f"Non géocodées : erreur inattendue lors du retrait des "
+                        f"interventions désormais géocodées ({exc})."
+                    )
+                # Echec de geocodage alors qu'un point geocode existe deja pour
+                # cette intervention : point conserve, PAS de ligne en non geocodees.
+                existing_ids = self._existing_point_ids(
+                    [rec.intervention for rec, _query in ungeocoded], feedback
+                )
+                if existing_ids is not None:
+                    ungeocoded, kept = split_ungeocoded(ungeocoded, existing_ids)
+                    for rec, _query in kept:
+                        feedback.pushInfo(
+                            f"Intervention {rec.intervention} : point géocodé existant "
+                            "conservé, échec de re-géocodage ignoré."
+                        )
                 try:
                     self._upsert_ungeocoded_records(ungeocoded, feedback)
                 except Exception as exc:
                     feedback.pushWarning(
-                        f"Base 'be' (non-geocodes) : erreur inattendue lors de "
-                        f"l'upsert ({exc}) — OUTPUT reste disponible."
+                        f"Non géocodées : erreur inattendue lors de l'upsert ({exc})."
                     )
+                if existing_ids is None:
+                    # Verification impossible avant ecriture : on retablit la
+                    # regle apres coup.
+                    self._purge_ungeocoded_already_geocoded(feedback)
+
+                feedback.pushInfo(
+                    f"Étape 2/4 — segments : régénération de "
+                    f"{SEGMENTS_TABLE_SCHEMA}.{SEGMENTS_TABLE_NAME} ("
+                    + ("reconstruction complète demandée" if full_rebuild
+                       else "incrémentale : routes impactées seulement")
+                    + ")."
+                )
                 try:
-                    fresh_segments = self._sync_segments(feedback)
+                    self._sync_segments(
+                        feedback, user_agent, changed_ids, full_rebuild
+                    )
+                    self._log_locate_extras(feedback)
                 except Exception as exc:
                     feedback.pushWarning(
-                        f"Base 'be' (segments) : erreur inattendue lors de la "
-                        f"resynchronisation ({exc}) — OUTPUT reste disponible."
+                        f"Segments : erreur inattendue lors de la régénération ({exc})."
                     )
-                if geocoded_for_db:
-                    be_points_layer = self._open_be_points_layer(feedback)
-                    if be_points_layer is not None:
-                        _apply_depth_style(be_points_layer, feedback)
-                        _sync_style_to_db(
-                            be_points_layer,
-                            "depth_category",
-                            "Style profondeur As-Built (points) — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
-                            feedback,
-                        )
-            elif not push_to_be:
-                feedback.pushInfo(
-                    "Push vers la base 'be' désactivé (paramètre) — OUTPUT "
-                    "uniquement."
-                )
 
-            # --- symbologie : deux mécanismes COMPLÉMENTAIRES ------------
-            # Même source de vérité aux deux points : le .qml livré
-            # (style/depth_category.qml), chargé via _apply_depth_style.
-            # 1) Post-traitement — applique le style à la couche SI (et
-            #    seulement si) QGIS la charge automatiquement juste après
-            #    l'exécution. Fragile par nature : ne joue que dans ce cas.
-            #    Conservé comme filet pour l'application immédiate.
-            if context.willLoadLayerOnCompletion(dest_id):
-                self._styler = _DepthLayerStyler()
-                context.layersToLoadOnCompletion()[dest_id].setPostProcessor(
-                    self._styler
-                )
-
-            # 2) Style EMBARQUÉ dans le GeoPackage (table layer_styles) —
-            #    permanent, appliqué à TOUTE ouverture ultérieure du .gpkg
-            #    (chargement immédiat, ajout manuel plus tard, autre poste…).
-            #    On libère d'abord le sink pour forcer le flush du writer OGR
-            #    (fichier complet sur disque) avant de le rouvrir en lecture.
-            del sink
-            self._embed_style_in_output(dest_id, context, feedback)
-
-            outputs = {self.OUTPUT: dest_id}
-
-            # --- segments d'axe de rue (sink optionnel) ------------------
-            # QgsProcessingParameterFeatureSink(optional=True) est absent de
-            # `parameters` (ou vaut None) si l'utilisateur ne l'a pas renseigne —
-            # meme idiome que SUMMARY/UNGEOCODED (QgsProcessingParameterFileDestination
-            # optional=True) deja dans ce fichier, adapte au sink.
-            if parameters.get(self.OUTPUT_SEGMENTS):
-                if not push_to_be:
-                    feedback.pushInfo(
-                        "OUTPUT_SEGMENTS : PUSH_TO_BE desactive — les segments ne "
-                        "sont calcules qu'a partir de la base 'be', la couche "
-                        "segments sera donc vide pour ce run."
-                    )
-                seg_sink, seg_dest = self.parameterAsSink(
-                    parameters, self.OUTPUT_SEGMENTS, context,
-                    _build_segment_output_fields(), QgsWkbTypes.LineString,
-                    QgsCoordinateReferenceSystem(OUTPUT_CRS),
-                )
-                if seg_sink is None:
-                    # Sortie optionnelle et best-effort (contrairement a OUTPUT) :
-                    # un sink invalide ne doit jamais faire echouer tout le run —
-                    # la resynchro en base 'be' a deja eu lieu independamment.
+                feedback.pushInfo("Étape 3/4 — styles par défaut en base (layer_styles).")
+                try:
+                    self._sync_styles_to_db(feedback)
+                except Exception as exc:
                     feedback.pushWarning(
-                        self.invalidSinkError(parameters, self.OUTPUT_SEGMENTS)
+                        f"Styles : erreur inattendue lors de la synchronisation ({exc})."
                     )
-                else:
-                    try:
-                        for half in fresh_segments:
-                            geom = QgsGeometry.fromPolylineXY([
-                                QgsPointXY(half.start_x, half.start_y),
-                                QgsPointXY(half.end_x, half.end_y),
-                            ])
-                            feat = QgsFeature(_build_segment_output_fields())
-                            feat.setGeometry(geom)
-                            for name in ("point_a_intervention_id", "point_b_intervention_id",
-                                         "half", "depth_category", "is_long", "length_m", "road_key"):
-                                feat.setAttribute(name, getattr(half, name))
-                            seg_sink.addFeature(feat, QgsFeatureSink.FastInsert)
-                        outputs[self.OUTPUT_SEGMENTS] = seg_dest
-                        # Post-traitement : même mécanisme que OUTPUT
-                        # (_DepthLayerStyler), sur le style segments.
-                        if context.willLoadLayerOnCompletion(seg_dest):
-                            self._segments_styler = _SegmentsLayerStyler()
-                            context.layersToLoadOnCompletion()[
-                                seg_dest
-                            ].setPostProcessor(self._segments_styler)
-                    except Exception as exc:
-                        feedback.pushWarning(
-                            f"OUTPUT_SEGMENTS : erreur inattendue lors de "
-                            f"l'ecriture ({exc}) — la resynchro en base 'be' reste "
-                            "effective."
-                        )
 
-            # --- table de synthèse xlsx (optionnelle) -------------------
-            if summary_path:
-                written = self._write_summary_xlsx(
-                    summary_path, by_place, postal_by_place,
-                    openpyxl_module, ungeocoded, feedback,
-                )
-                if written:
-                    outputs[self.SUMMARY] = summary_path
-                    # Charge la table de synthèse comme couche (table) dans le
-                    # projet, par défaut, comme la couche de points OUTPUT.
-                    self._load_summary_layer(summary_path, context, feedback)
-
-            # --- CSV des adresses non géocodées (optionnel) --------------
-            if ungeocoded_path:
-                written = self._write_ungeocoded_csv(
-                    ungeocoded_path, ungeocoded, feedback
-                )
-                if written:
-                    outputs[self.UNGEOCODED] = ungeocoded_path
+                feedback.pushInfo("Étape 4/4 — couches de la base dans le projet.")
+                try:
+                    self._load_be_layers_in_project(context, feedback)
+                except Exception as exc:
+                    feedback.pushWarning(
+                        "Couches de la base 'be' non ajoutées au projet (erreur "
+                        f"inattendue : {exc})."
+                    )
 
             # --- message copiable des adresses non géocodées ------------
             feedback.pushInfo(build_ungeocoded_message(ungeocoded))
@@ -2293,275 +4798,74 @@ if HAS_QGIS:
                 feedback.pushInfo(
                     build_ungeocoded_email(ungeocoded, contact_email, n_ok)
                 )
-            return outputs
+            # Aucune sortie déclarée : tout est écrit en base 'be' (et les deux
+            # couches de la base ajoutées au projet si absentes).
+            return {}
 
         # -- helpers d'instance ------------------------------------------
-        def _embed_style_in_output(self, dest_id, context, feedback):
-            """Enregistre le style profondeur DANS la base du GeoPackage de sortie.
+        def _require_be(self, feedback):
+            """Verifie au DEMARRAGE que la base 'be' est utilisable, sinon echec net.
 
-            Rouvre la couche fraîchement écrite via
-            :func:`QgsProcessingUtils.mapLayerFromString`, lui applique le style de
-            référence (le ``.qml`` livré, via :func:`_apply_depth_style` — même
-            source que le post-traitement live) puis appelle
-            ``saveStyleToDatabase[V2]`` avec ``useAsDefault=True`` : le style est
-            écrit dans la table native ``layer_styles`` du GeoPackage et QGIS
-            l'applique automatiquement à toute ouverture future du fichier.
-
-            Best-effort et NON bloquant : tout échec (sortie qui n'est pas un
-            GeoPackage, provider sans stockage de style en base, couche non
-            réouvrable ici…) est journalisé via ``feedback`` sans jamais faire
-            échouer l'algorithme — le post-traitement reste le filet de secours.
+            La base 'be' est l'unique destination de l'algorithme (aucune autre
+            sortie) : connexion QGIS 'be' introuvable, ou table
+            public.geofiber_asbuilt_depth_points non ouvrable (invalide, non
+            spatiale, sans cle primaire) -> QgsProcessingException, AVANT toute
+            lecture de fichier ou requete Nominatim. Les echecs partiels
+            ulterieurs (segments, Overpass, styles) restent des avertissements.
             """
-            try:
-                layer = QgsProcessingUtils.mapLayerFromString(dest_id, context, True)
-            except Exception as exc:  # pragma: no cover - défensif (hors QGIS réel)
-                feedback.pushInfo(
-                    f"Style non embarqué : couche de sortie introuvable ({exc})."
+            md = QgsProviderRegistry.instance().providerMetadata("postgres")
+            if md is None or md.findConnection(BE_CONNECTION_NAME) is None:
+                raise QgsProcessingException(
+                    "Connexion QGIS 'be' introuvable — installez/activez le plugin "
+                    "Constructel Bridge (connexion PostgreSQL « be »). La base "
+                    "'be' est l'unique destination de cet algorithme : arrêt."
                 )
-                return
-            if layer is None or not layer.isValid():
-                feedback.pushInfo(
-                    "Style non embarqué : couche de sortie non réouvrable ici "
-                    "(le post-traitement reste le filet de secours)."
+            layer = self._open_be_points_layer(feedback)
+            if layer is None or not layer.primaryKeyAttributes():
+                raise QgsProcessingException(
+                    f"Table {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} inutilisable via la "
+                    "connexion 'be' (injoignable, invalide, non spatiale ou sans clé "
+                    "primaire — cf. journal). Rien n'a été géocodé ni écrit : arrêt."
                 )
-                return
-            try:
-                _apply_depth_style(layer, feedback)
-            except Exception as exc:  # pragma: no cover - défensif
-                feedback.pushInfo(f"Style non embarqué : rendu non applicable ({exc}).")
-                return
 
-            name = "depth_category"
-            description = "Style profondeur (vert/orange/rouge/gris)"
-            # Appel V2/legacy + interprétation du retour : cf. _save_style_to_db
-            # (partagé avec _sync_style_to_db).
-            try:
-                error = _save_style_to_db(layer, name, description)
-            except Exception as exc:  # provider non-DB, verrou fichier… — non bloquant
-                feedback.pushInfo(
-                    "Style non embarqué : nécessite un GeoPackage en sortie "
-                    f"(le stockage de style en base a échoué — {exc})."
-                )
-                return
+        def _sync_styles_to_db(self, feedback):
+            """Reecrit les styles par defaut des tables points et segments (etape 3).
 
-            if error:
-                feedback.pushInfo(
-                    "Style non embarqué : nécessite un GeoPackage en sortie "
-                    f"(détail : {error})."
-                )
-                return
-            feedback.pushInfo(
-                "Style « depth_category » embarqué dans le GeoPackage de sortie "
-                "(table layer_styles, marqué par défaut) : il sera ré-appliqué à "
-                "toute ouverture ultérieure du fichier."
-            )
-
-        def _copy_existing(
-            self, existing_source, sink, fields, out_crs, feedback,
-            by_place, postal_by_place,
-        ):
-            src_crs = existing_source.sourceCrs()
-            xform = None
-            if src_crs.isValid() and src_crs != out_crs:
-                xform = QgsCoordinateTransform(src_crs, out_crs, QgsProject.instance())
-            field_names = [fields.at(i).name() for i in range(fields.count())]
-            ids: set[str] = set()
-            geocoded_for_db: list[tuple[dict, "QgsPointXY"]] = []
-            for feat in existing_source.getFeatures():
-                new_feat = QgsFeature(fields)
-                geom = feat.geometry()
-                if xform is not None and geom is not None and not geom.isEmpty():
-                    reprojected = QgsGeometry(geom)
-                    reprojected.transform(xform)
-                    new_feat.setGeometry(reprojected)
-                else:
-                    new_feat.setGeometry(geom)
-                for name in field_names:
-                    idx = feat.fields().indexOf(name)
-                    if idx >= 0:
-                        new_feat.setAttribute(name, feat.attribute(idx))
-                sink.addFeature(new_feat, QgsFeatureSink.FastInsert)
-                cat = new_feat["depth_category"]
-                if cat:
-                    # Points recopiés d'une couche déjà géocodée : ventilés
-                    # sous leur VRAIE ville (déjà normalisée par un run
-                    # précédent), comme les points fraîchement géocodés.
-                    place_key = new_feat["place"] or UNKNOWN_PLACE_LABEL
-                    by_place[place_key][str(cat)] += 1
-                    if new_feat["postal_code"]:
-                        postal_by_place[place_key].add(new_feat["postal_code"])
-                idx = feat.fields().indexOf("intervention_id")
-                if idx >= 0:
-                    value = feat.attribute(idx)
-                    if value not in (None, ""):
-                        ids.add(str(value))
-                        new_geom = new_feat.geometry()
-                        has_all_fields = all(
-                            feat.fields().indexOf(name) >= 0 for name in field_names
-                        )
-                        if has_all_fields and new_geom is not None and not new_geom.isEmpty():
-                            # geometry.type() ne distingue pas Point de
-                            # MultiPoint (les deux sont PointGeometry) ; seul
-                            # asPoint() sait vraiment rejeter une geometrie non
-                            # ponctuelle (ValueError). On capture plutot que
-                            # de tester le type, pour ne jamais faire echouer
-                            # tout le run sur une EXISTING_LAYER inattendue.
-                            try:
-                                point = new_geom.asPoint()
-                            except ValueError:
-                                feedback.pushWarning(
-                                    f"Intervention {value} : geometrie non "
-                                    "ponctuelle dans la couche existante, non "
-                                    "poussee vers 'be' (copiee dans OUTPUT "
-                                    "normalement)."
-                                )
-                            else:
-                                # Ces interventions ne repassent jamais par la
-                                # boucle de geocodage (cf. known_ids plus bas) :
-                                # sans cet ajout elles ne rejoindraient jamais
-                                # public.geofiber_asbuilt_depth_points,
-                                # divergence permanente avec OUTPUT des qu'une
-                                # couche existante est fournie (mode additif).
-                                # Ne pousse que si la source a reellement les
-                                # 10 champs attendus (pas seulement des
-                                # valeurs non-nulles) : sinon un schema
-                                # incomplet ecraserait de bonnes valeurs prod
-                                # avec des NULL sur conflit.
-                                values = {name: new_feat[name] for name in field_names}
-                                geocoded_for_db.append((values, point))
-            return ids, geocoded_for_db
-
-        def _write_summary_xlsx(
-            self, path, by_place, postal_by_place, openpyxl_module,
-            ungeocoded, feedback
-        ):
-            """Écrit la table de synthèse ``.xlsx`` ventilée PAR VILLE.
-
-            Trois feuilles :
-
-            * **« Synthèse par ville »** (:data:`SUMMARY_PIVOT_SHEET_TITLE`) —
-              matrice pivot : une ligne par ville (place normalisée, plus une
-              ligne :data:`UNKNOWN_PLACE_LABEL` pour les points sans ville
-              renseignée, si applicable), une colonne ``Code(s) postal(aux)``
-              (codes postaux normalisés rencontrés pour cette ville, triés et
-              joints par ``", "`` — cf. :func:`format_postal_codes`), une
-              colonne par catégorie de profondeur (ordre
-              :data:`DEPTH_SUMMARY_ORDER`), une colonne ``Total`` (somme de la
-              ligne = total par ville) et une ligne ``Total`` en bas (somme de
-              chaque colonne sur toutes les villes = total général).
-            * **« Pourcentages »** (:data:`SUMMARY_PCT_SHEET_TITLE`) — rappel
-              agrégé : nombre et pourcentage par catégorie sur le total général,
-              toutes villes confondues.
-            * **« Adresses non géocodées »** (:data:`SUMMARY_UNGEOCODED_SHEET_TITLE`) —
-              le même texte que le message affiché dans le journal
-              (:func:`build_ungeocoded_message`), une ligne de la feuille par
-              ligne du message (pas un tableau à colonnes) : sélectionner la
-              plage et la copier donne directement le texte prêt à envoyer.
-
-            L'agrégation pivot est déléguée à la fonction pure
-            :func:`build_summary_matrix` (testée hors QGIS) : source de vérité
-            unique du total général. Best-effort et NON bloquant : un échec
-            d'écriture est signalé via ``feedback`` sans faire échouer le
-            géocodage (déjà réalisé, coûteux). Retourne ``True`` si le fichier a
-            été écrit.
+            Source : les .qml livres (_apply_depth_style / _apply_segments_style),
+            enregistres dans layer_styles (useAsDefault=True) via
+            _sync_style_to_db. Best-effort : table non ouvrable -> avertissement
+            deja emis par _open_be_layer, style suivant tente quand meme.
             """
-            # openpyxl n'est chargé plus haut QUE si l'entrée contient des .xlsx ;
-            # la synthèse est en .xlsx quel que soit le format d'entrée -> on
-            # s'assure ici que le module est disponible (import paresseux réutilisé).
-            if openpyxl_module is None:
-                try:
-                    openpyxl_module = _import_openpyxl(feedback)
-                except QgsProcessingException as exc:
-                    feedback.pushWarning(
-                        f"Table de synthèse non écrite : openpyxl indisponible ({exc})."
-                    )
-                    return False
-
-            matrix = build_summary_matrix(by_place, last_row_label=UNKNOWN_PLACE_LABEL)
-            categories = matrix["categories"]
-            totals = matrix["totals"]
-            grand_total = matrix["grand_total"]
-            labels = DEPTH_CATEGORY_LABELS
-
-            def _pct(count):
-                return round(100.0 * count / grand_total, 1) if grand_total else 0.0
-
-            try:
-                wb = openpyxl_module.Workbook()
-                # -- Feuille 1 : matrice pivot ville × catégorie -------------
-                ws = wb.active
-                ws.title = SUMMARY_PIVOT_SHEET_TITLE
-                ws.append(["Ville", "Code(s) postal(aux)", *categories, "Total"])
-                for row in matrix["rows"]:
-                    ws.append(
-                        [row["group"], format_postal_codes(postal_by_place.get(row["group"], ()))]
-                        + [row["counts"][cat] for cat in categories]
-                        + [row["total"]]
-                    )
-                ws.append(
-                    ["Total", ""] + [totals[cat] for cat in categories] + [grand_total]
+            points_layer = self._open_be_points_layer(feedback)
+            if points_layer is not None:
+                _apply_depth_style(points_layer, feedback)
+                _sync_style_to_db(
+                    points_layer, "depth_category",
+                    "Style profondeur As-Built (points) — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
+                    feedback,
                 )
-                # -- Feuille 2 : rappel agrégé nombre + % par catégorie ------
-                ws_pct = wb.create_sheet(SUMMARY_PCT_SHEET_TITLE)
-                ws_pct.append(["Catégorie", "Libellé", "Nombre", "Pourcentage (%)"])
-                for cat in categories:
-                    count = totals[cat]
-                    ws_pct.append([cat, labels.get(cat, cat), count, _pct(count)])
-                ws_pct.append(
-                    ["Total", "", grand_total, 100.0 if grand_total else 0.0]
-                )
-                # -- Feuille 3 : texte du message (identique au journal) -----
-                #    Une ligne de feuille par ligne de texte -- PAS un tableau
-                #    a colonnes -- pour un copier-coller direct vers un mail
-                #    (cf. build_ungeocoded_message, meme source que le journal).
-                ws_ungeocoded = wb.create_sheet(SUMMARY_UNGEOCODED_SHEET_TITLE)
-                for line in build_ungeocoded_message(ungeocoded).splitlines():
-                    ws_ungeocoded.append([line])
-                wb.save(path)
-            except Exception as exc:  # chemin invalide, verrou fichier… — non bloquant
-                feedback.pushWarning(
-                    f"Table de synthèse non écrite ({path}) : {exc}."
-                )
-                return False
-
-            n_places = len(matrix["rows"])
-            feedback.pushInfo(
-                f"Table de synthèse écrite ({grand_total} interventions, "
-                f"{n_places} ville(s)) : {path}"
+            segments_layer = self._open_be_layer(
+                SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
+                BE_GEOM_COLUMN,
+                QgsWkbTypes.MultiLineString if self._segments_is_multi(feedback)
+                else QgsWkbTypes.LineString,
+                feedback,
             )
-            return True
-
-        def _write_ungeocoded_csv(self, path, entries, feedback):
-            """Écrit le CSV des adresses non géocodées (stdlib, sans dépendance).
-
-            Une ligne par intervention non géocodée (:func:`build_ungeocoded_rows`) :
-            identifiants source + requête Nominatim qui a échoué, pour permettre
-            une retouche manuelle de l'adresse source (typo, ville tronquée,
-            notation numéro/boîte…) avant un nouveau passage. Séparateur ``;`` +
-            BOM UTF-8 (``utf-8-sig``) pour une ouverture directe correcte dans
-            Excel FR/BE (accents, ß…), cohérent avec :func:`read_csv_rows` en
-            lecture. Best-effort et NON bloquant : un échec d'écriture est
-            journalisé via ``feedback`` sans faire échouer le géocodage (déjà
-            réalisé, coûteux). Retourne ``True`` si le fichier a été écrit.
-            """
-            if not entries:
-                feedback.pushInfo(
-                    "Aucune adresse non géocodée : fichier CSV non écrit."
+            if segments_layer is not None:
+                _apply_segments_style(segments_layer, feedback)
+                _sync_style_to_db(
+                    segments_layer, "depth_segments",
+                    "Style segments d'axe de rue As-Built — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
+                    feedback,
                 )
-                return False
-            try:
-                with open(path, "w", newline="", encoding="utf-8-sig") as handle:
-                    writer = csv.writer(handle, delimiter=";")
-                    writer.writerows(build_ungeocoded_rows(entries))
-            except OSError as exc:
-                feedback.pushWarning(
-                    f"Adresses non géocodées non écrites ({path}) : {exc}."
+            connectors = self._read_connectors(feedback)
+            if connectors is not None:
+                _apply_connectors_style(connectors[0], feedback)
+                _sync_style_to_db(
+                    connectors[0], "depth_connectors",
+                    "Style connecteurs As-Built — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
+                    feedback,
                 )
-                return False
-            feedback.pushInfo(
-                f"{len(entries)} adresse(s) non géocodée(s) écrite(s) : {path}"
-            )
-            return True
 
         def _open_be_layer(self, schema: str, table: str, geom_column: str, wkb_type, feedback):
             """Ouvre schema.table via la connexion 'be', geometrie forcee.
@@ -2569,7 +4873,8 @@ if HAS_QGIS:
             Ne fait PAS confiance a l'auto-detection de tableUri() sur cette
             connexion : cf. le commentaire ci-dessous sur l'incident constate
             en prod le 03/08 (geometrie silencieusement omise). Factorise
-            depuis _upsert_geocoded_records ; reutilise par _sync_segments.
+            depuis _upsert_geocoded_records ; reutilise par _sync_segments et
+            _load_be_layers_in_project.
             """
             md = QgsProviderRegistry.instance().providerMetadata("postgres")
             be_connection = md.findConnection(BE_CONNECTION_NAME) if md else None
@@ -2577,8 +4882,7 @@ if HAS_QGIS:
                 feedback.pushWarning(
                     "Connexion QGIS 'be' introuvable — installez/activez "
                     "Constructel Bridge pour pousser les interventions en base. "
-                    f"OUTPUT reste disponible, rien n'a ete ecrit dans "
-                    f"{schema}.{table}."
+                    f"Rien n'a ete ecrit dans {schema}.{table}."
                 )
                 return None
             try:
@@ -2592,7 +4896,7 @@ if HAS_QGIS:
                 # plutot que de faire confiance a l'auto-detection.
                 ds_uri = QgsDataSourceUri(base_uri)
                 ds_uri.setGeometryColumn(geom_column)
-                ds_uri.setSrid(OUTPUT_CRS.split(":")[-1])
+                ds_uri.setSrid(BELGIAN_LAMBERT_AUTHID.split(":")[-1])
                 ds_uri.setWkbType(wkb_type)
                 layer = QgsVectorLayer(ds_uri.uri(False), table, "postgres")
             except Exception as exc:
@@ -2607,6 +4911,7 @@ if HAS_QGIS:
                     "spatiale via la connexion 'be' — rien n'a ete ecrit en base."
                 )
                 return None
+            _force_target_crs(layer, feedback, f"{schema}.{table}")
             return layer
 
         def _open_be_points_layer(self, feedback):
@@ -2637,24 +4942,39 @@ if HAS_QGIS:
 
             Best-effort ligne par ligne : la connexion be indisponible ou l'echec
             d'une ligne individuelle degradent (avertissement) sans jamais faire
-            echouer le run — le geocodage/OUTPUT ont deja eu lieu et ne doivent
-            pas etre perdus pour un probleme d'ecriture en base. Cf. spec
+            echouer le run — le reste du traitement (geocodage couteux, autres
+            tables) ne doit pas etre perdu pour un probleme d'ecriture d'une
+            ligne. Cf. spec
             docs/superpowers/specs/2026-08-03-geofiber-depth-upsert-design.md.
+
+            Pas de doublon : chaque ligne est cherchee par intervention_id AVANT
+            ecriture (mise a jour si presente, insertion sinon) et committee
+            aussitot — un meme intervention_id present deux fois dans le lot
+            (impossible apres dedupe_records, mais sans consequence) serait donc
+            mis a jour, jamais insere deux fois.
+
+            Retourne ``(written_ids, changed_ids)`` : intervention_id ecrits avec
+            succes (cf. _remove_resolved_ungeocoded), et parmi eux ceux qui sont
+            nouveaux ou dont la categorie, l'adresse ou la position ont change
+            par rapport a l'etat lu AVANT l'ecriture (cf. point_changed) — les
+            points « sales » du recalcul incremental des segments.
             """
+            written_ids: set = set()
+            changed_ids: set = set()
             if not records:
-                feedback.pushInfo("Base 'be' : aucune intervention geocodee a pousser.")
-                return
+                feedback.pushInfo("Points : aucune intervention geocodee a pousser.")
+                return written_ids, changed_ids
             layer = self._open_be_layer(
                 BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Point, feedback
             )
             if layer is None:
-                return
+                return written_ids, changed_ids
             if not layer.primaryKeyAttributes():
                 feedback.pushWarning(
                     f"Couche {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} sans cle primaire "
                     "exploitable — ecriture impossible, rien n'a ete ecrit en base."
                 )
-                return
+                return written_ids, changed_ids
 
             fields = layer.fields()
             id_field = QgsExpression.quotedColumnRef("intervention_id")
@@ -2665,6 +4985,7 @@ if HAS_QGIS:
                 request = QgsFeatureRequest()
                 request.setFilterExpression(f"{id_field} = {id_value}")
                 existing = list(layer.getFeatures(request))
+                old_state = _point_state(existing[0]) if existing else None
 
                 layer.startEditing()
                 ok = False
@@ -2701,6 +5022,14 @@ if HAS_QGIS:
                     ok = False
 
                 if ok:
+                    written_ids.add(intervention_id)
+                    new_state = {
+                        "depth_category": values.get("depth_category"),
+                        "address_raw": values.get("address_raw"),
+                        "x": point.x(), "y": point.y(),
+                    }
+                    if point_changed(old_state, new_state):
+                        changed_ids.add(intervention_id)
                     if existing:
                         updated += 1
                     else:
@@ -2715,19 +5044,130 @@ if HAS_QGIS:
                     layer.rollBack()
 
             feedback.pushInfo(
-                f"Base 'be' : {inserted} creee(s), {updated} mise(s) a jour, "
-                f"{failed} echec(s) sur {len(records)} intervention(s) geocodee(s)."
+                f"Points : {inserted + updated} upsertee(s) ({inserted} creee(s), "
+                f"{updated} mise(s) a jour), {failed} echec(s) sur {len(records)} "
+                "intervention(s) geocodee(s)."
             )
+            return written_ids, changed_ids
+
+        def _be_connection(self):
+            md = QgsProviderRegistry.instance().providerMetadata("postgres")
+            return md.findConnection(BE_CONNECTION_NAME) if md else None
+
+        def _purge_ungeocoded_already_geocoded(self, feedback):
+            """Supprime des non geocodees toute intervention presente dans les points.
+
+            Une seule requete ``DELETE … USING … RETURNING`` (atomique : une
+            transaction) ciblee sur les intervention_id communs aux deux tables —
+            jamais une purge de masse. Compteur au journal ; echec ->
+            avertissement, jamais d'exception.
+            """
+            be_connection = self._be_connection()
+            if be_connection is None:
+                return
+            sql = (
+                f"DELETE FROM {UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} u "
+                f"USING {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} p "
+                "WHERE u.intervention_id = p.intervention_id "
+                "RETURNING u.intervention_id"
+            )
+            try:
+                deleted = be_connection.executeSql(sql) or []
+            except Exception as exc:
+                feedback.pushWarning(
+                    f"Non géocodées : nettoyage des interventions déjà géocodées "
+                    f"impossible ({exc})."
+                )
+                return
+            if deleted:
+                feedback.pushInfo(
+                    f"Non géocodées : {len(deleted)} intervention(s) déjà présente(s) "
+                    f"dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} retirée(s) de "
+                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
+                )
+
+        def _existing_point_ids(self, intervention_ids, feedback):
+            """intervention_id parmi ``intervention_ids`` ayant deja un point en base.
+
+            Retourne un ``set`` de chaines, ou ``None`` si la verification est
+            impossible (l'appelant retablit alors la regle apres ecriture).
+            """
+            ids = sorted({str(i) for i in intervention_ids if i})
+            if not ids:
+                return set()
+            be_connection = self._be_connection()
+            if be_connection is None:
+                return None
+            found = set()
+            try:
+                for start in range(0, len(ids), 500):
+                    chunk = ", ".join(
+                        QgsExpression.quotedValue(v) for v in ids[start:start + 500]
+                    )
+                    rows = be_connection.executeSql(
+                        f"SELECT intervention_id FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} "
+                        f"WHERE intervention_id IN ({chunk})"
+                    ) or []
+                    found.update(str(row[0]) for row in rows)
+            except Exception as exc:
+                feedback.pushWarning(
+                    f"Non géocodées : vérification des points existants impossible ({exc})."
+                )
+                return None
+            return found
+
+        def _remove_resolved_ungeocoded(self, intervention_ids, feedback):
+            """Retire de public.geofiber_asbuilt_ungeocoded les interventions desormais geocodees.
+
+            CIBLE : uniquement les ``intervention_ids`` ecrits AVEC SUCCES dans
+            les points par CE run (retour de _upsert_geocoded_records) — jamais
+            de purge de masse. Evite qu'une intervention figure a la fois dans
+            les points et dans les non geocodees. Une transaction unique ;
+            best-effort (avertissement, jamais d'exception).
+            """
+            if not intervention_ids:
+                return
+            layer = self._open_be_nonspatial_layer(
+                UNGEOCODED_TABLE_SCHEMA, UNGEOCODED_TABLE_NAME, feedback
+            )
+            if layer is None or not layer.primaryKeyAttributes():
+                return
+            id_field = QgsExpression.quotedColumnRef("intervention_id")
+            ids = sorted(intervention_ids)
+            fids = []
+            for start in range(0, len(ids), 500):  # expressions IN bornees
+                chunk = ", ".join(QgsExpression.quotedValue(v) for v in ids[start:start + 500])
+                request = QgsFeatureRequest()
+                request.setFilterExpression(f"{id_field} IN ({chunk})")
+                request.setNoAttributes()
+                request.setFlags(QgsFeatureRequest.NoGeometry)
+                fids.extend(feat.id() for feat in layer.getFeatures(request))
+            if not fids:
+                return
+            layer.startEditing()
+            if layer.deleteFeatures(fids) and layer.commitChanges():
+                feedback.pushInfo(
+                    f"Non geocodees : {len(fids)} intervention(s) desormais geocodee(s) "
+                    f"retiree(s) de {UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
+                )
+            else:
+                for err in layer.commitErrors():
+                    feedback.reportError(f"Non geocodees : {err}", fatalError=False)
+                layer.rollBack()
+                feedback.pushWarning(
+                    "Non geocodees : retrait des interventions desormais geocodees "
+                    "en echec (lignes laissees en place)."
+                )
 
         def _upsert_ungeocoded_records(self, entries, feedback):
             """Upsert les adresses non geocodees dans public.geofiber_asbuilt_ungeocoded.
 
             ``entries`` : (InterventionRecord, query) — meme forme que
-            build_ungeocoded_rows. Best-effort, meme politique que
+            build_ungeocoded_message. Best-effort, meme politique que
             _upsert_geocoded_records : ne fait jamais echouer le run.
             """
             if not entries:
-                feedback.pushInfo("Base 'be' : aucune adresse non geocodee a pousser.")
+                feedback.pushInfo("Non geocodees : aucune adresse a pousser.")
                 return
             layer = self._open_be_nonspatial_layer(
                 UNGEOCODED_TABLE_SCHEMA, UNGEOCODED_TABLE_NAME, feedback
@@ -2802,18 +5242,375 @@ if HAS_QGIS:
                     layer.rollBack()
 
             feedback.pushInfo(
-                f"Base 'be' (non-geocodes) : {inserted} creee(s), {updated} mise(s) a jour, "
+                f"Non geocodees : {inserted} creee(s), {updated} mise(s) a jour, "
                 f"{failed} echec(s) sur {len(entries)}."
             )
 
-        def _locate_points_on_road(self, rows, feedback):
-            """Localise chaque ligne (dict avec intervention_id/depth_category/address_raw/x/y)
-            sur son axe de rue via public.fn_asbuilt_locate_on_road (connexion 'be').
+        @staticmethod
+        def _locate_sql(x, y, street_literal):
+            """Appel SQL de public.fn_asbuilt_locate_on_road pour un point EPSG:31370."""
+            return (
+                "SELECT road_key, position_m, "
+                "ST_X(projected_point), ST_Y(projected_point), "
+                "road_length_m, ST_X(road_start), ST_Y(road_start), "
+                "ST_X(road_end), ST_Y(road_end) "
+                "FROM public.fn_asbuilt_locate_on_road("
+                f"ST_SetSRID(ST_MakePoint({x!r}, {y!r}), 31370), "
+                f"{street_literal}, {LOCATE_RADIUS_M!r})"
+            )
 
-            Retourne (locations, road_extents, had_connection_error). Un point sans nom de
-            rue extractible, ou sans troncon matchant, est silencieusement omis (pas une
-            erreur — cf. spec). had_connection_error=True seulement sur un echec de
-            connexion/permission (feedback.reportError), jamais sur une absence de match.
+        def _probe_side_in_db(self, be_connection, row, px, py, road_key, street_literal):
+            """Côté de la route d'un point localisé EN BASE ('L'/'R', ou None si indécidable).
+
+            fn_asbuilt_locate_on_road ne renvoie pas la direction de l'axe : on la
+            sonde avec deux appels supplémentaires, de part et d'autre du point
+            projeté le long de l'axe (cf. :func:`side_probe_points` /
+            :func:`side_from_probe_positions`), ce qui donne un côté relatif au
+            MÊME sens que position_m. Point sur l'axe -> 'R' (convention). Une
+            sonde qui retombe sur un autre road_key (ou sur rien) rend le côté
+            indécidable (None). Les exceptions SQL remontent à l'appelant.
+            """
+            probes = side_probe_points(row["x"], row["y"], px, py)
+            if probes is None:
+                return SIDE_RIGHT
+            positions = []
+            for qx, qy in probes:
+                result = be_connection.executeSql(
+                    self._locate_sql(qx, qy, street_literal)
+                )
+                if not result or result[0][0] != road_key:
+                    return None
+                positions.append(float(result[0][1]))
+            return side_from_probe_positions(positions[0], positions[1])
+
+        def _locate_via_overpass(self, unmatched, no_street_rows, feedback, user_agent):
+            """Repli Overpass : par NOMS de rue, puis par COORDONNÉES (étapes 2 et 3).
+
+            ``unmatched`` : ``(row, street_name)`` sans tronçon nommé dans
+            ref.osm_roads ; ``no_street_rows`` : points sans nom de rue
+            extractible de l'adresse (coordonnées seulement).
+
+            1. Requêtes par NOMS (:func:`plan_overpass_requests` : tuiles de 2 km,
+               ≤ 30 rues, emprise serrée) ;
+            2. pour les points encore non localisés par nom (et ceux sans nom),
+               requêtes par COORDONNÉES (:func:`plan_coord_requests` : voies
+               carrossables des emprises, rayon appliqué en Python) ;
+            3. localisation FINALE de tous les points sur l'ensemble des voies
+               extraites pendant le run (:func:`locate_rows_on_osm`) — un seul
+               index : une rue a le même road_key quel que soit le chemin.
+
+            Mêmes garde-fous pour toutes les requêtes : cache disque du profil
+            QGIS (:func:`fetch_overpass_cached`, TTL 30 jours), miroirs et
+            backoff (:func:`overpass_fetch`), échecs ISOLÉS et coupe-circuit
+            (:func:`run_overpass_requests`), journal et progression par requête,
+            annulation. Géométries reprojetées WGS84 -> Lambert 72
+            (:func:`wgs84_to_lambert`). Les voies nouvelles du run sont envoyées
+            à ref.osm_roads via fn_asbuilt_store_osm_ways si elle existe
+            (:meth:`_store_osm_ways`, best-effort, jamais d'écrasement). Voie
+            désignée par Nominatim (``osm_type`` way + ``class`` highway) :
+            interrogée d'abord par identifiant, prioritaire à la localisation.
+            Chaque rattachement passe par :func:`assess_attachment` (écarté si
+            faible confiance).
+
+            Les voies extraites et les entrées de chaque point sont CUMULÉES sur
+            le run (``self._osm_ways`` / ``self._osm_inputs``) : les lots
+            successifs du mode incrémental localisent sur un ensemble croissant,
+            et :meth:`_sync_segments` refait une passe finale commune.
+
+            Retourne ``(locations, road_extents, stats, unavailable_ids,
+            road_lines)`` (``road_lines`` : axes fusionnés par road_key) :
+            ``stats`` = dict ``name``/``coords``/``ambiguous`` ;
+            ``unavailable_ids`` = points non localisés dont une requête a échoué.
+            Jamais d'exception.
+            """
+            stats = {"name": 0, "coords": 0, "ambiguous": 0}
+            name_items = [
+                (row["intervention_id"], street, row["x"], row["y"])
+                for row, street in unmatched
+            ]
+            coord_only = [
+                (row["intervention_id"], row["x"], row["y"]) for row in no_street_rows
+            ]
+            rows_by_id = {row["intervention_id"]: row for row, _street in unmatched}
+            rows_by_id.update({row["intervention_id"]: row for row in no_street_rows})
+            all_ids = set(rows_by_id)
+            feedback.pushInfo(
+                f"Segments : {len(name_items)} point(s) sans tronçon nommé dans "
+                f"ref.osm_roads et {len(coord_only)} sans nom de rue — repli via "
+                "l'API Overpass : voie désignée par Nominatim, puis par nom, puis par "
+                "coordonnées."
+            )
+            try:
+                from_wgs, to_wgs = lambert_transforms()
+            except Exception as exc:  # pragma: no cover - défensif
+                feedback.pushWarning(f"Overpass : reprojection impossible ({exc}).")
+                return [], {}, stats, all_ids, {}
+            try:
+                cache_dir = os.path.join(
+                    QgsApplication.qgisSettingsDirPath(), OVERPASS_CACHE_DIRNAME
+                )
+            except Exception:  # pragma: no cover - défensif
+                cache_dir = None
+            if not hasattr(self, "_osm_ways"):
+                self._osm_ways, self._osm_inputs = {}, {}
+
+            def wgs_bbox(request):
+                try:
+                    return lambert_bbox_to_wgs84(
+                        request.bbox, lambda x, y: lambert_to_wgs84(x, y, to_wgs)
+                    )
+                except Exception as exc:  # QgsCsException
+                    raise OverpassError(f"reprojection de l'emprise impossible ({exc})")
+
+            def fetch_by_name(request):
+                south, west, north, east = wgs_bbox(request)
+                query = build_overpass_query(request.names, south, west, north, east)
+                return fetch_overpass_cached(query, user_agent, cache_dir)
+
+            def fetch_by_coords(request):
+                query = build_overpass_coord_query(*wgs_bbox(request))
+                return fetch_overpass_cached(query, user_agent, cache_dir)
+
+            def reporter(label):
+                def report(index, total, outcome):
+                    feedback.setProgress(int(100 * index / max(total, 1)))
+                    what = (
+                        f"{len(outcome.request.names)} rue(s)" if outcome.request.names
+                        else f"{len(outcome.request.ids)} point(s)"
+                    )
+                    if outcome.data is not None:
+                        n_ways = sum(
+                            1 for el in outcome.data.get("elements", ())
+                            if isinstance(el, dict) and el.get("type") == "way"
+                        )
+                        source = " (cache)" if outcome.from_cache else ""
+                        feedback.pushInfo(
+                            f"Overpass {label} {index}/{total} : {what}, {n_ways} "
+                            f"voie(s), {outcome.elapsed_s:.1f} s{source}."
+                        )
+                    else:
+                        feedback.pushWarning(
+                            f"Overpass {label} {index}/{total} : {what}, "
+                            f"{len(outcome.request.ids)} point(s) — échec : {outcome.error}"
+                        )
+                return report
+
+            n_out_of_range = [0]
+
+            def absorb(outcomes, keep_unnamed):
+                failed = set()
+                for outcome in outcomes:
+                    if outcome.data is None:
+                        failed.update(outcome.request.ids)
+                        continue
+                    for way in parse_overpass_ways(outcome.data, keep_unnamed=keep_unnamed):
+                        if way.way_id in self._osm_ways:
+                            continue  # voie déjà extraite (autre requête / lot)
+                        try:
+                            way.coords = [
+                                wgs84_to_lambert(lon, lat, from_wgs)
+                                for lon, lat in way.coords
+                            ]
+                        except Exception:  # QgsCsException : voie ignorée
+                            continue
+                        n_out_of_range[0] += sum(
+                            1 for x, y in way.coords if not lambert72_plausible(x, y)
+                        )
+                        self._osm_ways[way.way_id] = way
+                        fresh_ways.append(way)
+                    # Alimentation de ref.osm_roads au fil de l'eau (best-effort).
+                    self._store_osm_ways(fresh_ways, feedback)
+                    fresh_ways.clear()
+                return failed
+
+            fresh_ways: list = []
+
+            pause = lambda: _sleep_with_cancel(feedback, OVERPASS_PAUSE_S)  # noqa: E731
+
+            def give_up_pause():
+                feedback.pushWarning(
+                    f"Overpass : aucune réponse depuis {OVERPASS_MAX_CONSECUTIVE_FAILURES} "
+                    f"requêtes — dernière pause de {OVERPASS_GIVE_UP_PAUSE_S:g} s avant "
+                    "de renoncer pour ce run."
+                )
+                _sleep_with_cancel(feedback, OVERPASS_GIVE_UP_PAUSE_S)
+
+            # Etat du coupe-circuit PARTAGE par les vagues de requetes.
+            circuit = {}
+            all_outcomes = []
+            # 0) voies DESIGNEES par Nominatim (objet highway du resultat) :
+            #    l'axe le plus sur, interroge directement par identifiant.
+            preferred = {}
+            for intervention_id in rows_by_id:
+                hit = getattr(self, "_nominatim_hits", {}).get(intervention_id)
+                if hit is not None and hit.osm_type == "way" and hit.osm_class == "highway" \
+                        and hit.osm_id > 0:
+                    preferred[intervention_id] = hit.osm_id
+            wanted_ids = sorted({w for w in preferred.values() if w not in self._osm_ways})
+            id_requests = [
+                OverpassRequest(
+                    bbox=(0.0, 0.0, 0.0, 0.0), names=(),
+                    ids=tuple(sorted(i for i, w in preferred.items() if w in chunk)),
+                )
+                for chunk in (
+                    set(wanted_ids[k:k + 200]) for k in range(0, len(wanted_ids), 200)
+                )
+            ]
+            id_chunks = {
+                req.ids: sorted({preferred[i] for i in req.ids}) for req in id_requests
+            }
+            if id_requests and not feedback.isCanceled():
+                outcomes = run_overpass_requests(
+                    id_requests,
+                    lambda req: fetch_overpass_cached(
+                        build_overpass_ids_query(id_chunks[req.ids]), user_agent, cache_dir
+                    ),
+                    is_canceled=feedback.isCanceled, pause=pause,
+                    report=reporter("osm_id"), give_up_pause=give_up_pause, state=circuit,
+                )
+                all_outcomes.extend(outcomes)
+                absorb(outcomes, keep_unnamed=True)
+            # 1) par noms (noms de reference : canonique Nominatim + adresse),
+            #    lots par (rue, localite)
+            name_requests = plan_overpass_requests([
+                (row["intervention_id"], name, row["x"], row["y"],
+                 row.get("place") or row.get("postal_code") or "")
+                for row, names in unmatched for name in names
+            ])
+            outcomes = run_overpass_requests(
+                name_requests, fetch_by_name, is_canceled=feedback.isCanceled,
+                pause=pause, report=reporter("noms"), give_up_pause=give_up_pause,
+                state=circuit,
+            )
+            all_outcomes.extend(outcomes)
+            failed_ids = absorb(outcomes, keep_unnamed=False)
+            # 2) par coordonnées, pour ce qui reste
+            first, _reasons, _lines = locate_rows_on_osm(
+                name_items, [], list(self._osm_ways.values()), preferred_ways=preferred
+            )
+            by_name = {i for i, (_m, method) in first.items() if method != "coords"}
+            coord_items = [
+                (i, x, y) for i, _street, x, y in name_items if i not in by_name
+            ] + coord_only
+            coord_requests = plan_coord_requests(coord_items)
+            if coord_requests and not feedback.isCanceled():
+                outcomes = run_overpass_requests(
+                    coord_requests, fetch_by_coords, is_canceled=feedback.isCanceled,
+                    pause=pause, report=reporter("coordonnées"),
+                    give_up_pause=give_up_pause, state=circuit,
+                )
+                all_outcomes.extend(outcomes)
+                failed_ids |= absorb(outcomes, keep_unnamed=True)
+            if n_out_of_range[0]:
+                feedback.pushWarning(
+                    f"Overpass : {n_out_of_range[0]} sommet(s) hors de la plage Lambert 72 "
+                    "après reprojection vers EPSG:31370 — SCR suspect."
+                )
+            # 3) localisation finale sur toutes les voies du run
+            results, reasons, road_lines = locate_rows_on_osm(
+                name_items, coord_only, list(self._osm_ways.values()),
+                preferred_ways=preferred,
+            )
+            for i, names, x, y in name_items:
+                self._osm_inputs[i] = (names, x, y, preferred.get(i))
+            for i, x, y in coord_only:
+                self._osm_inputs[i] = ((), x, y, preferred.get(i))
+
+            locations: list[RoadLocation] = []
+            road_extents: dict[str, RoadExtent] = {}
+            for intervention_id in sorted(results):
+                match, method = results[intervention_id]
+                ctx = self.__dict__.get("_point_ctx", {}).get(intervention_id, {})
+                _score, cause = assess_attachment(
+                    match, ctx.get("names", ()), ctx.get("hit")
+                )
+                if cause:
+                    self._reject_attachment(intervention_id, cause)
+                    continue
+                if method in ("name", "osm_id") and \
+                        float(match.get("distance") or 0.0) > LOW_CONFIDENCE_DISTANCE_M:
+                    # Voie du même nom à 50–150 m : rattachement assumé, marqué.
+                    self.__dict__.setdefault("_low_conf_attached", {})[
+                        intervention_id] = float(match["distance"])
+                stats["name" if method in ("name", "osm_id") else "coords"] += 1
+                row = rows_by_id[intervention_id]
+                locations.append(RoadLocation(
+                    intervention_id=intervention_id,
+                    depth_category=row["depth_category"],
+                    road_key=match["road_key"], position_m=match["position_m"],
+                    x=match["x"], y=match["y"],
+                    side=match["side"], highway=match["highway"],
+                ))
+                road_extents.setdefault(match["road_key"], match["extent"])
+            stats["ambiguous"] = sum(1 for r in reasons.values() if r == "ambiguous")
+            unavailable_ids = failed_ids - set(results)
+            # Diagnostic des points restés non localisés (journal de fin).
+            unlocated = self.__dict__.setdefault("_unlocated", {})
+            all_ways = list(self._osm_ways.values())
+            for intervention_id in sorted(all_ids - set(results)):
+                row = rows_by_id[intervention_id]
+                names = self.__dict__.get("_point_ctx", {}).get(intervention_id, {}).get("names", ())
+                cause, distance = diagnose_unlocated(row["x"], row["y"], names, all_ways)
+                if intervention_id in unavailable_ids:
+                    cause = "Overpass indisponible"
+                elif reasons.get(intervention_id) == "ambiguous":
+                    cause = "ambigu"
+                unlocated[intervention_id] = (cause, distance)
+            n_total = len(all_outcomes)
+            if preferred:
+                feedback.pushInfo(
+                    f"Overpass : {sum(1 for m, h in results.values() if h == 'osm_id')}/"
+                    f"{len(preferred)} point(s) rattaché(s) à la voie désignée par "
+                    "Nominatim (identifiant OSM)."
+                )
+            n_ok = sum(1 for o in all_outcomes if o.data is not None)
+            n_cached = sum(1 for o in all_outcomes if o.from_cache)
+            summary = (
+                f"Overpass : {n_ok}/{n_total} requête(s) réussie(s), {n_cached} servie(s) "
+                f"par le cache, {n_total - n_ok} en échec"
+            )
+            if n_total - n_ok:
+                feedback.pushWarning(
+                    summary + " — relancez le script pour reprendre les requêtes "
+                    "manquantes (le cache conserve les réussies)."
+                )
+            else:
+                feedback.pushInfo(summary + ".")
+            feedback.pushInfo(
+                f"Overpass : {len(name_requests)} requête(s) par nom, "
+                f"{len(coord_requests)} par coordonnées ; {stats['name']} point(s) "
+                f"localisé(s) par nom, {stats['coords']} par coordonnées (rayon "
+                f"{OSM_COORD_FALLBACK_RADIUS_M:g} m), {len(all_ids) - len(results)} non "
+                f"localisé(s) dont {stats['ambiguous']} ambigu(s) et "
+                f"{len(unavailable_ids)} faute de réponse Overpass."
+            )
+            return locations, road_extents, stats, unavailable_ids, road_lines
+
+        def _locate_points_on_road(self, rows, feedback, user_agent):
+            """Localise chaque ligne (dict avec intervention_id/depth_category/address_raw/x/y)
+            sur son axe de rue, côté de la route compris.
+
+            Source 1 : public.fn_asbuilt_locate_on_road (connexion 'be', table
+            ref.osm_roads) ; côté par sondes (:meth:`_probe_side_in_db`), type de
+            voie lu dans ref.osm_roads.highway (une requête par road_key ;
+            illisible -> décalage par défaut). Source 2, en REPLI pour les points
+            sans tronçon nommé en base : extraction OSM via Overpass et
+            localisation Python (:meth:`_locate_via_overpass`). La répartition par
+            source est indiquée au journal.
+
+            Retourne (locations, road_extents, had_connection_error, unavailable_ids,
+            road_lines) — ``road_lines`` : polyligne de l'axe par road_key quand
+            elle est connue (Overpass ; base via fn_asbuilt_road_geometry si la
+            migration est appliquee, cf. :meth:`_db_road_line`). Un point sans nom de
+            rue extractible, ou sans troncon matchant, est omis (pas une erreur — cf.
+            spec), compte dans le journal. Si AUCUN point n'a pu etre localise alors
+            qu'il y en avait a localiser, un avertissement explicite et actionnable est
+            emis (cf. build_locate_failure_warning), sans lever. had_connection_error=True
+            sur un echec de connexion/permission (feedback.reportError) ou des sondes
+            de cote : recalcul incomplet, l'appelant desactive TOUTE purge. Les echecs
+            Overpass restent ISOLES : ``unavailable_ids`` = points non localises faute
+            de reponse Overpass ; l'appelant ne suspend la purge que pour les routes
+            ou ils figuraient. Jamais sur une simple absence de match.
             """
             md = QgsProviderRegistry.instance().providerMetadata("postgres")
             be_connection = md.findConnection(BE_CONNECTION_NAME) if md else None
@@ -2821,32 +5618,71 @@ if HAS_QGIS:
                 feedback.pushWarning(
                     "Connexion QGIS 'be' introuvable — segments d'axe de rue non calcules."
                 )
-                return [], {}, True
+                return [], {}, True, set(), {}
 
             locations: list[RoadLocation] = []
             road_extents: dict[str, RoadExtent] = {}
             had_connection_error = False
-            n_no_street = n_no_match = 0
+            n_side_default = 0
+            # Points sans troncon nomme en base -> repli Overpass : (row, nom de rue).
+            unmatched: list = []
+            # Points sans nom de rue extractible -> repli Overpass par coordonnees.
+            no_street_rows: list = []
+            # Axes fusionnes connus, par road_key (segments qui suivent l'axe).
+            road_lines: dict = {}
+            probe_enabled = True
+            highway_by_key: dict[str, str] = {}
+            highway_lookup = {"enabled": True}
+
+            def road_highway(px, py):
+                # Type de voie du troncon de ref.osm_roads le plus proche du point
+                # projete (qui est SUR l'axe). Colonne absente / droit refuse ->
+                # desactive pour le reste du run, decalage par defaut.
+                if not highway_lookup["enabled"]:
+                    return ""
+                sql = (
+                    "SELECT highway FROM ref.osm_roads ORDER BY geom <-> "
+                    f"ST_Transform(ST_SetSRID(ST_MakePoint({px!r}, {py!r}), 31370), "
+                    "Find_SRID('ref', 'osm_roads', 'geom')) LIMIT 1"
+                )
+                try:
+                    result = be_connection.executeSql(sql)
+                except Exception as exc:
+                    highway_lookup["enabled"] = False
+                    feedback.pushInfo(
+                        f"Type de voie non lisible dans ref.osm_roads ({exc}) — "
+                        f"decalage par defaut ({DEFAULT_HIGHWAY_OFFSET_M:g} m) pour "
+                        "les troncons issus de la base."
+                    )
+                    return ""
+                return str(result[0][0] or "") if result else ""
 
             for row in rows:
                 if feedback.isCanceled():
                     break
-                street_name = extract_street_name(row["address_raw"])
-                if not street_name:
-                    n_no_street += 1
+                # Noms de REFERENCE : nom canonique OSM renvoye par Nominatim a
+                # ce run (s'il y en a un) puis nom extrait de l'adresse ; les
+                # deux sont essayes quand ils different.
+                hit = getattr(self, "_nominatim_hits", {}).get(row["intervention_id"])
+                names = reference_street_names(extract_street_name(row["address_raw"]), hit)
+                self.__dict__.setdefault("_point_ctx", {})[row["intervention_id"]] = {
+                    "names": names, "hit": hit, "address": row["address_raw"] or "",
+                }
+                if not names:
+                    # Pas de nom exploitable : ni la base ni Overpass par nom —
+                    # repli direct par coordonnees.
+                    no_street_rows.append(row)
                     continue
-                street_literal = QgsExpression.quotedValue(street_name)
-                sql = (
-                    "SELECT road_key, position_m, "
-                    "ST_X(projected_point), ST_Y(projected_point), "
-                    "road_length_m, ST_X(road_start), ST_Y(road_start), "
-                    "ST_X(road_end), ST_Y(road_end) "
-                    "FROM public.fn_asbuilt_locate_on_road("
-                    f"ST_SetSRID(ST_MakePoint({row['x']!r}, {row['y']!r}), 31370), "
-                    f"{street_literal})"
-                )
+                result = None
+                street_literal = None
                 try:
-                    result = be_connection.executeSql(sql)
+                    for name in names:
+                        street_literal = QgsExpression.quotedValue(name)
+                        result = be_connection.executeSql(
+                            self._locate_sql(row["x"], row["y"], street_literal)
+                        )
+                        if result:
+                            break
                 except Exception as exc:
                     feedback.reportError(
                         f"fn_asbuilt_locate_on_road indisponible pour "
@@ -2868,47 +5704,558 @@ if HAS_QGIS:
                         break
                     continue
                 if not result:
-                    n_no_match += 1
-                    continue  # aucun troncon nomme dans le rayon : omission normale
+                    unmatched.append((row, names))
+                    continue  # aucun troncon nomme dans le rayon : repli Overpass
                 (road_key, position_m, px, py,
                  road_length_m, sx, sy, ex, ey) = result[0]
+                px, py = float(px), float(py)
+                db_distance = math.hypot(row["x"] - px, row["y"] - py)
+                _score, cause = assess_attachment(
+                    {"method": "db", "distance": db_distance}, names, hit,
+                )
+                if cause:
+                    self._reject_attachment(row["intervention_id"], cause)
+                    continue
+                if db_distance > LOW_CONFIDENCE_DISTANCE_M:
+                    self.__dict__.setdefault("_low_conf_attached", {})[
+                        row["intervention_id"]] = db_distance
+                side = None
+                if probe_enabled:
+                    try:
+                        side = self._probe_side_in_db(
+                            be_connection, row, px, py, road_key, street_literal
+                        )
+                    except Exception as exc:
+                        # Cotes faux -> cles (.., side) fausses : purge desactivee.
+                        probe_enabled = False
+                        had_connection_error = True
+                        feedback.reportError(
+                            f"Sonde de cote (fn_asbuilt_locate_on_road) en echec : "
+                            f"{exc} — cote 'R' par defaut pour les points restants, "
+                            "purge desactivee.",
+                            fatalError=False,
+                        )
+                if side is None:
+                    side = SIDE_RIGHT
+                    n_side_default += 1
+                if road_key not in highway_by_key:
+                    highway_by_key[road_key] = road_highway(px, py)
                 locations.append(RoadLocation(
                     intervention_id=row["intervention_id"],
                     depth_category=row["depth_category"],
                     road_key=road_key, position_m=float(position_m),
-                    x=float(px), y=float(py),
+                    x=px, y=py, side=side, highway=highway_by_key[road_key],
                 ))
+                if road_key not in road_extents:
+                    line = self._db_road_line(
+                        be_connection, row, street_literal, road_key, road_length_m, feedback
+                    )
+                    if line:
+                        road_lines[road_key] = line
                 road_extents.setdefault(road_key, RoadExtent(
                     length_m=float(road_length_m),
                     start_x=float(sx), start_y=float(sy),
                     end_x=float(ex), end_y=float(ey),
                 ))
 
-            feedback.pushInfo(
-                f"Segments : {len(locations)} point(s) localise(s) sur un axe de rue "
-                f"sur {len(rows)} fourni(s) ({n_no_street} sans nom de rue "
-                f"extractible de l'adresse, {n_no_match} sans troncon nomme "
-                "correspondant a proximite)."
+            n_db = len(locations)
+            stats = {"name": 0, "coords": 0, "ambiguous": 0}
+            overpass_status = None
+            unavailable_ids: set = set()
+            ov_ids: set = set()
+            if (unmatched or no_street_rows) and not feedback.isCanceled():
+                ov_locations, ov_extents, stats, unavailable_ids, ov_lines = (
+                    self._locate_via_overpass(
+                        unmatched, no_street_rows, feedback, user_agent
+                    )
+                )
+                road_lines.update(ov_lines)
+                # 'failed' : aucune reponse Overpass exploitable pour ces points.
+                overpass_status = (
+                    "failed" if unavailable_ids and not ov_locations else "ok"
+                )
+                locations.extend(ov_locations)
+                # road_key prefixes "overpass" : aucune collision avec ceux de la base.
+                road_extents.update(ov_extents)
+                ov_ids = {loc.intervention_id for loc in ov_locations}
+            n_no_street = sum(1 for row in no_street_rows if row["intervention_id"] not in ov_ids)
+            n_no_match = sum(1 for row, _s in unmatched if row["intervention_id"] not in ov_ids)
+            n_unlocated = n_no_street + n_no_match
+
+            summary = (
+                f"Segments : {len(locations)} point(s) localise(s) sur {len(rows)} — "
+                f"{n_db} via ref.osm_roads (nom), {stats['name']} via Overpass (nom), "
+                f"{stats['coords']} via Overpass (coordonnées, rayon "
+                f"{OSM_COORD_FALLBACK_RADIUS_M:g} m), {n_unlocated} non localisé(s) "
+                f"(dont {stats['ambiguous']} ambigu(s), {len(unavailable_ids)} faute de "
+                f"réponse Overpass ; {n_no_street} sans nom de rue dans l'adresse)."
             )
-            return locations, road_extents, had_connection_error
+            if n_side_default:
+                summary += (
+                    f" Cote de la route indetermine pour {n_side_default} point(s) "
+                    "localise(s) en base -> 'R' par defaut."
+                )
+            feedback.pushInfo(summary)
+            # Echec TOTAL de localisation (hors erreur de connexion en base, deja
+            # signalee via reportError, mais y compris l'echec du repli Overpass)
+            # et hors annulation (compteurs partiels) : sans ce message, le run se
+            # terminerait sans aucun segment et sans explication (constate :
+            # ref.osm_roads limitee a Bruxelles, points en Communaute
+            # germanophone).
+            if (
+                (not had_connection_error or overpass_status == "failed")
+                and not feedback.isCanceled()
+            ):
+                warning = build_locate_failure_warning(
+                    len(rows), len(locations), n_no_street, n_no_match,
+                    overpass_status,
+                )
+                if warning:
+                    feedback.pushWarning(warning)
+            return locations, road_extents, had_connection_error, unavailable_ids, road_lines
 
-        def _sync_segments(self, feedback):
-            """Recalcule et resynchronise integralement les segments d'axe de rue.
+        def _segments_is_multi(self, feedback):
+            """La colonne geom des segments est-elle MultiLineString ? (sonde memorisee par run).
 
-            Relit TOUT public.geofiber_asbuilt_depth_points (pas seulement le lot de
-            ce run — cf. spec §4 "synchro complete"), localise chaque point valide sur
-            son axe de rue, reconstruit les moities via build_segment_halves, puis
-            upsert + supprime les orphelins dans public.geofiber_asbuilt_depth_segments.
-            Best-effort : si _locate_points_on_road signale une erreur de connexion,
-            ou si la lecture des points ne peut etre verifiee complete (count(*)
-            exact divergent ou en echec), AUCUNE suppression n'est jouee (cf. Review
-            Focus - ne pas purger sur un recalcul non fiable), seul l'upsert du lot
-            obtenu est tente. Annulation utilisateur : les boucles d'upsert et de
-            purge s'arretent (le drapeau d'annulation etant persistant, une
-            annulation pendant la localisation n'entraine aucune purge).
+            geometry_columns via la connexion 'be'. Colonne encore LineString
+            (migration non appliquee) ou sonde en echec -> False : on ecrit des
+            LineString (premiere partie), avec avertissement.
+            """
+            cached = getattr(self, "_segments_multi", None)
+            if cached is not None:
+                return cached
+            be_connection = self._be_connection()
+            geometry_type = None
+            if be_connection is not None:
+                try:
+                    rows = be_connection.executeSql(
+                        "SELECT type FROM geometry_columns WHERE "
+                        f"f_table_schema = '{SEGMENTS_TABLE_SCHEMA}' AND "
+                        f"f_table_name = '{SEGMENTS_TABLE_NAME}' AND "
+                        f"f_geometry_column = '{BE_GEOM_COLUMN}'"
+                    ) or []
+                    geometry_type = str(rows[0][0]) if rows else None
+                except Exception:
+                    geometry_type = None
+            multi = is_multilinestring_type(geometry_type)
+            if not multi:
+                feedback.pushWarning(
+                    f"Segments : colonne geom encore {geometry_type or 'de type inconnu'} "
+                    "— migration MultiLineString recommandée (les segments sont écrits "
+                    "en LineString, première partie seulement)."
+                )
+            self._segments_multi = multi
+            return multi
 
-            Ordre de lecture des points DETERMINISTE (tri par intervention_id avant
-            construction de ``rows``) : l'ordre d'iteration QGIS sur une couche
+        def _db_road_line(self, be_connection, row, street_literal, road_key,
+                          road_length_m, feedback):
+            """Polyligne de l'axe d'une route de la BASE, ou ``None`` (repli en cordes).
+
+            Necessite la fonction jumelle ``public.fn_asbuilt_road_geometry``
+            (brouillon migration_road_geom.sql) : meme recherche et meme fusion
+            que fn_asbuilt_locate_on_road, geometrie en plus. Sa presence est
+            sondee UNE fois par run (pg_proc) ; absente ou en echec -> repli en
+            cordes droites avec avertissement unique. La geometrie n'est
+            retenue que si elle correspond a la localisation : meme road_key et
+            longueur = road_length_m (:func:`road_line_matches`).
+            """
+            state = getattr(self, "_road_geom_state", None)
+            if state is None:
+                state = self._road_geom_state = {"available": None, "fallback": 0}
+            if state["available"] is None:
+                try:
+                    probe = be_connection.executeSql(
+                        "SELECT count(*) FROM pg_proc p JOIN pg_namespace n "
+                        "ON n.oid = p.pronamespace WHERE n.nspname = 'public' "
+                        "AND p.proname = 'fn_asbuilt_road_geometry'"
+                    )
+                    state["available"] = bool(probe and int(probe[0][0]) > 0)
+                except Exception:
+                    state["available"] = False
+                if not state["available"]:
+                    feedback.pushWarning(
+                        "Segments : géométrie de l'axe indisponible pour les routes de "
+                        "la base — cordes droites (migration road_geom requise : "
+                        "fonction public.fn_asbuilt_road_geometry). Les routes issues "
+                        "d'Overpass suivent l'axe."
+                    )
+            if not state["available"]:
+                return None
+            try:
+                rows = be_connection.executeSql(
+                    "SELECT road_key, ST_AsText(road_geom) FROM "
+                    "public.fn_asbuilt_road_geometry("
+                    f"ST_SetSRID(ST_MakePoint({row['x']!r}, {row['y']!r}), 31370), "
+                    f"{street_literal}, {LOCATE_RADIUS_M!r})"
+                ) or []
+            except Exception as exc:
+                state["available"] = False
+                feedback.pushWarning(
+                    f"Segments : fn_asbuilt_road_geometry en échec ({exc}) — cordes "
+                    "droites pour les routes de la base."
+                )
+                return None
+            for found_key, wkt in rows:
+                if str(found_key) != str(road_key):
+                    continue
+                parts = parse_wkt_lines(wkt)
+                if parts and road_line_matches(parts, road_length_m):
+                    return parts
+            state["fallback"] += 1
+            return None
+
+        def _log_locate_extras(self, feedback):
+            """Journal de fin d'etape 2 : rattachements ecartes, alimentation de ref.osm_roads."""
+            attached = self.__dict__.get("_low_conf_attached", {})
+            ctx = self.__dict__.get("_point_ctx", {})
+            if attached:
+                examples = "; ".join(
+                    f"{i} ({ctx.get(i, {}).get('address', '')}) : {d:.0f} m"
+                    for i, d in sorted(attached.items())[:5]
+                )
+                feedback.pushWarning(
+                    f"Segments : {len(attached)} rattachement(s) à FAIBLE CONFIANCE "
+                    f"conservé(s) (voie du même nom à plus de "
+                    f"{LOW_CONFIDENCE_DISTANCE_M:g} m) — {examples}"
+                )
+            unlocated = self.__dict__.get("_unlocated", {})
+            if unlocated:
+                by_cause = Counter(cause for cause, _d in unlocated.values())
+                examples = "; ".join(
+                    f"{i} ({ctx.get(i, {}).get('address', '')}) : {cause}"
+                    + (f", voie nommée la plus proche à {d:.0f} m" if d is not None else "")
+                    for i, (cause, d) in sorted(unlocated.items())[:10]
+                )
+                feedback.pushWarning(
+                    f"Segments : {len(unlocated)} point(s) non localisé(s) — "
+                    + ", ".join(f"{n} {cause}" for cause, n in by_cause.most_common())
+                    + f". Exemples : {examples}"
+                )
+            rejected = self.__dict__.get("_low_confidence", {})
+            if rejected:
+                ctx = self.__dict__.get("_point_ctx", {})
+                examples = "; ".join(
+                    f"{i} ({ctx.get(i, {}).get('address', '')}) : {cause}"
+                    for i, cause in sorted(rejected.items())[:5]
+                )
+                feedback.pushWarning(
+                    f"Segments : {len(rejected)} rattachement(s) à faible confiance "
+                    f"écarté(s) — {examples}"
+                )
+            state = self.__dict__.get("_store_state") or {}
+            if state.get("offered"):
+                inserted = state["inserted"]
+                feedback.pushInfo(
+                    f"ref.osm_roads : {inserted} voie(s) ajoutée(s) "
+                    f"({state['offered'] - inserted} déjà présente(s))."
+                )
+                if inserted:
+                    feedback.pushWarning(
+                        "ref.osm_roads vient d'être alimentée : les road_key de la base "
+                        "et d'Overpass diffèrent — cochez « Reconstruire tous les "
+                        "segments » après la première alimentation."
+                    )
+
+        def _read_connectors(self, feedback):
+            """Couche + etat des connecteurs en base, ou None si la table est absente.
+
+            Presence sondee UNE fois par run (information_schema) ; absente ->
+            une ligne d'info « couche connecteurs indisponible (migration_connectors
+            requise) », aucune erreur. Retourne ``(couche, etats, fids)`` :
+            ``etats`` = dict intervention_id -> depth_category/side/road_key/
+            length_m/coords (cf. connector_changed).
+            """
+            available = self.__dict__.get("_connectors_available")
+            be_connection = self._be_connection()
+            if available is None:
+                available = False
+                if be_connection is not None:
+                    try:
+                        rows = be_connection.executeSql(
+                            "SELECT count(*) FROM information_schema.tables WHERE "
+                            f"table_schema = '{CONNECTORS_TABLE_SCHEMA}' AND "
+                            f"table_name = '{CONNECTORS_TABLE_NAME}'"
+                        )
+                        available = bool(rows and int(rows[0][0]) > 0)
+                    except Exception:
+                        available = False
+                self._connectors_available = available
+                if not available:
+                    feedback.pushInfo(
+                        "Connecteurs : couche connecteurs indisponible "
+                        "(migration_connectors requise)."
+                    )
+            if not available:
+                return None
+            layer = self._open_be_layer(
+                CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, BE_GEOM_COLUMN,
+                QgsWkbTypes.LineString, feedback,
+            )
+            if layer is None or not layer.primaryKeyAttributes():
+                return None
+            states, fids = {}, {}
+            for feat in layer.getFeatures():
+                intervention_id = feat["intervention_id"]
+                if not isinstance(intervention_id, str) or intervention_id in fids:
+                    continue
+                fids[intervention_id] = feat.id()
+                coords = None
+                geom = feat.geometry()
+                if geom is not None and not geom.isEmpty():
+                    try:
+                        coords = tuple((p.x(), p.y()) for p in geom.asPolyline())
+                    except (TypeError, ValueError):
+                        coords = None
+                length_m = feat["length_m"]
+                states[intervention_id] = {
+                    "depth_category": _str_or_empty(feat["depth_category"]),
+                    "side": _str_or_empty(feat["side"]),
+                    "road_key": _str_or_empty(feat["road_key"]),
+                    "length_m": float(length_m) if isinstance(length_m, (int, float)) else None,
+                    "coords": coords,
+                }
+            return layer, states, fids
+
+        def _sync_connectors(self, feedback, connectors, points, locations, halves,
+                             merged_groups, scope_ids, deletions_allowed, protected_ids):
+            """Etape 2b : connecteurs point geocode -> extremite de son segment (axe decale).
+
+            Memes localisations et memes moities que les segments
+            (:func:`build_connectors`), meme logique incrementale
+            (:func:`plan_connector_sync` : seuls les points relocalises a ce run
+            sont recalcules ; un connecteur identique n'est pas reecrit ; ceux
+            des points devenus gris ou supprimes sont retires) et memes gardes
+            de purge (``deletions_allowed`` ; points Overpass indisponibles
+            proteges). Best-effort : un echec d'ecriture est journalise.
+            """
+            layer, existing, fids = connectors
+            fresh = build_connectors(points, locations, halves, merged_groups)
+            plan = plan_connector_sync(fresh, existing, scope_ids, set(points))
+            to_delete = [i for i in plan.to_delete if i not in protected_ids]
+            if not deletions_allowed:
+                to_delete = [i for i in to_delete if i not in points]  # gris/supprimés seulement
+            fields = layer.fields()
+            inserted = updated = deleted = failed = 0
+            for connector in plan.to_insert + plan.to_update:
+                if feedback.isCanceled():
+                    break
+                fid = fids.get(connector.intervention_id)
+                geom = QgsGeometry.fromPolylineXY([
+                    QgsPointXY(connector.start_x, connector.start_y),
+                    QgsPointXY(connector.end_x, connector.end_y),
+                ])
+                values = {
+                    "intervention_id": connector.intervention_id,
+                    "depth_category": connector.depth_category,
+                    "side": connector.side,
+                    "road_key": connector.road_key,
+                    "length_m": connector.length_m,
+                }
+                layer.startEditing()
+                try:
+                    if fid is not None:
+                        ok = layer.changeAttributeValues(fid, {
+                            fields.indexOf(k): v for k, v in values.items()
+                            if k != "intervention_id"
+                        })
+                        ok = layer.changeGeometry(fid, geom) and ok
+                    else:
+                        feat = QgsFeature(fields)
+                        for k, v in values.items():
+                            feat.setAttribute(k, v)
+                        now = QDateTime.currentDateTimeUtc()
+                        for ts_col in ("created_at", "updated_at"):
+                            idx = fields.indexOf(ts_col)
+                            if idx >= 0:
+                                feat.setAttribute(idx, now)
+                        feat.setGeometry(geom)
+                        ok = layer.addFeature(feat)
+                    ok = ok and layer.commitChanges()
+                except Exception as exc:
+                    feedback.reportError(
+                        f"Connecteur {connector.intervention_id} : {exc}", fatalError=False
+                    )
+                    ok = False
+                if ok:
+                    updated += 1 if fid is not None else 0
+                    inserted += 0 if fid is not None else 1
+                else:
+                    failed += 1
+                    layer.rollBack()
+            if to_delete and not feedback.isCanceled():
+                layer.startEditing()
+                if layer.deleteFeatures([fids[i] for i in to_delete]) and layer.commitChanges():
+                    deleted = len(to_delete)
+                else:
+                    failed += len(to_delete)
+                    layer.rollBack()
+            feedback.pushInfo(
+                f"Connecteurs : {inserted} inséré(s) / {updated} mis à jour / {deleted} "
+                f"supprimé(s) / {plan.unchanged} inchangé(s) ; {failed} échec(s)."
+            )
+
+        def _reject_attachment(self, intervention_id, cause):
+            """Memorise un rattachement a faible confiance ecarte (journal de fin de run)."""
+            rejected = self.__dict__.setdefault("_low_confidence", {})
+            rejected[intervention_id] = cause
+
+        def _store_osm_ways(self, ways, feedback):
+            """Envoie les voies Overpass NOUVELLES du run a ref.osm_roads (best-effort).
+
+            Via ``public.fn_asbuilt_store_osm_ways(jsonb)`` (SECURITY DEFINER,
+            ON CONFLICT DO NOTHING, types Farois seulement) — le compte 'be' n'a
+            aucun droit direct sur ref. Sa presence est sondee UNE fois par run
+            (pg_proc) ; absente -> une ligne d'info, rien d'autre. Lots de
+            :data:`OSM_STORE_BATCH_SIZE`, dedoublonnes par osm_id sur le run
+            (:func:`build_store_payload`), JSON en chaine dollar-quoted
+            (:func:`store_osm_ways_sql`). Un echec = avertissement : jamais
+            d'interruption, jamais d'effet sur la purge des segments.
+            """
+            state = self.__dict__.setdefault(
+                "_store_state",
+                {"available": None, "sent": set(), "inserted": 0, "offered": 0, "failed": 0},
+            )
+            be_connection = self._be_connection()
+            if be_connection is None or not ways:
+                return
+            if state["available"] is None:
+                try:
+                    probe = be_connection.executeSql(
+                        "SELECT count(*) FROM pg_proc p JOIN pg_namespace n "
+                        "ON n.oid = p.pronamespace WHERE n.nspname = 'public' "
+                        "AND p.proname = 'fn_asbuilt_store_osm_ways'"
+                    )
+                    state["available"] = bool(probe and int(probe[0][0]) > 0)
+                except Exception:
+                    state["available"] = False
+                if not state["available"]:
+                    feedback.pushInfo(
+                        "ref.osm_roads : stockage OSM en base indisponible (fonction "
+                        "fn_asbuilt_store_osm_ways absente)."
+                    )
+            if not state["available"]:
+                return
+            payload, ids = build_store_payload(ways, state["sent"])
+            state["sent"].update(ids)
+            for start in range(0, len(payload), OSM_STORE_BATCH_SIZE):
+                batch = payload[start:start + OSM_STORE_BATCH_SIZE]
+                try:
+                    rows = be_connection.executeSql(store_osm_ways_sql(batch)) or []
+                    inserted = int(rows[0][0]) if rows and rows[0][0] is not None else 0
+                except Exception as exc:
+                    state["failed"] += len(batch)
+                    feedback.pushWarning(
+                        f"ref.osm_roads : envoi de {len(batch)} voie(s) en échec ({exc}) — "
+                        "sans effet sur les segments."
+                    )
+                    continue
+                state["inserted"] += inserted
+                state["offered"] += len(batch)
+
+        def _final_overpass_pass(self, locations, road_extents, road_lines):
+            """Relocalise les points Overpass du run sur TOUTES les voies extraites.
+
+            Pure recombinaison (:func:`locate_rows_on_osm`), sans requete : les
+            points localises en base (ref.osm_roads) sont inchanges ; un point
+            Overpass que la passe finale ne localise plus (cas limite) garde sa
+            localisation initiale. Retourne ``(locations, road_extents,
+            road_lines)``.
+            """
+            inputs = getattr(self, "_osm_inputs", {}) or {}
+            if not inputs:
+                return locations, road_extents, road_lines
+            name_items = [(i, names, x, y) for i, (names, x, y, _p) in inputs.items() if names]
+            coord_items = [(i, x, y) for i, (names, x, y, _p) in inputs.items() if not names]
+            preferred = {i: p for i, (_n, _x, _y, p) in inputs.items() if p}
+            results, _reasons, osm_lines = locate_rows_on_osm(
+                name_items, coord_items, list(self._osm_ways.values()),
+                preferred_ways=preferred,
+            )
+            new_lines = {
+                key: line for key, line in road_lines.items()
+                if not key.startswith("overpass")
+            }
+            new_lines.update(osm_lines)
+            new_locations = []
+            new_extents = {
+                key: ext for key, ext in road_extents.items()
+                if not key.startswith("overpass")
+            }
+            for loc in locations:
+                result = results.get(loc.intervention_id)
+                if result is not None and loc.road_key.startswith("overpass"):
+                    match = result[0]
+                    ctx = self.__dict__.get("_point_ctx", {}).get(loc.intervention_id, {})
+                    _score, cause = assess_attachment(match, ctx.get("names", ()), ctx.get("hit"))
+                    if cause:
+                        self._reject_attachment(loc.intervention_id, cause)
+                        continue
+                    loc = RoadLocation(
+                        intervention_id=loc.intervention_id,
+                        depth_category=loc.depth_category,
+                        road_key=match["road_key"], position_m=match["position_m"],
+                        x=match["x"], y=match["y"],
+                        side=match["side"], highway=match["highway"],
+                    )
+                    new_extents.setdefault(match["road_key"], match["extent"])
+                elif loc.road_key.startswith("overpass"):
+                    new_extents.setdefault(loc.road_key, road_extents.get(loc.road_key))
+                new_locations.append(loc)
+            for loc in new_locations:  # localisations initiales conservées
+                if loc.road_key.startswith("overpass") and loc.road_key not in new_lines:
+                    if loc.road_key in road_lines:
+                        new_lines[loc.road_key] = road_lines[loc.road_key]
+            return (
+                new_locations,
+                {k: v for k, v in new_extents.items() if v is not None},
+                new_lines,
+            )
+
+        def _sync_segments(self, feedback, user_agent, changed_ids=None, full_rebuild=False):
+            """Regenere les segments d'axe de rue — INCREMENTAL par defaut.
+
+            Relit TOUT public.geofiber_asbuilt_depth_points et TOUTE la table des
+            segments, puis :
+
+            * mode INCREMENTAL (defaut) : ne relocalise et ne recalcule que les
+              routes impactees — points « sales » (``changed_ids`` : nouveaux ou
+              modifies par l'upsert de CE run ; points de couleur absents de tout
+              segment ; points cites par des segments mais devenus gris ou
+              supprimes, cf. initial_dirty_ids), propages a leurs routes et aux
+              autres points de ces routes jusqu'au point fixe
+              (expand_dirty_roads). Les routes propres ne sont ni relocalisees,
+              ni recalculees, ni reecrites, ni purgees ;
+            * mode COMPLET : ``full_rebuild`` (parametre avance FULL_REBUILD, a
+              utiliser apres un changement de regle : seuils, decalages, cotes,
+              ref.osm_roads), ``changed_ids`` None (points modifies inconnus) ou
+              table segments vide (premier run) : tous les points sont localises.
+
+            Dans les deux cas, plan_segment_sync ne fait ecrire que les segments
+            nouveaux ou DIFFERENTS de l'existant ; la purge ne vise que le
+            perimetre recalcule. Localisation : axe de rue ET cote (base puis
+            repli Overpass, cf. _locate_points_on_road), moities par (road_key,
+            side) via build_segment_halves. Cle d'un segment : (point_a, point_b,
+            half, side). Geometrie enregistree = moitie decalee vers son cote
+            selon le type de voie (segment_half_geometry) ; length_m/is_long
+            restent mesures sur l'axe.
+
+            Prerequis de schema : colonne ``side`` sur la table segments (cf.
+            brouillon de migration). Absente -> avertissement « migration requise »
+            et RIEN n'est fait (ni localisation, ni ecriture, ni purge).
+
+            Best-effort : si _locate_points_on_road signale une erreur de connexion
+            (base, sondes de cote ou repli Overpass), ou si la lecture des points ne
+            peut etre verifiee complete (count(*) exact divergent ou en echec),
+            AUCUNE suppression n'est jouee (cf. Review Focus - ne pas purger sur un
+            recalcul non fiable), seul l'upsert du lot obtenu est tente. Idem si
+            aucun point n'a ete localise alors qu'il y en avait. Annulation
+            utilisateur : les boucles d'upsert et de purge s'arretent (le drapeau
+            d'annulation etant persistant, une annulation pendant la localisation
+            n'entraine aucune purge).
+
+            Ordre des points DETERMINISTE (tri par intervention_id des rows ET des
+            localisations avant build_segment_halves, quel que soit l'ordre des
+            lots de localisation incrementaux) : l'ordre d'iteration QGIS sur une couche
             postgres n'est PAS garanti stable d'un run a l'autre, et
             build_segment_halves depart les ex-aequo de position_m par ordre
             d'entree -- sans ce tri, deux runs sans changement de donnees pourraient
@@ -2918,11 +6265,56 @@ if HAS_QGIS:
             Un SegmentHalf de longueur nulle (deux points geocodes au meme endroit,
             ou un point situe exactement sur un bout de route) N'EST PAS filtre :
             c'est une geometrie LineString valide (PostGIS l'accepte), un cas de
-            donnees legitime bien que rare -- pas une erreur.
+            donnees legitime bien que rare -- pas une erreur (dessine sur l'axe,
+            sans decalage : direction indefinie).
             """
+            # Voies Overpass et entrees des points cumulees sur CE run (cf.
+            # _locate_via_overpass) : repartent de zero a chaque synchronisation.
+            self._osm_ways, self._osm_inputs = {}, {}
+            # Contexte des points (noms de reference, metadonnees Nominatim du
+            # run), rattachements ecartes, alimentation de ref.osm_roads : par run.
+            self._point_ctx, self._low_confidence = {}, {}
+            self._low_conf_attached, self._unlocated = {}, {}
+            self._connectors_available = None  # sonde de la table, une fois par run
+            self._store_state = {
+                "available": None, "sent": set(), "inserted": 0, "offered": 0, "failed": 0,
+            }
+            # Sonde « axe des routes de la base » (fn_asbuilt_road_geometry) :
+            # une seule par run, memorisee (cf. _db_road_line).
+            self._road_geom_state = {"available": None, "fallback": 0}
             points_layer = self._open_be_points_layer(feedback)
             if points_layer is None:
-                return []
+                return
+
+            # Table segments ouverte et verifiee AVANT la localisation (sondes
+            # SQL, appels Overpass) : inutile de payer ce cout si l'ecriture est
+            # de toute facon impossible. Type de geometrie selon la colonne
+            # reelle (MultiLineString, ou LineString avant migration).
+            multi_column = self._segments_is_multi(feedback)
+            segments_layer = self._open_be_layer(
+                SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME, BE_GEOM_COLUMN,
+                QgsWkbTypes.MultiLineString if multi_column else QgsWkbTypes.LineString,
+                feedback,
+            )
+            if segments_layer is None:
+                return
+            if not segments_layer.primaryKeyAttributes():
+                feedback.pushWarning(
+                    f"Couche {SEGMENTS_TABLE_SCHEMA}.{SEGMENTS_TABLE_NAME} sans cle "
+                    "primaire exploitable — ecriture impossible, rien n'a ete ecrit "
+                    "en base."
+                )
+                return
+            fields = segments_layer.fields()
+            if fields.indexOf("side") < 0:
+                feedback.pushWarning(
+                    f"Colonne 'side' absente de {SEGMENTS_TABLE_SCHEMA}."
+                    f"{SEGMENTS_TABLE_NAME} — MIGRATION REQUISE (ajout de la colonne "
+                    "side 'L'/'R' et cle primaire (point_a_intervention_id, "
+                    "point_b_intervention_id, half, side)). Segments non recalcules : "
+                    "rien n'a ete ecrit ni supprime pour ce run."
+                )
+                return
 
             features = sorted(
                 points_layer.getFeatures(), key=lambda f: f["intervention_id"] or ""
@@ -2932,6 +6324,8 @@ if HAS_QGIS:
             for feat in features:
                 total_features_seen += 1
                 category = feat["depth_category"]
+                # Points GRIS exclus AVANT la localisation : ni sondes SQL, ni
+                # Overpass pour eux (build_segment_halves les ignore aussi).
                 if category == "manquante" or not category:
                     continue
                 geom = feat.geometry()
@@ -2942,6 +6336,8 @@ if HAS_QGIS:
                     "intervention_id": feat["intervention_id"],
                     "depth_category": category,
                     "address_raw": feat["address_raw"],
+                    "place": _str_or_empty(feat["place"]),
+                    "postal_code": _str_or_empty(feat["postal_code"]),
                     "x": pt.x(), "y": pt.y(),
                 })
 
@@ -2985,35 +6381,189 @@ if HAS_QGIS:
                     "lue(s) — echec silencieux de getFeatures() possible)."
                 )
 
-            locations, road_extents, had_connection_error = self._locate_points_on_road(
-                rows, feedback
-            )
-            fresh = build_segment_halves(locations, road_extents)
-
-            segments_layer = self._open_be_layer(
-                SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
-                BE_GEOM_COLUMN, QgsWkbTypes.LineString, feedback,
-            )
-            if segments_layer is None:
-                return fresh
-            if not segments_layer.primaryKeyAttributes():
-                feedback.pushWarning(
-                    f"Couche {SEGMENTS_TABLE_SCHEMA}.{SEGMENTS_TABLE_NAME} sans cle "
-                    "primaire exploitable — ecriture impossible, rien n'a ete ecrit "
-                    "en base."
-                )
-                return fresh
-
-            # Un seul parcours de la table segments : cle -> fid, reutilise tel quel
-            # par les boucles d'upsert et de purge (pas de re-requete par cle).
+            # Un seul parcours de la table segments : cle -> fid (ecritures) et
+            # cle -> etat (comparaison : un segment identique n'est pas reecrit ;
+            # index route <-> points pour le mode incremental).
             existing_fids = {}
+            existing = {}
             for feat in segments_layer.getFeatures():
-                existing_fids.setdefault((
+                key = (
                     feat["point_a_intervention_id"],
                     feat["point_b_intervention_id"],
                     feat["half"],
-                ), feat.id())
-            to_upsert, to_delete = plan_segment_sync(fresh, set(existing_fids))
+                    feat["side"],
+                )
+                if key in existing_fids:
+                    continue
+                existing_fids[key] = feat.id()
+                coords = None
+                geom = feat.geometry()
+                if geom is not None and not geom.isEmpty():
+                    try:
+                        lines = (
+                            geom.asMultiPolyline() if geom.isMultipart()
+                            else [geom.asPolyline()]
+                        )
+                        coords = tuple(
+                            tuple((p.x(), p.y()) for p in part) for part in lines
+                        )
+                    except (TypeError, ValueError):
+                        coords = None
+                length_m = feat["length_m"]
+                is_long = feat["is_long"]
+                existing[key] = {
+                    "road_key": _str_or_empty(feat["road_key"]),
+                    "depth_category": _str_or_empty(feat["depth_category"]),
+                    "is_long": is_long if isinstance(is_long, bool) else None,
+                    "length_m": float(length_m) if isinstance(length_m, (int, float)) else None,
+                    "coords": coords,
+                }
+
+            # Connecteurs (etape 2b) : table optionnelle (migration_connectors),
+            # lue ici pour que les points SANS connecteur soient relocalises.
+            connectors = self._read_connectors(feedback)
+
+            # --- mode : complet ou incremental ------------------------------
+            # Complet si demande (FULL_REBUILD), si les points modifies par CE run
+            # sont inconnus (upsert interrompu : changed_ids None), ou si la
+            # table segments est vide (premier run : tout est a construire).
+            full = full_rebuild or changed_ids is None or not existing
+            had_connection_error = False
+            unavailable_ids: set = set()
+            road_ids, id_roads, covered_ids = index_existing_segments(existing)
+            if full:
+                reason = (
+                    "demandée" if full_rebuild
+                    else "table des segments vide" if not existing
+                    else "points modifiés inconnus (upsert interrompu)"
+                )
+                feedback.pushInfo(
+                    f"Segments : reconstruction complète ({reason}) sur "
+                    f"{total_features_seen} point(s) de {BE_TABLE_SCHEMA}."
+                    f"{BE_TABLE_NAME} ({len(rows)} de profondeur connue)…"
+                )
+                (locations, road_extents, had_connection_error,
+                 unavailable_ids, road_lines) = self._locate_points_on_road(
+                    rows, feedback, user_agent
+                )
+                n_attempted = len(rows)
+                scope_roads = None
+            else:
+                rows_by_id = {row["intervention_id"]: row for row in rows}
+                # Tout point de couleur est localisable : par nom, ou a defaut par
+                # coordonnees (repli Overpass, meme sans nom de rue dans l'adresse).
+                locatable_ids = set(rows_by_id)
+                # Points co-localises (fusionnes en un seul noeud, cf.
+                # merge_colocated) : un membre non representant n'apparait dans
+                # aucun segment -> couvert si son groupe l'est ; un membre sale
+                # rend tout le groupe sale (expand_dirty_roads).
+                companions = colocated_raw_groups([
+                    (i, extract_street_name(row["address_raw"]), row["x"], row["y"])
+                    for i, row in rows_by_id.items()
+                ])
+                covered_with_groups = with_companions(covered_ids, companions)
+                dirty_ids = initial_dirty_ids(
+                    changed_ids, set(rows_by_id), locatable_ids, covered_with_groups
+                )
+                if connectors is not None:
+                    # Points couverts par des segments mais sans connecteur (table
+                    # creee apres coup, ecriture en echec) : a relocaliser.
+                    dirty_ids |= (covered_with_groups & set(rows_by_id)) - set(connectors[1])
+                # Routes laissees incoherentes par un run precedent dont la
+                # purge a ete suspendue (garde-fous) : a refaire elles aussi.
+                stale_roads = inconsistent_roads(existing)
+                for road_key in stale_roads:
+                    dirty_ids |= road_ids.get(road_key, set())
+                if stale_roads:
+                    feedback.pushInfo(
+                        f"Segments : {len(stale_roads)} route(s) aux segments "
+                        "périmés (purge suspendue lors d'un run précédent) "
+                        "recalculée(s)."
+                    )
+                acc = {
+                    "locations": [], "extents": {}, "error": False, "attempted": 0,
+                    "unavailable": set(), "lines": {}, "ids": set(),
+                }
+
+                def locate(ids):
+                    batch_rows = [rows_by_id[i] for i in ids]
+                    locs, exts, err, unavailable, lines = self._locate_points_on_road(
+                        batch_rows, feedback, user_agent
+                    )
+                    acc["locations"].extend(locs)
+                    for road_key, line in lines.items():
+                        acc["lines"].setdefault(road_key, line)
+                    for road_key, extent in exts.items():
+                        acc["extents"].setdefault(road_key, extent)
+                    acc["error"] = acc["error"] or err
+                    acc["unavailable"] |= unavailable
+                    acc["attempted"] += len(batch_rows)
+                    acc["ids"].update(ids)
+                    return {loc.intervention_id: loc.road_key for loc in locs}
+
+                scope_roads, _located = expand_dirty_roads(
+                    dirty_ids, set(rows_by_id), road_ids, id_roads, locate,
+                    companions=companions,
+                )
+                locations = acc["locations"]
+                road_extents = acc["extents"]
+                road_lines = acc["lines"]
+                had_connection_error = acc["error"]
+                unavailable_ids = acc["unavailable"]
+                n_attempted = acc["attempted"]
+                n_roads_total = len(set(road_ids) | scope_roads)
+                feedback.pushInfo(
+                    f"Segments : incrémental — {len(dirty_ids)} point(s) modifié(s) "
+                    f"ou non couvert(s), {len(scope_roads)} route(s) impactée(s) sur "
+                    f"{n_roads_total}, {n_attempted} point(s) relocalisé(s)."
+                )
+                if not scope_roads:
+                    feedback.pushInfo(
+                        "Segments : aucune route impactée — rien à recalculer ni à écrire."
+                    )
+                    return
+
+            # Ordre DETERMINISTE des points (ex-aequo de position_m) quel que soit
+            # l'ordre des lots de localisation : meme resultat en complet et en
+            # incremental.
+            # Passe FINALE Overpass : tous les points localises via Overpass
+            # pendant le run sont relocalises sur l'ensemble CUMULE des voies
+            # extraites — sinon deux lots incrementaux ayant extrait des voies
+            # differentes pourraient donner deux road_key a une meme rue.
+            locations, road_extents, road_lines = self._final_overpass_pass(
+                locations, road_extents, road_lines
+            )
+            if scope_roads is not None:
+                scope_roads = scope_roads | {loc.road_key for loc in locations}
+            locations = sorted(locations, key=lambda loc: loc.intervention_id or "")
+            # Interventions distinctes au MEME point projete : un seul noeud
+            # (plus petit id, pire categorie) -> pas de segment de longueur nulle.
+            locations, merged_groups = merge_colocated(locations)
+            if merged_groups:
+                n_merged = sum(len(ids) for ids in merged_groups.values())
+                feedback.pushInfo(
+                    f"Segments : {n_merged} point(s) co-localisé(s) (même point projeté "
+                    f"à {COLOCATED_TOLERANCE_M:g} m) fusionné(s) en "
+                    f"{len(merged_groups)} nœud(s) — catégorie retenue = la pire du "
+                    "groupe ; les points restent tous en base."
+                )
+            fresh = build_segment_halves(locations, road_extents, road_lines)
+            n_chord_roads = len({h.road_key for h in fresh if not h.axis_parts})
+            if n_chord_roads:
+                feedback.pushInfo(
+                    f"Segments : {n_chord_roads} route(s) sans géométrie d'axe connue — "
+                    "segments en cordes droites décalées (repli)."
+                )
+            n_zero = count_zero_length_pairs(fresh)
+            if n_zero:
+                feedback.pushInfo(
+                    f"Segments : {n_zero} paire(s) d'interventions distinctes au MÊME "
+                    "point projeté (même adresse géocodée) — segment de longueur "
+                    "nulle conservé, dessiné sur l'axe sans décalage."
+                )
+
+            plan = plan_segment_sync(fresh, existing, scope_roads, multi_column=multi_column)
+            to_delete = plan.to_delete
             if had_connection_error or partial_read:
                 to_delete = []
                 feedback.pushWarning(
@@ -3021,32 +6571,76 @@ if HAS_QGIS:
                     "echec — purge des segments obsoletes desactivee par "
                     "prudence pour ce run."
                 )
+            elif n_attempted and not locations and to_delete:
+                # Aucun point localise alors qu'il y en avait : recalcul non
+                # fiable (ex. ref.osm_roads videe/en cours de reimport, ou zone
+                # non couverte). Sans ce garde, `fresh` vide ferait purger TOUS
+                # les segments du perimetre -- meme politique que ci-dessus : ne
+                # jamais purger sur un recalcul non fiable. Les segments
+                # obsoletes seront purges au prochain run sain.
+                to_delete = []
+                feedback.pushWarning(
+                    "Aucun point localise sur un axe de rue — purge des segments "
+                    "existants desactivee par prudence pour ce run."
+                )
+            if to_delete and unavailable_ids:
+                # Echec Overpass ISOLE : pas de purge sur les routes ou figuraient
+                # les points non localises faute de reponse (les autres routes
+                # sont purgees normalement).
+                protected_roads = set()
+                for intervention_id in unavailable_ids:
+                    protected_roads |= id_roads.get(intervention_id, set())
+                to_delete, n_blocked = filter_protected_deletions(
+                    to_delete, existing, protected_roads
+                )
+                if n_blocked:
+                    feedback.pushWarning(
+                        f"Segments : purge suspendue pour {n_blocked} segment(s) de "
+                        f"{len(protected_roads)} route(s) dont des points n'ont pu "
+                        "être localisés (Overpass indisponible)."
+                    )
 
-            fields = segments_layer.fields()
+            # Seuls les segments NOUVEAUX ou DIFFERENTS sont ecrits.
+            writes = [(half, None) for half in plan.to_insert] + [
+                (half, existing_fids[segment_key(half)]) for half in plan.to_update
+            ]
+            n_implausible = sum(
+                1 for half, _fid in writes
+                if not all(
+                    lambert72_plausible(x, y)
+                    for part in segment_half_geometry(half) for x, y in part
+                )
+            )
+            n_dropped_parts = 0
+            if n_implausible:
+                feedback.pushWarning(
+                    f"Segments : {n_implausible} géométrie(s) à écrire hors de la plage "
+                    f"Lambert 72 ({BELGIAN_LAMBERT_AUTHID}) — SCR suspect."
+                )
             inserted = updated = failed = 0
-            n_upsert = max(len(to_upsert), 1)
-            for i, half in enumerate(to_upsert):
+            n_writes = max(len(writes), 1)
+            for i, (half, existing_fid) in enumerate(writes):
                 if feedback.isCanceled():
                     break
-                feedback.setProgress(int(100 * i / n_upsert))
-                key_label = (
-                    f"({half.point_a_intervention_id}, "
-                    f"{half.point_b_intervention_id}, {half.half})"
+                feedback.setProgress(int(100 * i / n_writes))
+                key = segment_key(half)
+                key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
+                is_update = existing_fid is not None
+                parts, dropped = geometry_for_column(
+                    segment_half_geometry(half), multi_column
                 )
-                existing_fid = existing_fids.get((
-                    half.point_a_intervention_id,
-                    half.point_b_intervention_id,
-                    half.half,
-                ))
-                existing = existing_fid is not None
-                geom = QgsGeometry.fromPolylineXY([
-                    QgsPointXY(half.start_x, half.start_y),
-                    QgsPointXY(half.end_x, half.end_y),
-                ])
+                n_dropped_parts += dropped
+                if multi_column:
+                    geom = QgsGeometry.fromMultiPolylineXY([
+                        [QgsPointXY(x, y) for x, y in part] for part in parts
+                    ])
+                else:
+                    geom = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in parts[0]])
                 values = {
                     "point_a_intervention_id": half.point_a_intervention_id,
                     "point_b_intervention_id": half.point_b_intervention_id,
                     "half": half.half,
+                    "side": half.side,
                     "depth_category": half.depth_category,
                     "is_long": half.is_long,
                     "length_m": half.length_m,
@@ -3055,7 +6649,7 @@ if HAS_QGIS:
                 segments_layer.startEditing()
                 ok = False
                 try:
-                    if existing:
+                    if is_update:
                         attr_map = {
                             fields.indexOf(name): val for name, val in values.items()
                         }
@@ -3079,8 +6673,8 @@ if HAS_QGIS:
                     )
                     ok = False
                 if ok:
-                    updated += 1 if existing else 0
-                    inserted += 0 if existing else 1
+                    updated += 1 if is_update else 0
+                    inserted += 0 if is_update else 1
                 else:
                     failed += 1
                     for err in segments_layer.commitErrors():
@@ -3093,7 +6687,7 @@ if HAS_QGIS:
             for key in to_delete:
                 if feedback.isCanceled():
                     break
-                key_label = f"({key[0]}, {key[1]}, {key[2]})"
+                key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
                 segments_layer.startEditing()
                 if (
                     segments_layer.deleteFeatures([existing_fids[key]])
@@ -3108,63 +6702,163 @@ if HAS_QGIS:
                         )
                     segments_layer.rollBack()
 
+            if n_dropped_parts:
+                feedback.pushWarning(
+                    f"Segments : colonne geom encore LineString — {n_dropped_parts} "
+                    "partie(s) de géométrie non écrite(s) (seule la première partie "
+                    "l'est) ; migration MultiLineString recommandée."
+                )
+            if not full and existing and looks_like_chord_segments(existing) and any(
+                len(part) > 2 for h in fresh for part in h.axis_parts
+            ):
+                feedback.pushWarning(
+                    "Segments : les segments existants sont des cordes droites (version "
+                    "antérieure) — cochez « Reconstruire tous les segments » une fois "
+                    "pour qu'ils suivent tous l'axe de rue."
+                )
             feedback.pushInfo(
-                f"Segments : {inserted} creee(s), {updated} mise(s) a jour, "
-                f"{deleted} supprimee(s) (orphelins), {failed} echec(s) upsert, "
-                f"{failed_delete} echec(s) suppression."
+                f"Segments : {'reconstruction complète' if full else 'incrémental'} — "
+                f"{inserted} inséré(s) / {updated} mis à jour / {deleted} supprimé(s) / "
+                f"{plan.unchanged} inchangé(s) (non réécrits) ; {failed} échec(s) "
+                f"d'écriture, {failed_delete} échec(s) de suppression."
             )
-            _apply_segments_style(segments_layer, feedback)
-            _sync_style_to_db(
-                segments_layer, "depth_segments",
-                "Style segments d'axe de rue As-Built — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
-                feedback,
-            )
-            return fresh
 
-        def _load_summary_layer(self, summary_path, context, feedback):
-            """Charge la table de synthèse xlsx comme couche (table) dans le projet.
+            # --- etape 2b : connecteurs point -> extremite du segment ---------
+            if connectors is not None and not feedback.isCanceled():
+                self._sync_connectors(
+                    feedback, connectors,
+                    points={r["intervention_id"]: (r["x"], r["y"], r["depth_category"])
+                            for r in rows},
+                    locations=locations, halves=fresh, merged_groups=merged_groups,
+                    scope_ids=None if full else acc["ids"],
+                    deletions_allowed=not (
+                        had_connection_error or partial_read
+                        or (n_attempted and not locations)
+                    ),
+                    protected_ids=unavailable_ids,
+                )
 
-            La feuille pivot :data:`SUMMARY_PIVOT_SHEET_TITLE` est ouverte via le
-            provider OGR (couche NON spatiale : visible dans le panneau des
-            couches, table attributaire ouvrable) et enregistrée pour chargement
-            automatique en fin d'exécution, comme la couche de points OUTPUT.
+        def _load_be_layers_in_project(self, context, feedback):
+            """Ajoute au projet les couches points et segments de la base 'be', si absentes.
 
-            Best-effort et NON bloquant : si le pilote OGR XLSX est absent, la
-            feuille illisible ou aucun projet cible disponible (exécution
-            headless), on journalise via ``feedback`` sans faire échouer
-            l'algorithme — le fichier xlsx reste écrit sur disque.
+            Cible : ``context.project()``, repli sur ``QgsProject.instance()`` ;
+            aucun projet -> journalisé, rien n'est chargé. Connexion 'be'
+            introuvable -> rien (déjà signalé par l'upsert / la resynchro).
+
+            Pour chacune des deux tables, la présence dans le projet est testée sur
+            la SOURCE DE DONNÉES (schéma + table + serveur/base, cf.
+            :func:`same_postgres_table`), jamais sur le nom de couche : une table
+            déjà présente — même renommée, filtrée ou restylée par l'utilisateur —
+            laisse le projet STRICTEMENT inchangé (ni doublon, ni restyle).
+
+            URI construite explicitement : l'introspection de la connexion 'be'
+            n'est pas fiable (cf. :meth:`_open_be_layer` : colonne géométrique,
+            SRID et type forcés). La clé primaire détectée par le provider est de
+            plus figée dans l'URI (``key=``), pour que la couche enregistrée dans
+            le projet ne dépende plus de cette détection à la réouverture ; pas
+            de clé primaire -> couche non ajoutée (édition/identification
+            incohérentes).
+
+            Chargement via le mécanisme Processing de fin d'exécution
+            (``addLayerToLoadOnCompletion``) : le style ``.qml`` est appliqué avant
+            remise au projet, puis ré-appliqué par post-traitement
+            (:class:`_DepthLayerStyler` / :class:`_SegmentsLayerStyler`) une fois
+            la couche ajoutée. Best-effort et NON bloquant.
             """
             project = context.project()
-            if project is None:  # exécution sans projet cible -> rien à charger
+            if project is None:
+                project = QgsProject.instance()
+            if project is None:
                 feedback.pushInfo(
-                    "Table de synthèse non chargée en couche : aucun projet cible "
-                    "(le fichier xlsx reste disponible sur disque)."
+                    "Couches de la base 'be' non ajoutées : aucun projet cible."
                 )
                 return
-            uri = f"{summary_path}|layername={SUMMARY_PIVOT_SHEET_TITLE}"
-            layer_name = "Synthèse profondeur (table)"
-            try:
-                layer = QgsVectorLayer(uri, layer_name, "ogr")
-            except Exception as exc:  # pragma: no cover - défensif (hors QGIS réel)
-                feedback.pushInfo(
-                    f"Table de synthèse non chargée en couche ({exc})."
-                )
+            md = QgsProviderRegistry.instance().providerMetadata("postgres")
+            if md is None or md.findConnection(BE_CONNECTION_NAME) is None:
                 return
-            if layer is None or not layer.isValid():
-                feedback.pushInfo(
-                    "Table de synthèse non chargée en couche : feuille xlsx non "
-                    "lisible par le pilote OGR (le fichier reste sur disque)."
+
+            present = [
+                _pg_identity(QgsDataSourceUri(layer.source()))
+                for layer in project.mapLayers().values()
+                if layer.providerType() == "postgres"
+            ]
+            # Ordre d'empilement : connecteurs SOUS les segments, SOUS les points
+            # (cle de tri : plus grande = au-dessus).
+            specs = [
+                (BE_TABLE_SCHEMA, BE_TABLE_NAME, QgsWkbTypes.Point,
+                 BE_POINTS_LAYER_NAME, _apply_depth_style, _DepthLayerStyler, 3),
+                (SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
+                 QgsWkbTypes.MultiLineString if self._segments_is_multi(feedback)
+                 else QgsWkbTypes.LineString,
+                 BE_SEGMENTS_LAYER_NAME, _apply_segments_style, _SegmentsLayerStyler, 2),
+            ]
+            if self._read_connectors(feedback) is not None:
+                specs.append(
+                    (CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, QgsWkbTypes.LineString,
+                     BE_CONNECTORS_LAYER_NAME, _apply_connectors_style,
+                     _ConnectorsLayerStyler, 1)
                 )
-                return
-            # Le layer store temporaire prend la propriété ; addLayerToLoadOnCompletion
-            # transfère la couche vers le projet en fin d'exécution (même mécanisme
-            # que la couche de points OUTPUT). outputName vide -> couche additive
-            # non liée à la sortie fichier SUMMARY déjà déclarée.
-            context.temporaryLayerStore().addMapLayer(layer)
-            context.addLayerToLoadOnCompletion(
-                layer.id(),
-                QgsProcessingContext.LayerDetails(layer_name, project, ""),
-            )
-            feedback.pushInfo(
-                f"Table de synthèse chargée comme couche (table) : « {layer_name} »."
-            )
+            # Références conservées sur l'instance : setPostProcessor ne prend
+            # pas la propriété, le styler doit survivre jusqu'au chargement.
+            self._be_layer_stylers = []
+            for schema, table, wkb_type, layer_name, apply_style, styler_cls, sort_key in specs:
+                layer = self._open_be_layer(
+                    schema, table, BE_GEOM_COLUMN, wkb_type, feedback
+                )
+                if layer is None:
+                    continue
+                ds_uri = QgsDataSourceUri(layer.source())
+                if any(same_postgres_table(_pg_identity(ds_uri), other) for other in present):
+                    feedback.pushInfo(
+                        f"Couche {schema}.{table} déjà présente dans le projet — "
+                        "non ajoutée (projet inchangé)."
+                    )
+                    continue
+                pk_names = [
+                    layer.fields().at(idx).name() for idx in layer.primaryKeyAttributes()
+                ]
+                if not pk_names:
+                    feedback.pushWarning(
+                        f"Couche {schema}.{table} sans clé primaire détectable via "
+                        "'be' — non ajoutée au projet."
+                    )
+                    continue
+                if not ds_uri.keyColumn():
+                    # Format attendu par le provider postgres (parseUriKey) :
+                    # identifiants entre guillemets, séparés par des virgules.
+                    ds_uri.setKeyColumn(",".join(
+                        '"{}"'.format(name.replace('"', '""')) for name in pk_names
+                    ))
+                # URI explicite : colonne geometrique, type ET srid 31370 re-forces
+                # (jamais deduits de l'introspection de la connexion 'be').
+                ds_uri.setGeometryColumn(BE_GEOM_COLUMN)
+                ds_uri.setSrid(BELGIAN_LAMBERT_AUTHID.split(":")[-1])
+                ds_uri.setWkbType(wkb_type)
+                layer = QgsVectorLayer(ds_uri.uri(False), layer_name, "postgres")
+                if not layer.isValid() or not layer.isSpatial():
+                    feedback.pushWarning(
+                        f"Couche {schema}.{table} invalide une fois la clé "
+                        "primaire figée — non ajoutée au projet."
+                    )
+                    continue
+                # SCR force explicitement AVANT la remise au projet (puis
+                # re-verifie par le post-traitement une fois la couche chargee).
+                _force_target_crs(layer, feedback, layer_name)
+                layer.setCrs(QgsCoordinateReferenceSystem(BELGIAN_LAMBERT_AUTHID))
+                feedback.pushInfo(
+                    f"Couche « {layer_name} » : SCR {layer.crs().authid() or BELGIAN_LAMBERT_AUTHID} "
+                    "(forcé)."
+                )
+                apply_style(layer, feedback)
+                context.temporaryLayerStore().addMapLayer(layer)
+                details = QgsProcessingContext.LayerDetails(layer_name, project, "")
+                if hasattr(details, "layerSortKey"):  # QGIS >= 3.32
+                    details.layerSortKey = sort_key
+                styler = styler_cls()
+                self._be_layer_stylers.append(styler)
+                details.setPostProcessor(styler)
+                context.addLayerToLoadOnCompletion(layer.id(), details)
+                feedback.pushInfo(
+                    f"Couche {schema}.{table} ajoutée au projet en fin "
+                    f"d'exécution : « {layer_name} »."
+                )
