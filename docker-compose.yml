@@ -4,9 +4,9 @@ services:
     container_name: qgis-repo
     restart: unless-stopped
     ports:
-      - "192.168.160.31:9080:80"
-      - "192.168.160.31:9081:81"
-      - "192.168.160.31:9082:82"
+      - "9080:80"
+      - "9081:81"
+      - "9082:82"
     volumes:
       - ./plugin-repo:/data/plugin-repo:ro
       # resource-repo: RW so the post-receive hook can refresh the working tree + rebuild ZIPs after each push
