@@ -8,6 +8,8 @@ services:
       - "9081:81"
       - "9082:82"
     volumes:
+      # nginx.conf monte en RO : evite un rebuild (registre Docker inaccessible depuis le serveur)
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./plugin-repo:/data/plugin-repo:ro
       # resource-repo: RW so the post-receive hook can refresh the working tree + rebuild ZIPs after each push
       - ./resource-repo:/data/resource-repo:rw
