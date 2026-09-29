@@ -75,8 +75,11 @@ def test_point_isole_produit_deux_segments_de_bout_de_route():
     assert all(h.half == "a" and h.depth_category == "orange" for h in halves)
     start_seg = next(h for h in halves if h.point_b_intervention_id == ROAD_START_SENTINEL)
     end_seg = next(h for h in halves if h.point_b_intervention_id == ROAD_END_SENTINEL)
-    assert start_seg.length_m == 30.0
-    assert end_seg.length_m == 50.0
+    from geocode_asbuilt_depth import ROAD_END_STUB_M
+    stub = min(ROAD_END_STUB_M, 30.0)        # borne par le debut de l'axe (point a 30 m)
+    assert start_seg.length_m == stub
+    assert end_seg.length_m == min(ROAD_END_STUB_M, 50.0)  # et non 50 m jusqu'au bout
+    assert (start_seg.end_x, end_seg.end_x) == (30.0 - stub, 30.0 + min(ROAD_END_STUB_M, 50.0))
 
 
 def test_road_key_sans_extent_ignore_les_bouts_de_route_sans_planter():
@@ -194,10 +197,10 @@ def test_longueur_nulle_ou_decalage_nul_reste_sur_l_axe():
 def test_longueur_et_pointille_mesures_sur_l_axe_pas_sur_le_decalage():
     locs = [
         RoadLocation("1", "rouge", "rue x", 0.0, 0.0, 0.0, side="L", highway="motorway"),
-        RoadLocation("2", "vert", "rue x", 99.0, 99.0, 0.0, side="L", highway="motorway"),
+        RoadLocation("2", "vert", "rue x", 74.0, 74.0, 0.0, side="L", highway="motorway"),
     ]
     halves = [h for h in build_segment_halves(locs, {}) if h.point_b_intervention_id == "2"]
-    assert all(h.length_m == 99.0 and not h.is_long for h in halves)
+    assert all(h.length_m == 74.0 and not h.is_long for h in halves)
 
 
 # --- pas de doublon de cle / points gris ignores -----------------------------

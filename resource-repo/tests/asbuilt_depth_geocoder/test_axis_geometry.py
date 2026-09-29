@@ -133,10 +133,42 @@ def test_bouts_de_rue_le_long_de_l_axe_et_debut_dessine_a_rebours():
     halves = {h.point_b_intervention_id: h for h in build_segment_halves(_locs(), {}, {"r": L})
               if h.point_b_intervention_id.startswith("__")}
     start, end = halves[ROAD_START_SENTINEL], halves[ROAD_END_SENTINEL]
-    assert start.length_m == 20.0 and end.length_m == 60.0
+    from geocode_asbuilt_depth import ROAD_END_STUB_M
+    # Petits segments depuis A (debut, axe de 20 m seulement) et B (fin).
+    s_start = min(ROAD_END_STUB_M, 20.0)
+    s_end = min(ROAD_END_STUB_M, 60.0)
+    assert start.length_m == s_start and end.length_m == s_end
+    assert not start.is_long and not end.is_long
     # Debut : du point A vers le debut de l'axe, decale a GAUCHE du sens de l'axe.
-    assert segment_half_geometry(start) == (((20.0, 3.0), (0.0, 3.0)),)
-    assert segment_half_geometry(end) == (((97.0, 40.0), (97.0, 100.0)),)
+    assert segment_half_geometry(start) == (((20.0, 3.0), (20.0 - s_start, 3.0)),)
+    assert segment_half_geometry(end) == (((97.0, 40.0), (97.0, 40.0 + s_end)),)
+
+
+def test_bout_de_rue_axe_plus_court_que_15_m():
+    halves = build_segment_halves(
+        [RoadLocation("A", "vert", "r", 10.0, 10.0, 0.0), RoadLocation("B", "vert", "r", 95.0, 95.0, 0.0)],
+        {}, {"r": [(0.0, 0.0), (100.0, 0.0)]})
+    from geocode_asbuilt_depth import ROAD_END_STUB_M
+    assert ROAD_END_STUB_M > 10.0
+    ends = {h.point_b_intervention_id: h.length_m for h in halves if h.point_b_intervention_id.startswith("__")}
+    assert ends == {ROAD_START_SENTINEL: 10.0, ROAD_END_SENTINEL: 5.0}  # arret aux extremites
+
+
+def test_point_isole_deux_petits_segments_de_part_et_d_autre():
+    from geocode_asbuilt_depth import ROAD_END_STUB_M
+    line = [(0.0, 0.0), (1000.0, 0.0)]
+    for side, dy in (("L", 3.0), ("R", -3.0)):
+        (a, b) = sorted(
+            build_segment_halves([RoadLocation("P", "rouge", "r", 500.0, 500.0, 0.0, side=side)],
+                                 {}, {"r": line}),
+            key=lambda h: h.point_b_intervention_id,
+        )
+        assert {a.point_b_intervention_id, b.point_b_intervention_id} == {ROAD_END_SENTINEL, ROAD_START_SENTINEL}
+        assert a.length_m == b.length_m == ROAD_END_STUB_M
+        assert not a.is_long and not b.is_long
+        geoms = {h.point_b_intervention_id: segment_half_geometry(h) for h in (a, b)}
+        assert geoms[ROAD_START_SENTINEL] == (((500.0, dy), (500.0 - ROAD_END_STUB_M, dy)),)
+        assert geoms[ROAD_END_SENTINEL] == (((500.0, dy), (500.0 + ROAD_END_STUB_M, dy)),)
 
 
 def test_axe_absent_repli_en_cordes():

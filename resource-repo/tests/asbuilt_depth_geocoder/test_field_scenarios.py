@@ -7,8 +7,9 @@ sys.path.insert(
 )
 from geocode_asbuilt_depth import (
     LOCATE_RADIUS_M, LOW_CONFIDENCE_DISTANCE_M, ROAD_JOIN_TOLERANCE_M, OsmWay,
-    diagnose_unlocated, homonym_components_ambiguous, index_ways_by_name,
-    locate_on_ways, locate_rows_on_osm, normalize_street_name,
+    compact_street_name, diagnose_unlocated, extract_street_name, fuzzy_name_match,
+    homonym_components_ambiguous, homonym_decision, index_ways_by_name,
+    locate_on_ways, locate_rows_on_osm, nearest_way, normalize_street_name,
 )
 
 
@@ -99,17 +100,79 @@ def test_chemins_sans_nom_jamais_cible_ni_voisin_ambigu():
 
 # --- homonymes / raccord -----------------------------------------------------
 
-def test_regle_d_ambiguite_des_homonymes():
-    assert homonym_components_ambiguous(15.0, 15.0)
-    assert homonym_components_ambiguous(30.0, 40.0)            # ecart 10 < 15
-    assert homonym_components_ambiguous(40.0, 58.0)            # rapport 1,45 < 1,5
-    assert not homonym_components_ambiguous(34.0, 90.0)
-    assert not homonym_components_ambiguous(33.0, 50.0)        # ecart 17, rapport 1,52
+def test_regle_d_ambiguite_des_homonymes_quasi_egalite_seulement():
+    assert homonym_decision(15.0, 15.0) == "ambiguous"
+    assert homonym_decision(20.0, 22.0) == "ambiguous"         # +2 m, rapport 1,1
+    assert homonym_decision(10.0, 22.0) == "low"               # la plus proche, marge < 15 m
+    assert homonym_decision(30.0, 40.0) == "low"
+    assert homonym_decision(34.0, 90.0) == "ok"
+    assert homonym_decision(45.0, 55.0) == "ambiguous"         # les deux > 40 m : regle historique
+    assert homonym_decision(45.0, 80.0) == "ok"
+    assert homonym_components_ambiguous(20.0, 22.0)
 
 
-def test_homonymes_a_distance_comparable_ambigus():
-    ways = [_way(1, 20, "Rue X"), _way(2, -25, "Rue X")]
+def test_rue_en_deux_composantes_a_10_et_22_m_localisee_la_plus_proche():
+    ways = [_way(1, 10, "Major Long Straße"), _way(2, -22, "Major Long Straße")]
+    (match, method), _ = _locate(ways, ["Major Long Strasse"])
+    assert method == "name" and match["way_id"] == 1
+    assert match["low_confidence"]                       # marge 12 m < 15 m
+
+
+def test_deux_composantes_a_20_et_22_m_ambigu():
+    ways = [_way(1, 20, "Rue X"), _way(2, -22, "Rue X")]
     assert _locate(ways, ["Rue X"]) == (None, "ambiguous")
+
+
+def test_adresse_x_slash_x_avec_code_postal_et_localite():
+    assert extract_street_name(
+        "Malmedyer Straße/Malmedyer Straße 175 4780 Sankt Vith") == "Malmedyer Straße"
+    assert extract_street_name("Malmedyer Straße/Malmedyer Straße 175") == "Malmedyer Straße"
+    assert extract_street_name("Rue de la Gare 12/3") == "Rue de la Gare"
+    assert extract_street_name("Rue X/3") == "Rue X/3"        # notation boite : inchangee
+    ways = [_way(1, 31, "Malmedyer Straße")]
+    name = extract_street_name("Malmedyer Straße/Malmedyer Straße 175 4780 Sankt Vith")
+    (match, method), _ = _locate(ways, [name])
+    assert method == "name" and round(match["distance"]) == 31
+
+
+def test_nom_approchant_lindenallee():
+    assert fuzzy_name_match("Lindenallee", "Linden-Allee")
+    assert compact_street_name("Linden-Allee") == compact_street_name("Lindenalee")
+    (match, method), _ = _locate([_way(1, 0.5, "Linden-Allee")], ["Lindenallee"])
+    assert method == "fuzzy" and "approchant" in match["low_confidence"]
+
+
+def test_nom_approchant_wiesenbachstrasse():
+    for osm in ("Wiesenbachstraße", "Wiesenbachstrasse", "Wiesenbach Straße", "Wiesenbach-Str."):
+        assert fuzzy_name_match("Wiesenbachstraße", osm), osm
+    (match, method), _ = _locate([_way(1, 26, "Wiesenbach Straße")], ["Wiesenbachstraße"])
+    assert method == "fuzzy" and round(match["distance"]) == 26
+
+
+def test_nom_approchant_refuse_si_autre_nom_nettement_plus_proche_ou_trop_loin():
+    ways = [_way(1, 30, "Linden-Allee"), _way(2, 10, "Kirchweg")]
+    result, _ = _locate(ways, ["Lindenallee"])
+    assert result is None or result[1] != "fuzzy"
+    assert _locate([_way(1, 45, "Linden-Allee")], ["Lindenallee"])[0] is None \
+        or _locate([_way(1, 45, "Linden-Allee")], ["Lindenallee"])[0][1] != "fuzzy"
+    assert not fuzzy_name_match("Lindenallee", "Kirchweg")
+    assert not fuzzy_name_match("Hauptstraße", "Hochstraße")
+
+
+def test_repli_coordonnees_prefere_la_voie_de_nom_canonique_jusqu_a_80_m():
+    ways = [_way(1, 60, "Malmedyer Straße"), _way(2, 5, "Zur Stöck")]
+    results, _r, _l = locate_rows_on_osm([], [], ways)
+    way, reason = nearest_way(0.0, 0.0, ways, preferred_names=("malmedyer strasse",))
+    assert reason is None and way.way_id == 1
+    way, reason = nearest_way(0.0, 0.0, ways, preferred_names=("autre",))
+    assert way.way_id == 2
+
+
+def test_repli_coordonnees_ambigu_seulement_a_moins_de_3_m():
+    near = [_way(1, 10, "Rue A"), _way(2, -12, "Rue B")]
+    assert nearest_way(0.0, 0.0, near)[1] == "ambiguous"
+    far = [_way(1, 10, "Rue A"), _way(2, -14, "Rue B")]
+    assert nearest_way(0.0, 0.0, far)[0].way_id == 1
 
 
 def test_rue_coupee_au_carrefour_recollee_a_12_m():

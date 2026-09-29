@@ -31,6 +31,8 @@ décalés selon le type de voie (:data:`HIGHWAY_OFFSET_M`).
 """
 
 import csv
+import dataclasses
+import difflib
 import glob
 import hashlib
 import io
@@ -256,6 +258,9 @@ def normalize_place(raw: Optional[str]) -> str:
 _HOUSE_NUMBER_RE = re.compile(r"^(.*?)\s+\d+[a-zA-Z]?(?:[/\-]\S+)?\s*$")
 # Code postal belge (4 chiffres) en fin d'adresse : « Rue de la Gare 12 1000 ».
 _TRAILING_POSTAL_RE = re.compile(r"^(.*?)\s+\d{4}\s*$")
+# Code postal SUIVI de la localité, sans virgule : « … 175 4780 Sankt Vith »
+# (run réel du 29/09 : empêchait aussi la déduplication « X/X 175 »).
+_TRAILING_POSTAL_LOCALITY_RE = re.compile(r"^(.*?[^\W\d_].*?)\s+\d{4}\s+[^\d,/]+$")
 # Suffixe boîte en fin d'adresse : « bte 3 », « boîte 3A », « bte. B », « bus 3 »
 # (nl). La valeur de boîte est restreinte (nombre+lettre optionnelle, ou lettre
 # seule) pour ne jamais mordre sur un nom de rue contenant le mot « bus ».
@@ -295,7 +300,8 @@ def extract_street_name(address_raw: Optional[str]) -> str:
 
     1. fix_szett_artifact (l'artefact peut apparaitre n'importe ou dans le nom
        de rue ; applique AVANT la deduplication pour que des segments repetes
-       ne different pas par ce seul artefact) ;
+       ne different pas par ce seul artefact), puis retrait d'un code postal
+       SUIVI de la localite en fin d'adresse (« … 175 4780 Sankt Vith ») ;
     2. clean_duplicated_address (bug d'export « Rue X/Rue X/Rue X 12 ») ;
     3. format a virgule (« Rue X, 12 », « Rue X 12, 1000 Bruxelles ») : seul le
        premier segment contenant une lettre est garde (« 12, Rue X » -> « Rue X ») ;
@@ -312,6 +318,12 @@ def extract_street_name(address_raw: Optional[str]) -> str:
     text = fix_szett_artifact(address_raw.strip())
     if not text:
         return ""
+    # « … 175 4780 Sankt Vith » : code postal + localité retirés AVANT la
+    # déduplication, sinon le dernier segment « X 175 4780 Sankt Vith » ne
+    # ressemble plus aux précédents.
+    match = _TRAILING_POSTAL_LOCALITY_RE.match(text)
+    if match:
+        text = match.group(1)
     text = clean_duplicated_address(text)
     if "," in text:
         parts = [p.strip() for p in text.split(",")]
@@ -1289,6 +1301,18 @@ def _build_attribute_values(rec, query, status, hit):
     }
 
 
+# Segment de BOUT DE RUE (au-delà du premier / dernier point d'une chaîne,
+# aucun point adjacent) : PETIT segment de cette longueur, mesurée le long de
+# l'axe depuis le point projeté vers l'extrémité de l'axe (ou jusqu'à elle si
+# elle est plus proche). Un point isolé donne deux petits segments contigus
+# (ROAD_END_STUB_M de chaque côté, centrés sur lui) ; plus court que
+# LONG_SEGMENT_THRESHOLD_M -> trait plein. Décision utilisateur du 29/09 :
+# auparavant le bout allait jusqu'à l'extrémité de l'axe (un point isolé
+# colorait ≈ 2 km de route).
+ROAD_END_STUB_M = 25.0
+# Paire de points consécutifs au-delà de cette distance : conservée, mais
+# signalée au journal (interpolation sur une très longue distance).
+VERY_LONG_PAIR_M = 500.0
 LONG_SEGMENT_THRESHOLD_M = 100.0
 ROAD_START_SENTINEL = "__ROAD_START__"
 ROAD_END_SENTINEL = "__ROAD_END__"
@@ -1332,15 +1356,38 @@ DEFAULT_HIGHWAY_OFFSET_M = 3.0
 #   confiance » (journal + compteur), pas rejeté ;
 # * ROAD_JOIN_TOLERANCE_M : raccord des tronçons de même nom (rues coupées au
 #   carrefour), composante bornée à ROAD_COMPONENT_MAX_WAYS ;
-# * COMPONENT_AMBIGUITY_GAP_M / _RATIO : deux composantes homonymes NON
-#   connectées ne rendent le point ambigu que si la 2e est à distance
-#   comparable (écart < 15 m OU rapport < 1,5) ; sinon la plus proche l'emporte.
+# * Deux composantes homonymes NON connectées (rue coupée par un tronçon d'un
+#   autre nom, rond-point, chaussées séparées, sens uniques…) : AMBIGU
+#   seulement en QUASI-ÉGALITÉ (2e à moins de COMPONENT_TIE_GAP_M de plus ET
+#   rapport < COMPONENT_TIE_RATIO) ; sinon la plus proche l'emporte, marquée
+#   faible confiance si la marge est < COMPONENT_LOW_CONF_GAP_M. Règle
+#   historique (écart < 15 m OU rapport < 1,5) conservée seulement quand les
+#   DEUX composantes sont à plus de COMPONENT_FAR_M (run réel du 29/09 : 52
+#   « ambigus » dont des voies à 10–22 m).
 LOCATE_RADIUS_M = 150.0
 LOCATE_RADIUS_MAX_M = 200.0
 LOW_CONFIDENCE_DISTANCE_M = 50.0
 ROAD_JOIN_TOLERANCE_M = 12.0
+# Garde d'invariant : la ligne d'axe retenue pour un point ne peut pas être
+# plus loin de lui que la voie germe + AXIS_GUARD_M (m).
+AXIS_GUARD_M = 10.0
 COMPONENT_AMBIGUITY_GAP_M = 15.0
 COMPONENT_AMBIGUITY_RATIO = 1.5
+COMPONENT_TIE_GAP_M = 5.0
+COMPONENT_TIE_RATIO = 1.15
+COMPONENT_LOW_CONF_GAP_M = 15.0
+COMPONENT_FAR_M = 40.0
+# Nom APPROCHANT (voie au nom voisin : « Linden-Allee » pour « Lindenallee »)
+# : ratio de similarité minimal des formes compactées, distance maximale à la
+# voie, et marge nette : refusé si une voie d'un autre nom est plus proche de
+# plus de FUZZY_NAME_MARGIN_M. Rattachement toujours marqué faible confiance.
+FUZZY_NAME_RATIO = 0.85
+FUZZY_NAME_MAX_DISTANCE_M = 40.0
+FUZZY_NAME_MARGIN_M = 5.0
+# Repli par coordonnées : une voie portant un nom de RÉFÉRENCE du point (nom
+# canonique Nominatim ou nom nettoyé de l'adresse) est retenue jusqu'à ce
+# plafond, avant la plus proche voie carrossable.
+COORD_PREFERRED_NAME_RADIUS_M = 80.0
 ROAD_COMPONENT_MAX_WAYS = 500
 
 # Extraction OSM de repli via l'API Overpass (les voies obtenues peuvent
@@ -1388,7 +1435,12 @@ OSM_NAME_KEYS = ("name", "name:fr", "name:nl", "name:de")
 # omis si une voie d'un autre nom est à moins de OSM_COORD_AMBIGUITY_M de plus
 # (carrefour). Chemins, pistes, trottoirs, pistes cyclables exclus.
 OSM_COORD_FALLBACK_RADIUS_M = 30.0
-OSM_COORD_AMBIGUITY_M = 5.0
+OSM_COORD_AMBIGUITY_M = 3.0
+# Rayon ÉLARGI du repli par coordonnées quand AUCUNE voie portant le nom de
+# référence n'existe à LOCATE_RADIUS_M (hameau desservi par une route sans
+# nom, ex. « Neidingen 18B » à 33 m d'une unclassified sans nom) ;
+# rattachement marqué faible confiance.
+COORD_FALLBACK_LONE_RADIUS_M = 60.0
 OSM_COORD_BBOX_EXTRA_M = 20.0
 OSM_COORD_HIGHWAYS = (
     "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
@@ -1760,24 +1812,32 @@ def build_segment_halves(locations, road_extents, road_lines=None) -> list:
         if extent is None and not line:
             continue
         first, last = ordered[0], ordered[-1]
+        cap = ROAD_END_STUB_M
         if line:
             total = multiline_length(line)
-            start_pt = point_at_distance(line, 0.0)
-            end_pt = point_at_distance(line, total)
+            s_start = max(0.0, first.position_m - cap)
+            s_end = min(total, last.position_m + cap)
             ends = (
-                (first, ROAD_START_SENTINEL, start_pt, first.position_m,
-                 parts_of(line, 0.0, first.position_m)),
-                (last, ROAD_END_SENTINEL, end_pt, max(0.0, total - last.position_m),
-                 parts_of(line, last.position_m, total)),
+                (first, ROAD_START_SENTINEL, point_at_distance(line, s_start),
+                 max(0.0, first.position_m - s_start),
+                 parts_of(line, s_start, first.position_m)),
+                (last, ROAD_END_SENTINEL, point_at_distance(line, s_end),
+                 max(0.0, s_end - last.position_m),
+                 parts_of(line, last.position_m, s_end)),
             )
         else:
-            ends = tuple(
-                (point, sentinel, end, math.hypot(end[0] - point.x, end[1] - point.y), ())
-                for point, sentinel, end in (
-                    (first, ROAD_START_SENTINEL, (extent.start_x, extent.start_y)),
-                    (last, ROAD_END_SENTINEL, (extent.end_x, extent.end_y)),
-                )
-            )
+            ends = []
+            for point, sentinel, (tx, ty) in (
+                (first, ROAD_START_SENTINEL, (extent.start_x, extent.start_y)),
+                (last, ROAD_END_SENTINEL, (extent.end_x, extent.end_y)),
+            ):
+                full = math.hypot(tx - point.x, ty - point.y)
+                k = min(1.0, cap / full) if full > 0 else 1.0
+                ends.append((
+                    point, sentinel,
+                    (point.x + k * (tx - point.x), point.y + k * (ty - point.y)),
+                    min(full, cap), (),
+                ))
         for point, sentinel, (end_x, end_y), length, parts in ends:
             halves.append(SegmentHalf(
                 point_a_intervention_id=point.intervention_id,
@@ -1807,11 +1867,18 @@ def segment_half_geometry(half):
     """
     reverse = half.point_b_intervention_id == ROAD_START_SENTINEL
     if half.axis_parts:
-        parts = [
-            offset_polyline(list(part), half.offset_m, half.side) if half.offset_m
-            else [tuple(p) for p in part]
-            for part in half.axis_parts
-        ]
+        parts = []
+        for part in half.axis_parts:
+            axis = [tuple(p) for p in part]
+            if not half.offset_m:
+                parts.append(axis)
+                continue
+            shifted = offset_polyline(axis, half.offset_m, half.side)
+            # Garde-fou : une partie décalée aberrante (boucle, retournement,
+            # crochet…) est remplacée par l'axe NON décalé plutôt que tracée.
+            if offset_part_anomalies(axis, shifted, half.offset_m):
+                shifted = axis
+            parts.append(shifted)
         if reverse:
             parts = [list(reversed(part)) for part in reversed(parts)]
         return tuple(tuple((float(x), float(y)) for x, y in part) for part in parts)
@@ -1827,6 +1894,83 @@ def segment_half_geometry(half):
     ox = sign * half.offset_m * (-dy / norm)
     oy = sign * half.offset_m * (dx / norm)
     return (((sx + ox, sy + oy), (ex + ox, ey + oy)),)
+
+
+def _segments_cross(p1, p2, q1, q2) -> bool:
+    def orient(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    d1, d2 = orient(q1, q2, p1), orient(q1, q2, p2)
+    d3, d4 = orient(p1, p2, q1), orient(p1, p2, q2)
+    return d1 * d2 < 0 and d3 * d4 < 0
+
+
+def polyline_self_intersects(coords) -> bool:
+    """Deux tronçons NON adjacents d'une polyligne se croisent-ils ? PURE."""
+    segs = [(a, b) for a, b in zip(coords, coords[1:]) if a != b]
+    for i in range(len(segs)):
+        for j in range(i + 2, len(segs)):
+            if _segments_cross(segs[i][0], segs[i][1], segs[j][0], segs[j][1]):
+                return True
+    return False
+
+
+GEOMETRY_CHECK_TOLERANCE_M = 0.5
+GEOMETRY_LENGTH_RATIO = (0.7, 1.5)
+GEOMETRY_RATIO_MIN_AXIS_M = 5.0
+
+
+def offset_part_anomalies(axis, offset_coords, distance) -> list:
+    """Contrôle d'une partie DÉCALÉE par rapport à sa partie d'axe -> liste de défauts.
+
+    (1) auto-intersection ; (2) rapport longueur décalée / longueur d'axe hors
+    [0,7 ; 1,5] (parties d'axe ≥ 5 m) ; (3) retournement : un tronçon décalé
+    dont la direction fait plus de 90° avec la direction locale de l'axe ;
+    (4) extrémité décalée à plus de ``distance`` + 0,5 m de l'extrémité
+    d'axe correspondante. Les deux listes de sommets sont dans le MÊME sens.
+    Fonction PURE.
+    """
+    problems = []
+    if len(axis) < 2 or len(offset_coords) < 2:
+        return problems
+    if polyline_self_intersects(offset_coords):
+        problems.append("auto-intersection")
+    axis_len = polyline_length(axis)
+    if axis_len >= GEOMETRY_RATIO_MIN_AXIS_M:
+        ratio = polyline_length(offset_coords) / axis_len
+        if not GEOMETRY_LENGTH_RATIO[0] <= ratio <= GEOMETRY_LENGTH_RATIO[1]:
+            problems.append(f"rapport de longueur {ratio:.2f}")
+    for a, b in zip(offset_coords, offset_coords[1:]):
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        if math.hypot(vx, vy) < 1e-6:
+            continue
+        mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+        _d, _pos, _qx, _qy, dx, dy = project_on_polyline(mx, my, axis)
+        if vx * dx + vy * dy < 0:
+            problems.append("retournement")
+            break
+    limit = abs(distance) + GEOMETRY_CHECK_TOLERANCE_M
+    for axis_end, offset_end in ((axis[0], offset_coords[0]), (axis[-1], offset_coords[-1])):
+        if math.hypot(axis_end[0] - offset_end[0], axis_end[1] - offset_end[1]) > limit:
+            problems.append("extrémité décalée trop loin")
+            break
+    return problems
+
+
+def segment_geometry_anomalies(half) -> list:
+    """Défauts du décalage BRUT d'une moitié (avant garde-fou) ; vide = sain.
+
+    Une moitié qui en présente est dessinée sur l'axe non décalé
+    (:func:`segment_half_geometry`) : c'est une moitié « simplifiée ». PURE.
+    """
+    if not half.axis_parts or not half.offset_m:
+        return []
+    problems = []
+    for part in half.axis_parts:
+        axis = [tuple(p) for p in part]
+        problems.extend(offset_part_anomalies(
+            axis, offset_polyline(axis, half.offset_m, half.side), half.offset_m
+        ))
+    return problems
 
 
 def merge_colocated(locations, tol=COLOCATED_TOLERANCE_M):
@@ -2216,7 +2360,7 @@ def geometry_for_column(parts, multi_column=True):
 
 
 def segment_half_changed(half, existing, tol=SEGMENT_COMPARE_TOLERANCE,
-                         multi_column=True) -> bool:
+                         multi_column=True, geometry=None) -> bool:
     """Le segment recalculé ``half`` diffère-t-il de la ligne ``existing`` en base ?
 
     ``existing`` : dict ``road_key``/``depth_category``/``is_long``/``length_m``
@@ -2237,7 +2381,9 @@ def segment_half_changed(half, existing, tol=SEGMENT_COMPARE_TOLERANCE,
     if not isinstance(length, (int, float)) or abs(length - half.length_m) > tol:
         return True
     coords = existing.get("coords")
-    fresh, _dropped = geometry_for_column(segment_half_geometry(half), multi_column)
+    if geometry is None:
+        geometry = segment_half_geometry(half)
+    fresh, _dropped = geometry_for_column(geometry, multi_column)
     if not coords or len(coords) != len(fresh):
         return True
     for old_part, new_part in zip(coords, fresh):
@@ -2249,7 +2395,8 @@ def segment_half_changed(half, existing, tol=SEGMENT_COMPARE_TOLERANCE,
     return False
 
 
-def plan_segment_sync(fresh, existing, scope_roads=None, multi_column=True) -> SegmentSyncPlan:
+def plan_segment_sync(fresh, existing, scope_roads=None, multi_column=True,
+                      geometries=None) -> SegmentSyncPlan:
     """Répartit les moitiés recalculées en insert / update / delete / inchangées.
 
     ``fresh`` : SegmentHalf de build_segment_halves (cet appel) — clés uniques.
@@ -2274,7 +2421,10 @@ def plan_segment_sync(fresh, existing, scope_roads=None, multi_column=True) -> S
         current = existing.get(key)
         if current is None:
             to_insert.append(half)
-        elif segment_half_changed(half, current, multi_column=multi_column):
+        elif segment_half_changed(
+            half, current, multi_column=multi_column,
+            geometry=(geometries or {}).get(key),
+        ):
             to_update.append(half)
         else:
             unchanged += 1
@@ -2786,6 +2936,61 @@ def parse_overpass_ways(data, keep_unnamed=False) -> list:
     return ways
 
 
+OVERPASS_MERGE_GAP_M = 300.0
+OVERPASS_MERGE_MAX_AREA_M2 = 9_000_000.0
+
+
+def merge_overpass_requests(requests, max_names=OVERPASS_MAX_NAMES_PER_QUERY,
+                            max_side_m=OVERPASS_MAX_REQUEST_SPAN_M,
+                            max_gap_m=OVERPASS_MERGE_GAP_M,
+                            max_area_m2=OVERPASS_MERGE_MAX_AREA_M2) -> list:
+    """Fusionne les requêtes Overpass VOISINES pour en réduire le nombre.
+
+    Deux requêtes fusionnent si leurs emprises se touchent ou sont à moins de
+    ``max_gap_m``, que l'union reste sous ``max_side_m`` de côté ET sous
+    ``max_area_m2``, sous ``max_names`` noms, et qu'elles ne partagent AUCUN
+    nom normalisé (deux rues homonymes de localités différentes ne partagent
+    jamais une emprise). Requêtes restent filtrées par noms (ou par types de
+    voie pour le repli par coordonnées) ; emprise réunie = union exacte des
+    emprises déjà arrondies. Déterministe. Fonction PURE.
+    """
+    pending = list(requests)
+
+    def gap(a, b):
+        dx = max(a[0] - b[2], b[0] - a[2], 0.0)
+        dy = max(a[1] - b[3], b[1] - a[3], 0.0)
+        return math.hypot(dx, dy)
+
+    merged_any = True
+    while merged_any:
+        merged_any = False
+        for i in range(len(pending)):
+            for j in range(i + 1, len(pending)):
+                a, b = pending[i], pending[j]
+                box = (min(a.bbox[0], b.bbox[0]), min(a.bbox[1], b.bbox[1]),
+                       max(a.bbox[2], b.bbox[2]), max(a.bbox[3], b.bbox[3]))
+                keys_a = {normalize_street_name(n) for n in a.names}
+                keys_b = {normalize_street_name(n) for n in b.names}
+                if (
+                    gap(a.bbox, b.bbox) > max_gap_m
+                    or box[2] - box[0] > max_side_m or box[3] - box[1] > max_side_m
+                    or (box[2] - box[0]) * (box[3] - box[1]) > max_area_m2
+                    or len(keys_a | keys_b) > max_names
+                    or keys_a & keys_b
+                ):
+                    continue
+                pending[i] = OverpassRequest(
+                    bbox=box, names=tuple(sorted(set(a.names) | set(b.names))),
+                    ids=tuple(sorted(set(a.ids) | set(b.ids))),
+                )
+                del pending[j]
+                merged_any = True
+                break
+            if merged_any:
+                break
+    return pending
+
+
 def parse_overpass_status(text):
     """Attente (s) avant un slot libre d'après ``/api/status`` ; 0 si libre, None si inconnu.
 
@@ -3051,6 +3256,164 @@ def index_ways_by_name(ways) -> dict:
     return dict(index)
 
 
+# --- Index spatial par bbox (PUR) ---------------------------------------------
+SPATIAL_INDEX_CELL_M = 200.0
+
+
+def polyline_bbox(coords):
+    """Emprise ``(xmin, ymin, xmax, ymax)`` d'une polyligne."""
+    xs = [p[0] for p in coords]
+    ys = [p[1] for p in coords]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def bbox_distance(px, py, bbox) -> float:
+    """Distance d'un point à une emprise (0 dedans) : minorant de la distance à la voie."""
+    dx = max(bbox[0] - px, 0.0, px - bbox[2])
+    dy = max(bbox[1] - py, 0.0, py - bbox[3])
+    return math.hypot(dx, dy)
+
+
+class WaySpatialIndex:
+    """Grille uniforme (cellules de ``cell`` m) des voies, par emprise.
+
+    ``candidates(x, y, r)`` renvoie les voies dont l'EMPRISE est à au plus
+    ``r`` du point — sur-ensemble exact des voies à au plus ``r`` (la
+    distance à l'emprise minore la distance à la polyligne) — dans l'ORDRE
+    de la liste d'origine : les fonctions qui l'utilisent donnent donc
+    STRICTEMENT le même résultat qu'un balayage de toutes les voies (test
+    d'équivalence). Pure, sans dépendance.
+    """
+
+    def __init__(self, ways, cell=SPATIAL_INDEX_CELL_M):
+        self.ways = list(ways)
+        self.cell = float(cell)
+        self.bboxes = [polyline_bbox(w.coords) for w in self.ways]
+        self.grid = defaultdict(list)
+        self.by_name = defaultdict(list)
+        for way in self.ways:
+            for name in way.names:
+                self.by_name[name].append(way)
+        for index, (xmin, ymin, xmax, ymax) in enumerate(self.bboxes):
+            for cx in range(math.floor(xmin / self.cell), math.floor(xmax / self.cell) + 1):
+                for cy in range(math.floor(ymin / self.cell), math.floor(ymax / self.cell) + 1):
+                    self.grid[(cx, cy)].append(index)
+        if self.bboxes:
+            self.extent = (
+                min(b[0] for b in self.bboxes), min(b[1] for b in self.bboxes),
+                max(b[2] for b in self.bboxes), max(b[3] for b in self.bboxes),
+            )
+        else:
+            self.extent = None
+
+    def candidates(self, px, py, radius):
+        found = set()
+        c = self.cell
+        for cx in range(math.floor((px - radius) / c), math.floor((px + radius) / c) + 1):
+            for cy in range(math.floor((py - radius) / c), math.floor((py + radius) / c) + 1):
+                for index in self.grid.get((cx, cy), ()):
+                    if index not in found and bbox_distance(px, py, self.bboxes[index]) <= radius:
+                        found.add(index)
+        return [self.ways[i] for i in sorted(found)]
+
+    def covers_all(self, px, py, radius) -> bool:
+        """Le disque de rayon ``radius`` contient-il l'emprise de TOUTES les voies ?"""
+        if self.extent is None:
+            return True
+        xmin, ymin, xmax, ymax = self.extent
+        far_x = max(abs(px - xmin), abs(px - xmax))
+        far_y = max(abs(py - ymin), abs(py - ymax))
+        return math.hypot(far_x, far_y) <= radius
+
+
+# Appels SQL par LOTS (localisation en base) : points par lot, cellule de
+# regroupement spatial des points d'un même lot.
+SQL_BATCH_SIZE = 100
+SQL_BATCH_CELL_M = 1000.0
+
+
+def batch_cell_key(x, y, cell=SQL_BATCH_CELL_M):
+    """Clé de tri spatial (cellule de ``cell`` m) : lots de points voisins. PURE."""
+    return (math.floor(x / cell), math.floor(y / cell), x, y)
+
+
+def batch_locate_sql(items, radius) -> str:
+    """UNE requête appelant fn_asbuilt_locate_on_road pour tout un lot (LATERAL).
+
+    ``items`` : ``(tag entier, x, y, littéral SQL du nom)`` ; mêmes arguments
+    que l'appel point par point (:meth:`_locate_sql`), rayon compris.
+    ``WITH ORDINALITY`` conserve l'ordre des lignes de la fonction : la
+    PREMIÈRE ligne par tag est celle qu'aurait prise l'appel unitaire
+    (``result[0]``, cf. :func:`first_rows_by_tag`). Fonction PURE.
+    """
+    values = ", ".join(
+        f"({int(tag)}, {float(x)!r}::double precision, {float(y)!r}::double precision, "
+        f"{literal}::text)"
+        for tag, x, y, literal in items
+    )
+    return (
+        "SELECT v.tag, l.road_key, l.position_m, "
+        "ST_X(l.projected_point), ST_Y(l.projected_point), l.road_length_m, "
+        "ST_X(l.road_start), ST_Y(l.road_start), ST_X(l.road_end), ST_Y(l.road_end) "
+        f"FROM (VALUES {values}) AS v(tag, x, y, street) "
+        "CROSS JOIN LATERAL public.fn_asbuilt_locate_on_road("
+        "ST_SetSRID(ST_MakePoint(v.x, v.y), 31370), v.street, "
+        f"{float(radius)!r}) WITH ORDINALITY AS l(road_key, position_m, projected_point, "
+        "road_length_m, road_start, road_end, ord) "
+        "ORDER BY v.tag, l.ord"
+    )
+
+
+def batch_road_geometry_sql(items, radius) -> str:
+    """UNE requête fn_asbuilt_road_geometry (axe + type de voie) pour un lot de routes.
+
+    ``items`` : ``(tag, x, y, littéral du nom)`` — un point représentant par
+    road_key, avec le nom qui l'a localisé. Retour : tag, road_key, géométrie
+    en WKT, road_highway ; première ligne par tag (WITH ORDINALITY). PURE.
+    """
+    values = ", ".join(
+        f"({int(tag)}, {float(x)!r}::double precision, {float(y)!r}::double precision, "
+        f"{literal}::text)"
+        for tag, x, y, literal in items
+    )
+    return (
+        "SELECT v.tag, g.road_key, ST_AsText(g.road_geom), g.road_highway "
+        f"FROM (VALUES {values}) AS v(tag, x, y, street) "
+        "CROSS JOIN LATERAL public.fn_asbuilt_road_geometry("
+        "ST_SetSRID(ST_MakePoint(v.x, v.y), 31370), v.street, "
+        f"{float(radius)!r}) WITH ORDINALITY AS g(road_key, road_geom, road_highway, ord) "
+        "ORDER BY v.tag, g.ord"
+    )
+
+
+def pick_db_road_geometry(row, expected_road_key, road_length_m):
+    """Ligne de fn_asbuilt_road_geometry -> ``(parties, highway)`` si RETENUE, sinon None.
+
+    Retenue seulement si road_key IDENTIQUE à celui de la localisation et
+    longueur de la géométrie = road_length_m (:func:`road_line_matches`) —
+    sinon (fail-closed, autre fusion) l'appelant repasse par Overpass. PURE.
+    """
+    if not row:
+        return None
+    found_key, wkt, highway = (tuple(row) + (None, None, None))[:3]
+    if str(found_key) != str(expected_road_key):
+        return None
+    parts = parse_wkt_lines(wkt)
+    if not parts or not road_line_matches(parts, road_length_m):
+        return None
+    return parts, str(highway or "")
+
+
+def first_rows_by_tag(rows) -> dict:
+    """Résultat d'un lot -> dict tag -> 1re ligne (sans le tag). PURE."""
+    out = {}
+    for row in rows:
+        tag = int(row[0])
+        if tag not in out:
+            out[tag] = tuple(row[1:])
+    return out
+
+
 def highway_allowed_for_coords(highway) -> bool:
     """Type de voie éligible au repli par coordonnées (``*_link`` compris)."""
     value = (highway or "").strip().lower()
@@ -3114,7 +3477,8 @@ def _way_identity(way):
 
 
 def nearest_way(px, py, ways, radius=OSM_COORD_FALLBACK_RADIUS_M,
-                ambiguity_m=OSM_COORD_AMBIGUITY_M):
+                ambiguity_m=OSM_COORD_AMBIGUITY_M, preferred_names=(),
+                preferred_radius=COORD_PREFERRED_NAME_RADIUS_M, spatial=None):
     """Voie carrossable la plus proche du point, dans le rayon -> ``(voie, raison)``.
 
     Seules les voies :func:`highway_allowed_for_coords` comptent. Aucune dans
@@ -3122,10 +3486,25 @@ def nearest_way(px, py, ways, radius=OSM_COORD_FALLBACK_RADIUS_M,
     d'IDENTITÉ différente (autre nom ; une voie sans nom n'est identique qu'à
     elle-même) est à moins de ``ambiguity_m`` m de plus que la plus proche ->
     ``(None, 'ambiguous')``. Les tronçons d'une même rue ne s'excluent pas.
-    Départage déterministe : distance puis way_id. Fonction PURE.
+    ``preferred_names`` (noms de référence normalisés : canonique Nominatim,
+    nom nettoyé de l'adresse) : une voie portant l'un d'eux est retenue en
+    PRIORITÉ jusqu'à ``preferred_radius``, même si une voie d'un autre nom est
+    plus proche. Départage déterministe : distance puis way_id. ``spatial``
+    (:class:`WaySpatialIndex` des MÊMES voies) : seules les voies dont
+    l'emprise est dans le rayon sont examinées — résultat identique. PURE.
     """
+    wanted = set(preferred_names)
+    if wanted:
+        pool = ways if spatial is None else spatial.candidates(px, py, preferred_radius)
+        named = sorted(
+            (project_on_polyline(px, py, way.coords)[0], way.way_id, way)
+            for way in pool
+            if highway_allowed_for_coords(way.highway) and wanted & set(way.names)
+        )
+        if named and named[0][0] <= preferred_radius:
+            return named[0][2], None
     candidates = []
-    for way in ways:
+    for way in (ways if spatial is None else spatial.candidates(px, py, radius)):
         if not highway_allowed_for_coords(way.highway):
             continue
         dist = project_on_polyline(px, py, way.coords)[0]
@@ -3193,13 +3572,19 @@ def locate_rows_on_osm(name_items, coord_items, ways,
        un nom de référence du point existe à moins de LOCATE_RADIUS_MAX_M
        (``same_name_nearby``, cf. :func:`assess_attachment`).
 
-    Chaque match porte ``method`` ('osm_id'|'name'|'coords'), ``way_names``,
+    1b. sinon, NOM APPROCHANT (:func:`_locate_by_fuzzy_name`, faible confiance) ;
+    au repli par coordonnées, une voie portant un nom de référence est
+    préférée jusqu'à COORD_PREFERRED_NAME_RADIUS_M.
+
+    Chaque match porte ``method`` ('osm_id'|'name'|'fuzzy'|'coords'), ``way_names``,
     ``distance``. Retourne ``(résultats, raisons, axes)`` : ``résultats`` =
     dict id -> (match, method) ; ``raisons`` = dict id -> 'ambiguous'|
     'no_match' des points non localisés ; ``axes`` = dict road_key ->
     polyligne FUSIONNÉE de l'axe (orientée comme les position_m). PURE.
     """
     preferred_ways = preferred_ways or {}
+    ways = list(ways)
+    spatial = WaySpatialIndex(ways)  # recherche indexée par bbox (résultat identique)
     by_id = {w.way_id: w for w in ways}
     named_ways = [w for w in ways if w.names]
     index = index_ways_by_name(named_ways)
@@ -3225,6 +3610,8 @@ def locate_rows_on_osm(name_items, coord_items, ways,
             else:
                 match = locate_on_single_way(x, y, way)
                 noname_lines[match["road_key"]] = list(way.coords)
+            if match is not None and not _axis_close_enough(match, x, y, way):
+                match = None  # axe retenu loin de la voie désignée : refusé
             if match is not None:
                 match.setdefault("way_names", way.names)
                 match.setdefault("distance", project_on_polyline(x, y, way.coords)[0])
@@ -3239,12 +3626,33 @@ def locate_rows_on_osm(name_items, coord_items, ways,
                 reasons[intervention_id] = reason
         if match is not None:
             finish(intervention_id, match, "name")
-        else:
-            reasons.setdefault(intervention_id, "no_match")
-            fallback.append((intervention_id, x, y))
+            continue
+        if reasons.get(intervention_id) != "ambiguous":
+            match = _locate_by_fuzzy_name(x, y, names, ways, index, cache, spatial)
+            if match is not None:
+                finish(intervention_id, match, "fuzzy")
+                continue
+        reasons.setdefault(intervention_id, "no_match")
+        fallback.append((intervention_id, x, y))
     fallback.extend(coord_items)
     for intervention_id, x, y in fallback:
-        way, reason = nearest_way(x, y, ways, radius, ambiguity_m)
+        way, reason = nearest_way(
+            x, y, ways, radius, ambiguity_m,
+            preferred_names=point_names.get(intervention_id, ()), spatial=spatial,
+        )
+        lone = False
+        if way is None and reason == "no_match":
+            # Aucune voie du nom de référence à LOCATE_RADIUS_M : rayon élargi
+            # pour la voie carrossable la plus proche (hameau, route sans nom).
+            wanted_names = point_names.get(intervention_id, set())
+            if not any(
+                project_on_polyline(x, y, other.coords)[0] <= LOCATE_RADIUS_M
+                for name in wanted_names for other in index.get(name, ())
+            ):
+                way, reason = nearest_way(
+                    x, y, ways, COORD_FALLBACK_LONE_RADIUS_M, ambiguity_m, spatial=spatial,
+                )
+                lone = way is not None
         if way is None:
             # Un échec par nom « ambigu » reste l'information la plus utile.
             if reasons.get(intervention_id) != "ambiguous":
@@ -3256,12 +3664,20 @@ def locate_rows_on_osm(name_items, coord_items, ways,
         else:
             match, reason = locate_on_single_way(x, y, way), None
             noname_lines[match["road_key"]] = list(way.coords)
+        if match is not None and not _axis_close_enough(match, x, y, way):
+            match, reason = None, "far_axis"
         if match is None:
             reasons[intervention_id] = reason
             continue
         wanted = point_names.get(intervention_id, set())
         match["way_names"] = way.names
         match["distance"] = distance
+        if lone:
+            match["lone"] = True
+            match["low_confidence"] = (
+                f"voie sans nom / nom différent, {radius:g}–"
+                f"{COORD_FALLBACK_LONE_RADIUS_M:g} m"
+            )
         match["same_name_nearby"] = bool(wanted) and not (wanted & set(way.names)) and any(
             project_on_polyline(x, y, other.coords)[0] <= LOCATE_RADIUS_MAX_M
             for name in wanted for other in index.get(name, ())
@@ -3271,6 +3687,48 @@ def locate_rows_on_osm(name_items, coord_items, ways,
     lines.update(noname_lines)
     used = {match["road_key"] for match, _method in results.values()}
     return results, reasons, {key: line for key, line in lines.items() if key in used}
+
+
+def _axis_close_enough(match, px, py, way) -> bool:
+    """Invariant : l'axe retenu n'est pas plus loin que la voie visée + AXIS_GUARD_M."""
+    target = project_on_polyline(px, py, way.coords)[0]
+    return float(match.get("distance") or 0.0) <= target + AXIS_GUARD_M
+
+
+def _locate_by_fuzzy_name(px, py, names, ways, index, cache, spatial=None):
+    """Rattachement par NOM APPROCHANT (« Linden-Allee » pour « Lindenallee »).
+
+    Voie carrossable dont un nom est :func:`fuzzy_name_match` avec un nom de
+    référence, à au plus FUZZY_NAME_MAX_DISTANCE_M ; refusé si une voie d'un
+    AUTRE nom (non approchant) est plus proche de plus de FUZZY_NAME_MARGIN_M.
+    Localisation ensuite par le NOM OSM de cette voie (même composante que
+    par nom). Match marqué faible confiance, ou None. Fonction PURE.
+    """
+    if not names:
+        return None
+    scored = []
+    reach = FUZZY_NAME_MAX_DISTANCE_M + FUZZY_NAME_MARGIN_M
+    for way in (ways if spatial is None else spatial.candidates(px, py, reach)):
+        if not highway_allowed_for_coords(way.highway) or not way.names:
+            continue
+        dist = project_on_polyline(px, py, way.coords)[0]
+        if dist > FUZZY_NAME_MAX_DISTANCE_M + FUZZY_NAME_MARGIN_M:
+            continue
+        fuzzy = any(fuzzy_name_match(n, w) for n in names for w in way.names)
+        scored.append((dist, way.way_id, way, fuzzy))
+    fuzzy_ways = sorted((d, i, w) for d, i, w, f in scored if f and d <= FUZZY_NAME_MAX_DISTANCE_M)
+    if not fuzzy_ways:
+        return None
+    best_dist, _id, best = fuzzy_ways[0]
+    if any(not f and d < best_dist - FUZZY_NAME_MARGIN_M for d, _i, _w, f in scored):
+        return None
+    match, _reason = locate_on_ways(px, py, best.names[0], index, cache=cache)
+    if match is None or not _axis_close_enough(match, px, py, best):
+        return None
+    match["low_confidence"] = (
+        f"nom approchant « {best.tags.get('name') or best.names[0]} »"
+    )
+    return match
 
 
 _FREEWAY_CLASSES = ("motorway", "trunk")
@@ -3299,7 +3757,7 @@ def assess_attachment(match, point_names=(), hit=None):
     distance = float(match.get("distance") or 0.0)
     wanted = {normalize_street_name(n) for n in point_names if n}
     way_names = set(match.get("way_names") or ())
-    name_ok = method in ("db", "name") or bool(wanted & way_names)
+    name_ok = method in ("db", "name", "fuzzy") or bool(wanted & way_names)
     highway = str(match.get("highway") or "").lower()
     if highway.endswith("_link"):
         highway = highway[: -len("_link")]
@@ -3313,8 +3771,9 @@ def assess_attachment(match, point_names=(), hit=None):
     score = max(0.0, min(100.0, score))
     if precision == "locality":
         return score, "géocodage imprécis (localité seulement)"
-    if method == "coords" and distance > OSM_COORD_FALLBACK_RADIUS_M:
-        return score, f"voie la plus proche à {distance:.0f} m (> {OSM_COORD_FALLBACK_RADIUS_M:g} m)"
+    limit = COORD_FALLBACK_LONE_RADIUS_M if match.get("lone") else OSM_COORD_FALLBACK_RADIUS_M
+    if method == "coords" and distance > limit:
+        return score, f"voie la plus proche à {distance:.0f} m (> {limit:g} m)"
     if method == "coords" and not name_ok and match.get("same_name_nearby"):
         return score, "nom de voie différent et voie du même nom que l'adresse à proximité"
     if freeway_odd:
@@ -3453,13 +3912,26 @@ def connected_component(seed, candidates, tol=ROAD_JOIN_TOLERANCE_M,
     Fonction PURE.
     """
     pool = sorted(candidates, key=lambda w: w.way_id)
+    # Préfiltre par EMPRISE : deux voies dont les emprises sont à plus de
+    # ``tol`` ne peuvent pas se raccorder (résultat identique, sans O(n²)
+    # calculs de projection sur les grandes rues).
+    boxes = {w.way_id: polyline_bbox(w.coords) for w in pool}
+    boxes.setdefault(seed.way_id, polyline_bbox(seed.coords))
+
+    def boxes_close(a, b):
+        return not (a[0] - tol > b[2] or b[0] - tol > a[2]
+                    or a[1] - tol > b[3] or b[1] - tol > a[3])
+
     component = [seed]
     seen = {seed.way_id}
     queue = [seed]
     while queue and len(component) < max_ways:
         current = queue.pop(0)
+        current_box = boxes.get(current.way_id) or polyline_bbox(current.coords)
         for way in pool:
-            if way.way_id in seen or not _ways_touch(current, way, tol):
+            if way.way_id in seen or not boxes_close(current_box, boxes[way.way_id]):
+                continue
+            if not _ways_touch(current, way, tol):
                 continue
             seen.add(way.way_id)
             component.append(way)
@@ -3469,17 +3941,21 @@ def connected_component(seed, candidates, tol=ROAD_JOIN_TOLERANCE_M,
     return sorted(component, key=lambda w: w.way_id)
 
 
-def merge_component(ways, tol=ROAD_JOIN_TOLERANCE_M) -> list:
-    """Fusionne une composante en UNE polyligne orientée de façon déterministe.
+def split_component_chains(ways, tol=ROAD_JOIN_TOLERANCE_M) -> list:
+    """Découpe une composante de voies homonymes en CHAÎNES sans fourche.
 
     Graphe : nœuds = extrémités de voies regroupées à ``tol`` près, arêtes =
-    voies. Départ : extrémité libre (degré 1) de plus petites coordonnées
-    ``(x, y)`` (ou plus petit nœud si la composante est une boucle) ; à
-    chaque nœud, on suit l'arête non visitée de plus petit way_id. Une rue
-    simple (chaîne de tronçons) est ainsi entièrement fusionnée ; pour une
-    composante ramifiée (fourche, chaussées séparées), seul le chemin parcouru
-    est retenu — les branches restantes sont ignorées (limite assumée, cf.
-    garde de distance dans :func:`locate_on_ways`). Fonction PURE.
+    voies (parcourues par way_id croissant). Une chaîne = portion maximale
+    entre deux nœuds qui ne sont pas de degré 2 (bout de rue, carrefour en Y,
+    rond-point…) ; les boucles pures forment une chaîne à elles seules.
+    Aucune voie n'est abandonnée : chaque voie appartient à exactement une
+    chaîne. Orientation DÉTERMINISTE : une chaîne ouverte part de son
+    extrémité de plus petites coordonnées ``(x, y)`` ; une boucle part de son
+    plus petit nœud, par l'arête de plus petit way_id. Rue simple (aucune
+    fourche) -> une seule chaîne, identique à l'ancienne fusion.
+
+    Retourne une liste de ``(way_ids triés, coords)`` triée par plus petit
+    way_id. Fonction PURE.
     """
     nodes = []
 
@@ -3494,46 +3970,127 @@ def merge_component(ways, tol=ROAD_JOIN_TOLERANCE_M) -> list:
     for way in sorted(ways, key=lambda w: w.way_id):
         edges.append((node_of(way.coords[0]), node_of(way.coords[-1]), way))
     degree = Counter()
-    for u, v, _ in edges:
+    incident = defaultdict(list)
+    for idx, (u, v, way) in enumerate(edges):
         degree[u] += 1
         degree[v] += 1
-    free_ends = [n for n in range(len(nodes)) if degree[n] == 1]
-    start = min(free_ends or range(len(nodes)), key=lambda n: nodes[n])
-
-    path = []
+        incident[u].append(idx)
+        if v != u:
+            incident[v].append(idx)
     visited = set()
-    current = start
-    while True:
-        incident = [
-            (way.way_id, idx) for idx, (u, v, way) in enumerate(edges)
-            if idx not in visited and current in (u, v)
-        ]
-        if not incident:
-            break
-        _, idx = min(incident)
-        visited.add(idx)
-        u, v, way = edges[idx]
-        coords = list(way.coords) if u == current else list(reversed(way.coords))
-        path.extend(coords if not path else coords[1:])
-        current = v if u == current else u
-    return path
+
+    def walk(start, first_edge):
+        path, used = [], []
+        current, idx = start, first_edge
+        while True:
+            visited.add(idx)
+            used.append(edges[idx][2].way_id)
+            u, v, way = edges[idx]
+            coords = list(way.coords) if u == current else list(reversed(way.coords))
+            path.extend(coords if not path else coords[1:])
+            current = v if u == current else u
+            if degree[current] != 2 or current == start:
+                break
+            nxt = [i for i in sorted(incident[current], key=lambda i: edges[i][2].way_id)
+                   if i not in visited]
+            if not nxt:
+                break
+            idx = nxt[0]
+        return path, used
+
+    chains = []
+    # Chaînes ouvertes : départ de chaque nœud qui n'est pas de degré 2.
+    for node in sorted((n for n in range(len(nodes)) if degree[n] != 2),
+                       key=lambda n: nodes[n]):
+        for idx in sorted(incident[node], key=lambda i: edges[i][2].way_id):
+            if idx in visited:
+                continue
+            path, used = walk(node, idx)
+            if tuple(path[-1]) < tuple(path[0]):
+                path = list(reversed(path))
+            chains.append((sorted(used), path))
+    # Boucles pures (tous nœuds de degré 2).
+    while len(visited) < len(edges):
+        rest = [i for i in range(len(edges)) if i not in visited]
+        start = min({edges[i][0] for i in rest} | {edges[i][1] for i in rest},
+                    key=lambda n: nodes[n])
+        first = min((i for i in rest if start in edges[i][:2]),
+                    key=lambda i: edges[i][2].way_id)
+        path, used = walk(start, first)
+        chains.append((sorted(used), path))
+    return sorted(chains, key=lambda c: c[0][0])
 
 
-def homonym_components_ambiguous(d_best, d_other,
-                                 gap_m=COMPONENT_AMBIGUITY_GAP_M,
-                                 ratio=COMPONENT_AMBIGUITY_RATIO) -> bool:
-    """Deux composantes homonymes non connectées : ambiguïté réelle ?
+def merge_component(ways, tol=ROAD_JOIN_TOLERANCE_M, seed_way_id=None) -> list:
+    """Polyligne orientée de la composante — sans JAMAIS abandonner le germe.
 
-    Oui si la seconde est à distance COMPARABLE de la plus proche : écart <
-    ``gap_m`` OU rapport < ``ratio`` ; sinon la plus proche l'emporte (rue
-    coupée en tronçons, homonyme d'un autre quartier). Fonction PURE.
+    Rue simple : toutes les voies fusionnées (une chaîne). Composante
+    ramifiée : la CHAÎNE (cf. :func:`split_component_chains`) qui contient la
+    voie ``seed_way_id`` (à défaut, la première chaîne). Fonction PURE.
     """
-    if d_other - d_best < gap_m:
-        return True
-    return d_best > 0 and d_other / d_best < ratio
+    chains = split_component_chains(ways, tol)
+    for way_ids, coords in chains:
+        if seed_way_id is None or seed_way_id in way_ids:
+            return coords
+    return chains[0][1] if chains else []
 
 
-def diagnose_unlocated(px, py, names, ways, radius=OSM_COORD_FALLBACK_RADIUS_M):
+def homonym_decision(d_best, d_other) -> str:
+    """Deux composantes homonymes non connectées -> 'ambiguous' | 'low' | 'ok'.
+
+    * 'ambiguous' en QUASI-ÉGALITÉ : 2e à moins de COMPONENT_TIE_GAP_M de plus
+      ET rapport < COMPONENT_TIE_RATIO ; ou, quand les DEUX sont à plus de
+      COMPONENT_FAR_M, selon la règle historique (écart < 15 m OU rapport <
+      1,5) ;
+    * 'low' : la plus proche l'emporte mais la marge est < COMPONENT_LOW_CONF_GAP_M
+      (rattachement marqué faible confiance) ;
+    * 'ok' : la plus proche l'emporte nettement. Fonction PURE.
+    """
+    gap = d_other - d_best
+    ratio = d_other / d_best if d_best > 0 else float("inf")
+    if gap < COMPONENT_TIE_GAP_M and ratio < COMPONENT_TIE_RATIO:
+        return "ambiguous"
+    if d_best > COMPONENT_FAR_M and d_other > COMPONENT_FAR_M and (
+        gap < COMPONENT_AMBIGUITY_GAP_M or ratio < COMPONENT_AMBIGUITY_RATIO
+    ):
+        return "ambiguous"
+    return "low" if gap < COMPONENT_LOW_CONF_GAP_M else "ok"
+
+
+def homonym_components_ambiguous(d_best, d_other) -> bool:
+    """Compatibilité : vrai si :func:`homonym_decision` rend 'ambiguous'."""
+    return homonym_decision(d_best, d_other) == "ambiguous"
+
+
+_STREET_TYPE_ALIASES = (
+    (r"strasse\b", "str"), (r"str\.?(?=\s|$)", "str"), (r"straat\b", "str"),
+    (r"allee\b", "alle"), (r"alee\b", "alle"),
+)
+
+
+def compact_street_name(name) -> str:
+    """Forme compacte pour la comparaison APPROCHANTE de noms de rue. PURE.
+
+    :func:`normalize_street_name` puis : suffixes de type unifiés
+    (strasse/str./straat -> « str », allee/alee -> « alle »), espaces,
+    tirets, apostrophes et points retirés.
+    """
+    text = normalize_street_name(name)
+    for pattern, repl in _STREET_TYPE_ALIASES:
+        text = re.sub(pattern, repl, text)
+    return re.sub(r"[\s\-'’.]", "", text)
+
+
+def fuzzy_name_match(a, b, min_ratio=FUZZY_NAME_RATIO) -> bool:
+    """Deux noms de rue APPROCHANTS (formes compactes égales ou ratio difflib ≥ seuil) ?"""
+    ca, cb = compact_street_name(a), compact_street_name(b)
+    if not ca or not cb:
+        return False
+    return ca == cb or difflib.SequenceMatcher(None, ca, cb).ratio() >= min_ratio
+
+
+def diagnose_unlocated(px, py, names, ways, radius=OSM_COORD_FALLBACK_RADIUS_M,
+                       spatial=None):
     """Cause lisible d'un point non localisé + distance à la voie nommée la plus proche.
 
     ``names`` : noms de référence du point ; ``ways`` : voies extraites
@@ -3548,6 +4105,31 @@ def diagnose_unlocated(px, py, names, ways, radius=OSM_COORD_FALLBACK_RADIUS_M):
     L'ambiguïté est diagnostiquée en amont (raison 'ambiguous'). PURE.
     """
     wanted = {normalize_street_name(n) for n in names if n}
+    if spatial is not None:
+        # Recherche par anneaux croissants : la voie nommée la plus proche
+        # trouvée à r est la plus proche de toutes (les autres sont à > r).
+        # Même nom : toutes les voies de ce nom (index par nom, peu nombreuses).
+        same = min(
+            (project_on_polyline(px, py, w.coords)[0]
+             for name in wanted for w in spatial.by_name.get(name, ())),
+            default=None,
+        )
+        reach = max(radius, spatial.cell)
+        while True:
+            pool = spatial.candidates(px, py, reach)
+            dists = [(project_on_polyline(px, py, w.coords)[0], w) for w in pool]
+            named = min((d for d, w in dists if w.names), default=None)
+            if spatial.covers_all(px, py, reach) or (named is not None and named <= reach):
+                break
+            reach *= 4
+        carrossable_near = any(
+            highway_allowed_for_coords(w.highway) and d <= radius for d, w in dists
+        )
+        if same is not None:
+            return "voie du même nom trop loin", same
+        if carrossable_near:
+            return "nom introuvable", named
+        return "aucune voie à proximité", named
     same, named = None, None
     carrossable_near = False
     for way in ways:
@@ -3565,6 +4147,36 @@ def diagnose_unlocated(px, py, names, ways, radius=OSM_COORD_FALLBACK_RADIUS_M):
     return "aucune voie à proximité", named
 
 
+# Classes de voie admises pour un rattachement PAR NOM (plus petit = prioritaire).
+_NAME_TIER_1 = (
+    "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
+    "residential", "road",
+)
+_NAME_TIER_2 = ("living_street", "service")
+_NAME_TIER_3 = ("pedestrian",)
+
+
+def name_match_tier(highway):
+    """Priorité d'une voie pour le rattachement par nom (1, 2, 3) ou None (exclue).
+
+    1 : voies carrossables (classes Farois et leurs ``_link``) ; 2 : zone de
+    rencontre, desserte — seulement sans voie de rang 1 homonyme dans le
+    rayon ; 3 : voie piétonne, en dernier recours ; None : chemins agricoles,
+    sentiers, trottoirs, pistes cyclables, escaliers… jamais cible d'un
+    rattachement d'adresse. Fonction PURE.
+    """
+    value = (highway or "").strip().lower()
+    if value.endswith("_link"):
+        value = value[: -len("_link")]
+    if value in _NAME_TIER_1:
+        return 1
+    if value in _NAME_TIER_2:
+        return 2
+    if value in _NAME_TIER_3:
+        return 3
+    return None
+
+
 def locate_on_ways(px, py, street_name, ways_by_name, radius=LOCATE_RADIUS_M,
                    tol=ROAD_JOIN_TOLERANCE_M, max_ways=ROAD_COMPONENT_MAX_WAYS,
                    cache=None):
@@ -3575,16 +4187,19 @@ def locate_on_ways(px, py, street_name, ways_by_name, radius=LOCATE_RADIUS_M,
     2. germe = la plus proche (puis plus petit way_id) ; composante connexe
        des voies du même nom (raccord ``tol``, bornée à ``max_ways``) ;
     3. rues homonymes NON connectées dans le rayon -> ``ambiguous`` (omis) ;
-    4. fusion déterministe (:func:`merge_component`), mise en cache par
-       road_key : TOUS les points d'une même rue partagent la même ligne, donc
-       des position_m comparables ; point à plus de ``radius`` de la ligne
-       fusionnée (germe sur une branche écartée) -> ``no_match`` ;
+    4. la composante est découpée en CHAÎNES sans fourche
+       (:func:`split_component_chains` : carrefour en Y, rond-point, chaussées
+       séparées) ; le point se rattache à la chaîne qui CONTIENT le germe —
+       road_key = nom + plus petit way_id de la chaîne, ligne mise en cache :
+       tous les points d'une même chaîne ont des position_m comparables et
+       seuls eux s'apparient ; garde d'invariant : ligne retenue à au plus
+       distance du germe + AXIS_GUARD_M, sinon ``far_axis`` ;
     5. projection orthogonale -> position_m, point projeté, côté (produit
        vectoriel direction locale × projeté->point), highway du germe.
 
     Retourne ``(match, reason)`` : ``match`` = dict road_key/position_m/x/y/
     side/highway/extent (RoadExtent), ``reason`` None ; ou ``(None,
-    'no_match'|'ambiguous')``. ``cache`` : dict partagé entre appels d'un
+    'no_match'|'ambiguous'|'far_axis')``. ``cache`` : dict partagé entre appels d'un
     même lot. Fonction PURE.
     """
     radius = min(max(float(radius), 0.0), LOCATE_RADIUS_MAX_M)
@@ -3596,42 +4211,86 @@ def locate_on_ways(px, py, street_name, ways_by_name, radius=LOCATE_RADIUS_M,
     candidates = ways_by_name.get(name, []) if name else []
     near = []
     for way in candidates:
+        tier = name_match_tier(way.highway)
+        if tier is None:
+            continue  # chemin agricole, sentier, trottoir… : jamais cible par nom
         dist = project_on_polyline(px, py, way.coords)[0]
         if dist <= radius:
-            near.append((dist, way.way_id, way))
+            near.append((dist, way.way_id, way, tier))
     if not near:
         return None, "no_match"
-    near.sort(key=lambda item: (item[0], item[1]))
+    # Classe de voie : carrossable « Farois » d'abord ; desserte / zone de
+    # rencontre seulement sans carrossable homonyme dans le rayon ; voie
+    # piétonne en tout dernier recours (run réel : un chemin agricole portant
+    # le nom de la rue, à 0 m, captait les points de la secondary à 35 m).
+    tier = min(item[3] for item in near)
+    candidates = [
+        w for w in candidates
+        if name_match_tier(w.highway) is not None and name_match_tier(w.highway) <= tier
+    ]
+    near = sorted(
+        ((d, i, w) for d, i, w, t in near if t <= tier), key=lambda item: (item[0], item[1])
+    )
     seed = near[0][2]
 
-    road_key = key_of_way.get((name, seed.way_id))
+    # key_of_way : voie -> identifiant de sa COMPOSANTE (ambiguïté entre
+    # homonymes non raccordés) ; chains : composante -> ses CHAÎNES sans
+    # fourche (:func:`split_component_chains`), chacune entité routière propre.
+    chains_of = cache.setdefault("chains", {})
+
+    def register(component):
+        comp_key = f"overpass:{name}:{component[0].way_id}"
+        for member in component:
+            key_of_way.setdefault((name, tier, member.way_id), comp_key)
+        if (tier, comp_key) not in chains_of:
+            chains_of[(tier, comp_key)] = split_component_chains(component, tol)
+        return comp_key
+
+    road_key = key_of_way.get((name, tier, seed.way_id))
     if road_key is None:
-        component = connected_component(seed, candidates, tol, max_ways)
-        road_key = f"overpass:{name}:{component[0].way_id}"
-        for way in component:
-            key_of_way[(name, way.way_id)] = road_key
-        lines[road_key] = merge_component(component, tol)
-    if any(key_of_way.get((name, way.way_id)) != road_key for _, _, way in near):
+        road_key = register(connected_component(seed, candidates, tol, max_ways))
+    if any(key_of_way.get((name, tier, way.way_id)) != road_key for _, _, way in near):
         # Voisins pas encore rattachés : les classer avant de conclure.
         for _, _, way in near:
-            if (name, way.way_id) not in key_of_way:
-                component = connected_component(way, candidates, tol, max_ways)
-                other_key = f"overpass:{name}:{component[0].way_id}"
-                for member in component:
-                    key_of_way.setdefault((name, member.way_id), other_key)
-                lines.setdefault(other_key, merge_component(component, tol))
+            if (name, tier, way.way_id) not in key_of_way:
+                register(connected_component(way, candidates, tol, max_ways))
         # Distance la plus courte de chaque AUTRE composante homonyme du rayon.
         others = {}
         for dist, _way_id, way in near:
-            key = key_of_way.get((name, way.way_id))
+            key = key_of_way.get((name, tier, way.way_id))
             if key != road_key:
                 others[key] = min(dist, others.get(key, dist))
         best = near[0][0]
-        if others and homonym_components_ambiguous(best, min(others.values())):
+        decision = homonym_decision(best, min(others.values())) if others else "ok"
+        if decision == "ambiguous":
             return None, "ambiguous"
+        low_confidence = (
+            "homonyme non raccordé proche (marge < "
+            f"{COMPONENT_LOW_CONF_GAP_M:g} m)" if decision == "low" else ""
+        )
+    else:
+        low_confidence = ""
 
-    line = lines[road_key]
-    dist, position_m, qx, qy, dir_x, dir_y = project_on_polyline(px, py, line)
+    # CHAÎNE retenue : celle qui contient le germe (jamais une portion
+    # lointaine d'un axe fusionné ramifié — bug du 29/09, Hauptstraße de Sankt
+    # Vith rattachée à 125 m) ; garde d'invariant : la distance à la ligne
+    # retenue ne dépasse pas celle du germe de plus de AXIS_GUARD_M.
+    seed_dist = near[0][0]
+    chains = chains_of[(tier, road_key)]
+    ordered = sorted(
+        chains, key=lambda c: (seed.way_id not in c[0], c[0][0])
+    )
+    chosen = None
+    for way_ids, coords in ordered:
+        projection = project_on_polyline(px, py, coords)
+        if projection[0] <= seed_dist + AXIS_GUARD_M:
+            chosen = (way_ids, coords, projection)
+            break
+    if chosen is None:
+        return None, "far_axis"
+    way_ids, line, (dist, position_m, qx, qy, dir_x, dir_y) = chosen
+    road_key = f"overpass:{name}:{way_ids[0]}"
+    lines.setdefault(road_key, line)
     if dist > radius:
         return None, "no_match"
     return {
@@ -3644,6 +4303,7 @@ def locate_on_ways(px, py, street_name, ways_by_name, radius=LOCATE_RADIUS_M,
         "way_id": seed.way_id,
         "way_names": seed.names,
         "distance": dist,
+        "low_confidence": low_confidence,
         "extent": RoadExtent(
             length_m=polyline_length(line),
             start_x=line[0][0], start_y=line[0][1],
@@ -4377,7 +5037,16 @@ if HAS_QGIS:
                 "(table vide) est complet. Case AVANCÉE « Reconstruire tous les "
                 "segments » : à cocher après un changement de règle (seuils, "
                 "décalages, côtés) ou de ref.osm_roads, que l'incrémental ne "
-                "détecte pas. Les points gris (profondeur manquante) "
+                "détecte pas. Rues RAMIFIÉES (carrefour en Y, rond-point, "
+                "chaussées séparées) découpées en CHAÎNES sans fourche : un point "
+                "se rattache à la chaîne qui contient la voie la plus proche (jamais "
+                "à une portion lointaine de l'axe), seuls les points d'une même "
+                "chaîne sont reliés ; par nom, seules les voies carrossables sont "
+                "retenues (desserte / zone de rencontre à défaut, jamais un chemin "
+                "agricole ou un sentier). Bouts de rue : PETIT segment de "
+                f"{ROAD_END_STUB_M:g} m le long de l'axe depuis le premier / dernier "
+                "point, de chaque côté d'un point isolé). Un décalage aberrant (boucle, "
+                "retournement) est tracé sur l'axe non décalé. Les points gris (profondeur manquante) "
                 "sont ignorés pour les segments ; chaque point de profondeur connue est projeté "
                 "orthogonalement sur l'axe de sa rue (nom extrait de l'adresse) "
                 "et rangé du côté gauche ou droit de la route (point sur l'axe : "
@@ -4403,9 +5072,11 @@ if HAS_QGIS:
                 f"{DEFAULT_HIGHWAY_OFFSET_M:g} m). Segments ≥ "
                 f"{LONG_SEGMENT_THRESHOLD_M:g} m (mesurés sur l'axe) en pointillé "
                 "(interpolation peu fiable) ; longueur mesurée le long de l'axe. "
-                "Routes de ref.osm_roads : axe lu via la fonction "
-                "public.fn_asbuilt_road_geometry (migration road_geom) ; absente -> "
-                "cordes droites décalées (avertissement). Colonne geom encore "
+                "Routes de ref.osm_roads : axe ET type de voie via la fonction "
+                "public.fn_asbuilt_road_geometry (migration road_geom, requêtes par "
+                "lots) ; absente -> localisation de TOUTES les routes via Overpass "
+                "(axe suivi) pour le run ; axe non retenu pour une route -> repli "
+                "Overpass, sinon cordes droites (compteur). Colonne geom encore "
                 "LineString -> première partie seulement (migration MultiLineString "
                 "recommandée). Après ces migrations, cochez une fois « Reconstruire "
                 "tous les segments ». Écriture dans "
@@ -4420,18 +5091,26 @@ if HAS_QGIS:
                 f"{LOCATE_RADIUS_M:g} m (points géocodés souvent en retrait de la "
                 f"rue ; au-delà de {LOW_CONFIDENCE_DISTANCE_M:g} m le rattachement est "
                 "conservé mais signalé « faible confiance ») ; tronçons de même nom "
-                f"raccordés à {ROAD_JOIN_TOLERANCE_M:g} m près ; deux rues homonymes "
-                "non raccordées ne rendent le point ambigu que si elles sont à "
-                f"distance comparable (écart < {COMPONENT_AMBIGUITY_GAP_M:g} m ou "
-                f"rapport < {COMPONENT_AMBIGUITY_RATIO:g}) ; 2) API Overpass : d'abord la voie "
+                f"raccordés à {ROAD_JOIN_TOLERANCE_M:g} m près ; deux tronçons "
+                "homonymes non raccordés (rue coupée, rond-point, chaussées "
+                "séparées) ne rendent le point ambigu qu'en quasi-égalité (moins "
+                f"de {COMPONENT_TIE_GAP_M:g} m d'écart et rapport < "
+                f"{COMPONENT_TIE_RATIO:g}) — sinon le plus proche l'emporte, en "
+                f"faible confiance si la marge est < {COMPONENT_LOW_CONF_GAP_M:g} m ; "
+                "NOM APPROCHANT accepté en faible confiance (« Linden-Allee » pour "
+                "« Lindenallee », Str./Straße/Strasse, espaces et tirets) jusqu'à "
+                f"{FUZZY_NAME_MAX_DISTANCE_M:g} m si aucune voie d'un autre nom n'est "
+                "nettement plus proche ; adresses « Rue X/Rue X 12 1000 Localité » "
+                "nettoyées avant recherche ; 2) API Overpass : d'abord la voie "
                 "désignée par Nominatim (identifiant OSM, l'axe le plus sûr), puis "
                 "par NOM (lots par rue ET localité : deux "
                 "rues homonymes de villages différents ne se confondent pas ; "
                 "accents, ß/ss, apostrophes et tirets tolérés) ; 3) Overpass par "
-                f"COORDONNÉES : voie carrossable la plus proche à "
-                f"{OSM_COORD_FALLBACK_RADIUS_M:g} m (chemins, pistes et trottoirs "
-                "exclus ; omis si une voie d'un autre nom est aussi proche — "
-                "carrefour), y compris sans nom de rue dans l'adresse ; une rue a le "
+                f"COORDONNÉES : voie portant le nom de référence jusqu'à "
+                f"{COORD_PREFERRED_NAME_RADIUS_M:g} m, sinon voie carrossable la plus "
+                f"proche à {OSM_COORD_FALLBACK_RADIUS_M:g} m (chemins, pistes et "
+                "trottoirs exclus ; omis si une voie d'un autre nom est à moins de "
+                f"{OSM_COORD_AMBIGUITY_M:g} m de plus — carrefour), y compris sans nom de rue dans l'adresse ; une rue a le "
                 "même identifiant quel que soit le chemin. LIMITE : un point mal "
                 "géocodé par Nominatim se rattache à la mauvaise route. CONFIANCE : "
                 "chaque rattachement est noté (distance à l'axe, nom de la voie "
@@ -4457,7 +5136,8 @@ if HAS_QGIS:
                 "de requête est ISOLÉ (les autres continuent, purge suspendue pour "
                 "les seules routes concernées). Journal et progression par "
                 "requête, bilan final ; si aucun point n'est localisé, un "
-                "avertissement en donne la cause ; en fin d'étape, les points non "
+                "avertissement en donne la cause ; recherche des voies indexée par "
+                "bbox et appels SQL par lots ; en fin d'étape, les points non "
                 "localisés sont listés par cause (aucune voie à proximité, nom "
                 "introuvable, voie du même nom trop loin, ambigu) avec 10 exemples.\n"
                 "CONNECTEURS — pour chaque point localisé, une ligne fine en "
@@ -5323,7 +6003,7 @@ if HAS_QGIS:
             ``unavailable_ids`` = points non localisés dont une requête a échoué.
             Jamais d'exception.
             """
-            stats = {"name": 0, "coords": 0, "ambiguous": 0}
+            stats = {"name": 0, "fuzzy": 0, "coords": 0, "ambiguous": 0}
             name_items = [
                 (row["intervention_id"], street, row["x"], row["y"])
                 for row, street in unmatched
@@ -5477,6 +6157,7 @@ if HAS_QGIS:
                  row.get("place") or row.get("postal_code") or "")
                 for row, names in unmatched for name in names
             ])
+            name_requests = merge_overpass_requests(name_requests)
             outcomes = run_overpass_requests(
                 name_requests, fetch_by_name, is_canceled=feedback.isCanceled,
                 pause=pause, report=reporter("noms"), give_up_pause=give_up_pause,
@@ -5492,7 +6173,7 @@ if HAS_QGIS:
             coord_items = [
                 (i, x, y) for i, _street, x, y in name_items if i not in by_name
             ] + coord_only
-            coord_requests = plan_coord_requests(coord_items)
+            coord_requests = merge_overpass_requests(plan_coord_requests(coord_items))
             if coord_requests and not feedback.isCanceled():
                 outcomes = run_overpass_requests(
                     coord_requests, fetch_by_coords, is_canceled=feedback.isCanceled,
@@ -5527,12 +6208,14 @@ if HAS_QGIS:
                 if cause:
                     self._reject_attachment(intervention_id, cause)
                     continue
-                if method in ("name", "osm_id") and \
-                        float(match.get("distance") or 0.0) > LOW_CONFIDENCE_DISTANCE_M:
+                distance = float(match.get("distance") or 0.0)
+                low = match.get("low_confidence") or ""
+                if method in ("name", "osm_id") and distance > LOW_CONFIDENCE_DISTANCE_M:
                     # Voie du même nom à 50–150 m : rattachement assumé, marqué.
-                    self.__dict__.setdefault("_low_conf_attached", {})[
-                        intervention_id] = float(match["distance"])
-                stats["name" if method in ("name", "osm_id") else "coords"] += 1
+                    low = low or f"voie du même nom à {distance:.0f} m"
+                if low:
+                    self.__dict__.setdefault("_low_conf_attached", {})[intervention_id] = low
+                stats[{"osm_id": "name"}.get(method, method)] += 1
                 row = rows_by_id[intervention_id]
                 locations.append(RoadLocation(
                     intervention_id=intervention_id,
@@ -5547,14 +6230,19 @@ if HAS_QGIS:
             # Diagnostic des points restés non localisés (journal de fin).
             unlocated = self.__dict__.setdefault("_unlocated", {})
             all_ways = list(self._osm_ways.values())
+            spatial = WaySpatialIndex(all_ways) if all_ids - set(results) else None
             for intervention_id in sorted(all_ids - set(results)):
                 row = rows_by_id[intervention_id]
                 names = self.__dict__.get("_point_ctx", {}).get(intervention_id, {}).get("names", ())
-                cause, distance = diagnose_unlocated(row["x"], row["y"], names, all_ways)
+                cause, distance = diagnose_unlocated(
+                    row["x"], row["y"], names, all_ways, spatial=spatial
+                )
                 if intervention_id in unavailable_ids:
                     cause = "Overpass indisponible"
                 elif reasons.get(intervention_id) == "ambiguous":
                     cause = "ambigu"
+                elif reasons.get(intervention_id) == "far_axis":
+                    cause = "axe fusionné éloigné"
                 unlocated[intervention_id] = (cause, distance)
             n_total = len(all_outcomes)
             if preferred:
@@ -5579,7 +6267,8 @@ if HAS_QGIS:
             feedback.pushInfo(
                 f"Overpass : {len(name_requests)} requête(s) par nom, "
                 f"{len(coord_requests)} par coordonnées ; {stats['name']} point(s) "
-                f"localisé(s) par nom, {stats['coords']} par coordonnées (rayon "
+                f"localisé(s) par nom, {stats['fuzzy']} par nom approchant, "
+                f"{stats['coords']} par coordonnées (rayon "
                 f"{OSM_COORD_FALLBACK_RADIUS_M:g} m), {len(all_ids) - len(results)} non "
                 f"localisé(s) dont {stats['ambiguous']} ambigu(s) et "
                 f"{len(unavailable_ids)} faute de réponse Overpass."
@@ -5591,9 +6280,12 @@ if HAS_QGIS:
             sur son axe de rue, côté de la route compris.
 
             Source 1 : public.fn_asbuilt_locate_on_road (connexion 'be', table
-            ref.osm_roads) ; côté par sondes (:meth:`_probe_side_in_db`), type de
-            voie lu dans ref.osm_roads.highway (une requête par road_key ;
-            illisible -> décalage par défaut). Source 2, en REPLI pour les points
+            ref.osm_roads) ; côté par sondes (:meth:`_probe_side_in_db`) ; axe ET
+            type de voie via fn_asbuilt_road_geometry, par lots
+            (:meth:`_db_road_geometries`) — fonction absente : localisation en
+            base désactivée pour le run (tout passe par Overpass) ; axe non
+            retenu pour une route : repli Overpass, sinon cordes (compteur).
+            Source 2, en REPLI pour les points
             sans tronçon nommé en base : extraction OSM via Overpass et
             localisation Python (:meth:`_locate_via_overpass`). La répartition par
             source est indiquée au journal.
@@ -5601,7 +6293,7 @@ if HAS_QGIS:
             Retourne (locations, road_extents, had_connection_error, unavailable_ids,
             road_lines) — ``road_lines`` : polyligne de l'axe par road_key quand
             elle est connue (Overpass ; base via fn_asbuilt_road_geometry si la
-            migration est appliquee, cf. :meth:`_db_road_line`). Un point sans nom de
+            migration est appliquee, cf. :meth:`_db_road_geometries`). Un point sans nom de
             rue extractible, ou sans troncon matchant, est omis (pas une erreur — cf.
             spec), compte dans le journal. Si AUCUN point n'a pu etre localise alors
             qu'il y en avait a localiser, un avertissement explicite et actionnable est
@@ -5631,32 +6323,14 @@ if HAS_QGIS:
             # Axes fusionnes connus, par road_key (segments qui suivent l'axe).
             road_lines: dict = {}
             probe_enabled = True
-            highway_by_key: dict[str, str] = {}
-            highway_lookup = {"enabled": True}
-
-            def road_highway(px, py):
-                # Type de voie du troncon de ref.osm_roads le plus proche du point
-                # projete (qui est SUR l'axe). Colonne absente / droit refuse ->
-                # desactive pour le reste du run, decalage par defaut.
-                if not highway_lookup["enabled"]:
-                    return ""
-                sql = (
-                    "SELECT highway FROM ref.osm_roads ORDER BY geom <-> "
-                    f"ST_Transform(ST_SetSRID(ST_MakePoint({px!r}, {py!r}), 31370), "
-                    "Find_SRID('ref', 'osm_roads', 'geom')) LIMIT 1"
-                )
-                try:
-                    result = be_connection.executeSql(sql)
-                except Exception as exc:
-                    highway_lookup["enabled"] = False
-                    feedback.pushInfo(
-                        f"Type de voie non lisible dans ref.osm_roads ({exc}) — "
-                        f"decalage par defaut ({DEFAULT_HIGHWAY_OFFSET_M:g} m) pour "
-                        "les troncons issus de la base."
-                    )
-                    return ""
-                return str(result[0][0] or "") if result else ""
-
+            db_located: list = []  # points localisés en base (avant contrôle d'axe)
+            # --- Phase A : localisation EN BASE par lots (LATERAL sur VALUES) ---
+            # Un aller-retour SQL par lot de SQL_BATCH_SIZE points (au lieu d'un
+            # par point et par nom) ; points regroupés par cellule pour des lots
+            # compacts. Lot en échec -> repli point par point, avec EXACTEMENT
+            # la sémantique d'erreur historique (fatal -> arrêt de la
+            # localisation en base pour les points restants).
+            candidates = []  # (row, names, hit) dans l'ordre d'origine
             for row in rows:
                 if feedback.isCanceled():
                     break
@@ -5673,41 +6347,124 @@ if HAS_QGIS:
                     # repli direct par coordonnees.
                     no_street_rows.append(row)
                     continue
-                result = None
-                street_literal = None
-                try:
-                    for name in names:
-                        street_literal = QgsExpression.quotedValue(name)
-                        result = be_connection.executeSql(
-                            self._locate_sql(row["x"], row["y"], street_literal)
-                        )
-                        if result:
-                            break
-                except Exception as exc:
-                    feedback.reportError(
-                        f"fn_asbuilt_locate_on_road indisponible pour "
-                        f"{row['intervention_id']} : {exc}",
-                        fatalError=False,
-                    )
-                    had_connection_error = True
-                    # Fonction absente / droit refuse / connexion perdue : l'appel
-                    # echouera a l'identique pour tous les points restants — inutile
-                    # de journaliser une erreur par point. Une autre exception
-                    # (propre a CE point) laisse la boucle continuer.
-                    message = str(exc).lower()
-                    if any(marker in message for marker in _LOCATE_FATAL_ERROR_MARKERS):
-                        feedback.pushWarning(
-                            "fn_asbuilt_locate_on_road inutilisable (fonction absente, "
-                            "droit refuse ou connexion perdue) — localisation "
-                            "interrompue pour les points restants."
-                        )
+                candidates.append((row, names, hit))
+
+            batch_enabled = True
+            # Sans fn_asbuilt_road_geometry, les routes de la base n'ont NI axe
+            # NI type de voie (cordes droites, décalage par défaut) : la
+            # localisation en base est alors DÉSACTIVÉE pour ce run et tous les
+            # points passent par Overpass (axe suivi, cache disque).
+            if candidates and not self._road_geometry_available(be_connection, feedback):
+                unmatched.extend((row, names) for row, names, _hit in candidates)
+                candidates = []
+            found = {}      # index candidat -> (ligne resultat, litteral du nom)
+            failed = set()  # candidats en erreur (non localisables en base ce run)
+            fatal = False
+            depth = max((len(c[1]) for c in candidates), default=0)
+            for level in range(depth):
+                if fatal or feedback.isCanceled():
+                    break
+                todo = [
+                    k for k, (row, names, _hit) in enumerate(candidates)
+                    if k not in found and k not in failed and len(names) > level
+                ]
+                todo.sort(key=lambda k: batch_cell_key(
+                    candidates[k][0]["x"], candidates[k][0]["y"]))
+                for start in range(0, len(todo), SQL_BATCH_SIZE):
+                    if fatal or feedback.isCanceled():
                         break
+                    chunk = todo[start:start + SQL_BATCH_SIZE]
+                    items = [
+                        (k, candidates[k][0]["x"], candidates[k][0]["y"],
+                         QgsExpression.quotedValue(candidates[k][1][level]))
+                        for k in chunk
+                    ]
+                    if batch_enabled:
+                        try:
+                            rows_by_tag = first_rows_by_tag(
+                                be_connection.executeSql(
+                                    batch_locate_sql(items, LOCATE_RADIUS_M)
+                                ) or []
+                            )
+                            for k, _x, _y, literal in items:
+                                if k in rows_by_tag:
+                                    found[k] = (rows_by_tag[k], literal)
+                            continue
+                        except Exception:
+                            # Lots indisponibles (ex. LATERAL refusé) : repli point
+                            # par point pour ce lot et les suivants.
+                            batch_enabled = False
+                    for k, x, y, literal in items:
+                        row = candidates[k][0]
+                        try:
+                            result = be_connection.executeSql(
+                                self._locate_sql(x, y, literal)
+                            )
+                        except Exception as exc:
+                            feedback.reportError(
+                                f"fn_asbuilt_locate_on_road indisponible pour "
+                                f"{row['intervention_id']} : {exc}",
+                                fatalError=False,
+                            )
+                            had_connection_error = True
+                            failed.add(k)
+                            # Fonction absente / droit refuse / connexion perdue :
+                            # l'appel echouera a l'identique pour tous les points
+                            # restants — inutile de journaliser une erreur par
+                            # point. Une autre exception (propre a CE point)
+                            # laisse la boucle continuer.
+                            message = str(exc).lower()
+                            if any(marker in message for marker in _LOCATE_FATAL_ERROR_MARKERS):
+                                feedback.pushWarning(
+                                    "fn_asbuilt_locate_on_road inutilisable (fonction "
+                                    "absente, droit refuse ou connexion perdue) — "
+                                    "localisation interrompue pour les points restants."
+                                )
+                                fatal = True
+                                break
+                            continue
+                        if result:
+                            found[k] = (tuple(result[0]), literal)
+
+            # --- Sondes de côté par lots (2 par point localisé) -----------------
+            probe_positions = {}  # (k, 0|1) -> (road_key, position_m)
+            probe_batch_ok = False
+            probe_items = []
+            for k, (result, literal) in found.items():
+                row = candidates[k][0]
+                probes = side_probe_points(row["x"], row["y"], float(result[2]), float(result[3]))
+                if probes is not None:
+                    for j, (qx, qy) in enumerate(probes):
+                        probe_items.append((2 * k + j, qx, qy, literal))
+            if probe_items and not fatal and batch_enabled:
+                try:
+                    for start in range(0, len(probe_items), SQL_BATCH_SIZE):
+                        chunk = probe_items[start:start + SQL_BATCH_SIZE]
+                        rows_by_tag = first_rows_by_tag(
+                            be_connection.executeSql(batch_locate_sql(chunk, LOCATE_RADIUS_M))
+                            or []
+                        )
+                        for tag, *_rest in chunk:
+                            if tag in rows_by_tag:
+                                probe_positions[tag] = (
+                                    rows_by_tag[tag][0], float(rows_by_tag[tag][1]),
+                                )
+                    probe_batch_ok = True
+                except Exception:
+                    probe_positions = {}  # repli : sondes point par point
+
+            # --- Phase B : points localisés en base, dans l'ordre d'origine -----
+            for k, (row, names, hit) in enumerate(candidates):
+                if k in failed:
                     continue
-                if not result:
+                if k not in found:
+                    if fatal:
+                        continue  # jamais interrogé : ni base ni repli ce run
                     unmatched.append((row, names))
                     continue  # aucun troncon nomme dans le rayon : repli Overpass
+                result, street_literal = found[k]
                 (road_key, position_m, px, py,
-                 road_length_m, sx, sy, ex, ey) = result[0]
+                 road_length_m, sx, sy, ex, ey) = result
                 px, py = float(px), float(py)
                 db_distance = math.hypot(row["x"] - px, row["y"] - py)
                 _score, cause = assess_attachment(
@@ -5718,9 +6475,17 @@ if HAS_QGIS:
                     continue
                 if db_distance > LOW_CONFIDENCE_DISTANCE_M:
                     self.__dict__.setdefault("_low_conf_attached", {})[
-                        row["intervention_id"]] = db_distance
+                        row["intervention_id"]] = f"voie du même nom à {db_distance:.0f} m"
                 side = None
-                if probe_enabled:
+                if probe_batch_ok:
+                    if side_probe_points(row["x"], row["y"], px, py) is None:
+                        side = SIDE_RIGHT
+                    else:
+                        plus = probe_positions.get(2 * k)
+                        minus = probe_positions.get(2 * k + 1)
+                        if plus and minus and plus[0] == road_key and minus[0] == road_key:
+                            side = side_from_probe_positions(plus[1], minus[1])
+                elif probe_enabled:
                     try:
                         side = self._probe_side_in_db(
                             be_connection, row, px, py, road_key, street_literal
@@ -5738,28 +6503,44 @@ if HAS_QGIS:
                 if side is None:
                     side = SIDE_RIGHT
                     n_side_default += 1
-                if road_key not in highway_by_key:
-                    highway_by_key[road_key] = road_highway(px, py)
-                locations.append(RoadLocation(
-                    intervention_id=row["intervention_id"],
-                    depth_category=row["depth_category"],
-                    road_key=road_key, position_m=float(position_m),
-                    x=px, y=py, side=side, highway=highway_by_key[road_key],
-                ))
-                if road_key not in road_extents:
-                    line = self._db_road_line(
-                        be_connection, row, street_literal, road_key, road_length_m, feedback
-                    )
-                    if line:
-                        road_lines[road_key] = line
-                road_extents.setdefault(road_key, RoadExtent(
-                    length_m=float(road_length_m),
-                    start_x=float(sx), start_y=float(sy),
-                    end_x=float(ex), end_y=float(ey),
-                ))
+                db_located.append({
+                    "row": row, "names": names, "literal": street_literal,
+                    "road_length_m": road_length_m,
+                    "location": RoadLocation(
+                        intervention_id=row["intervention_id"],
+                        depth_category=row["depth_category"],
+                        road_key=road_key, position_m=float(position_m),
+                        x=px, y=py, side=side, highway="",
+                    ),
+                    "extent": RoadExtent(
+                        length_m=float(road_length_m),
+                        start_x=float(sx), start_y=float(sy),
+                        end_x=float(ex), end_y=float(ey),
+                    ),
+                })
 
-            n_db = len(locations)
-            stats = {"name": 0, "coords": 0, "ambiguous": 0}
+            # --- Phase C : axe + type de voie des routes de la base, par lots ---
+            # Une requête LATERAL sur fn_asbuilt_road_geometry par lot de routes
+            # (un point représentant par road_key). Géométrie retenue seulement
+            # si road_key identique et longueur = road_length_m ; sinon la route
+            # repasse par Overpass (axe suivi), et en dernier recours reste en
+            # cordes droites (compteur).
+            db_fallback = {}  # intervention_id -> entrée db_located (cordes si Overpass échoue)
+            geometries = self._db_road_geometries(be_connection, db_located, feedback)
+            for entry in db_located:
+                loc = entry["location"]
+                found_geometry = geometries.get(loc.road_key) if geometries is not None else None
+                if found_geometry is None:
+                    db_fallback[loc.intervention_id] = entry
+                    unmatched.append((entry["row"], entry["names"]))
+                    continue
+                parts, highway = found_geometry
+                road_lines[loc.road_key] = parts
+                road_extents.setdefault(loc.road_key, entry["extent"])
+                locations.append(dataclasses.replace(loc, highway=highway))
+
+            n_db = sum(1 for loc in locations if not loc.road_key.startswith("overpass"))
+            stats = {"name": 0, "fuzzy": 0, "coords": 0, "ambiguous": 0}
             overpass_status = None
             unavailable_ids: set = set()
             ov_ids: set = set()
@@ -5778,6 +6559,17 @@ if HAS_QGIS:
                 # road_key prefixes "overpass" : aucune collision avec ceux de la base.
                 road_extents.update(ov_extents)
                 ov_ids = {loc.intervention_id for loc in ov_locations}
+            chords = [entry for i, entry in db_fallback.items() if i not in ov_ids]
+            for entry in chords:
+                locations.append(entry["location"])
+                road_extents.setdefault(entry["location"].road_key, entry["extent"])
+            if db_fallback:
+                feedback.pushInfo(
+                    f"Segments : {len(db_fallback)} point(s) localisé(s) en base sans axe "
+                    f"retenu -> repli Overpass ; {len(chords)} resté(s) en cordes droites "
+                    "(axe introuvable)."
+                )
+            ov_ids |= {entry["location"].intervention_id for entry in chords}
             n_no_street = sum(1 for row in no_street_rows if row["intervention_id"] not in ov_ids)
             n_no_match = sum(1 for row, _s in unmatched if row["intervention_id"] not in ov_ids)
             n_unlocated = n_no_street + n_no_match
@@ -5785,6 +6577,7 @@ if HAS_QGIS:
             summary = (
                 f"Segments : {len(locations)} point(s) localise(s) sur {len(rows)} — "
                 f"{n_db} via ref.osm_roads (nom), {stats['name']} via Overpass (nom), "
+                f"{stats['fuzzy']} rattaché(s) par nom approchant, "
                 f"{stats['coords']} via Overpass (coordonnées, rayon "
                 f"{OSM_COORD_FALLBACK_RADIUS_M:g} m), {n_unlocated} non localisé(s) "
                 f"(dont {stats['ambiguous']} ambigu(s), {len(unavailable_ids)} faute de "
@@ -5847,21 +6640,13 @@ if HAS_QGIS:
             self._segments_multi = multi
             return multi
 
-        def _db_road_line(self, be_connection, row, street_literal, road_key,
-                          road_length_m, feedback):
-            """Polyligne de l'axe d'une route de la BASE, ou ``None`` (repli en cordes).
+        def _road_geometry_available(self, be_connection, feedback):
+            """fn_asbuilt_road_geometry existe-t-elle ? (sonde pg_proc memorisee par run).
 
-            Necessite la fonction jumelle ``public.fn_asbuilt_road_geometry``
-            (brouillon migration_road_geom.sql) : meme recherche et meme fusion
-            que fn_asbuilt_locate_on_road, geometrie en plus. Sa presence est
-            sondee UNE fois par run (pg_proc) ; absente ou en echec -> repli en
-            cordes droites avec avertissement unique. La geometrie n'est
-            retenue que si elle correspond a la localisation : meme road_key et
-            longueur = road_length_m (:func:`road_line_matches`).
+            Absente -> message unique : localisation des routes uniquement via
+            Overpass pour ce run (l'appelant desactive la localisation en base).
             """
-            state = getattr(self, "_road_geom_state", None)
-            if state is None:
-                state = self._road_geom_state = {"available": None, "fallback": 0}
+            state = self.__dict__.setdefault("_road_geom_state", {"available": None, "fallback": 0})
             if state["available"] is None:
                 try:
                     probe = be_connection.executeSql(
@@ -5874,35 +6659,56 @@ if HAS_QGIS:
                     state["available"] = False
                 if not state["available"]:
                     feedback.pushWarning(
-                        "Segments : géométrie de l'axe indisponible pour les routes de "
-                        "la base — cordes droites (migration road_geom requise : "
-                        "fonction public.fn_asbuilt_road_geometry). Les routes issues "
-                        "d'Overpass suivent l'axe."
+                        "Segments : fonction fn_asbuilt_road_geometry absente : "
+                        "localisation des routes uniquement via Overpass (axe suivi) — "
+                        "appliquez migration_road_geom.sql pour utiliser aussi "
+                        "ref.osm_roads."
                     )
-            if not state["available"]:
-                return None
+            return state["available"]
+
+        def _db_road_geometries(self, be_connection, db_located, feedback):
+            """Axe + type de voie des routes de la base, PAR LOTS -> dict road_key -> (parties, highway).
+
+            Un point représentant par road_key ; requête LATERAL sur
+            fn_asbuilt_road_geometry (:func:`batch_road_geometry_sql`). Une route
+            n'est présente dans le résultat que si sa géométrie est retenue
+            (:func:`pick_db_road_geometry` : road_key identique, longueur =
+            road_length_m). Lot en échec -> None (toutes les routes de la base
+            repassent par Overpass) avec avertissement.
+            """
+            representatives = {}
+            for entry in db_located:
+                representatives.setdefault(entry["location"].road_key, entry)
+            if not representatives:
+                return {}
+            keys = sorted(representatives)
+            retained = {}
             try:
-                rows = be_connection.executeSql(
-                    "SELECT road_key, ST_AsText(road_geom) FROM "
-                    "public.fn_asbuilt_road_geometry("
-                    f"ST_SetSRID(ST_MakePoint({row['x']!r}, {row['y']!r}), 31370), "
-                    f"{street_literal}, {LOCATE_RADIUS_M!r})"
-                ) or []
+                for start in range(0, len(keys), SQL_BATCH_SIZE):
+                    chunk = keys[start:start + SQL_BATCH_SIZE]
+                    items = [
+                        (n, representatives[key]["row"]["x"], representatives[key]["row"]["y"],
+                         representatives[key]["literal"])
+                        for n, key in enumerate(chunk)
+                    ]
+                    rows_by_tag = first_rows_by_tag(
+                        be_connection.executeSql(batch_road_geometry_sql(items, LOCATE_RADIUS_M))
+                        or []
+                    )
+                    for n, key in enumerate(chunk):
+                        picked = pick_db_road_geometry(
+                            rows_by_tag.get(n), key, representatives[key]["road_length_m"]
+                        )
+                        if picked is not None:
+                            retained[key] = picked
             except Exception as exc:
-                state["available"] = False
+                self._road_geom_state["available"] = False
                 feedback.pushWarning(
-                    f"Segments : fn_asbuilt_road_geometry en échec ({exc}) — cordes "
-                    "droites pour les routes de la base."
+                    f"Segments : fn_asbuilt_road_geometry en échec ({exc}) — routes de la "
+                    "base relocalisées via Overpass."
                 )
                 return None
-            for found_key, wkt in rows:
-                if str(found_key) != str(road_key):
-                    continue
-                parts = parse_wkt_lines(wkt)
-                if parts and road_line_matches(parts, road_length_m):
-                    return parts
-            state["fallback"] += 1
-            return None
+            return retained
 
         def _log_locate_extras(self, feedback):
             """Journal de fin d'etape 2 : rattachements ecartes, alimentation de ref.osm_roads."""
@@ -5910,13 +6716,17 @@ if HAS_QGIS:
             ctx = self.__dict__.get("_point_ctx", {})
             if attached:
                 examples = "; ".join(
-                    f"{i} ({ctx.get(i, {}).get('address', '')}) : {d:.0f} m"
-                    for i, d in sorted(attached.items())[:5]
+                    f"{i} ({ctx.get(i, {}).get('address', '')}) : {why}"
+                    for i, why in sorted(attached.items())[:5]
                 )
+                n_fuzzy = sum(1 for why in attached.values() if why.startswith("nom approchant"))
+                n_lone = sum(1 for why in attached.values() if why.startswith("voie sans nom"))
                 feedback.pushWarning(
                     f"Segments : {len(attached)} rattachement(s) à FAIBLE CONFIANCE "
-                    f"conservé(s) (voie du même nom à plus de "
-                    f"{LOW_CONFIDENCE_DISTANCE_M:g} m) — {examples}"
+                    f"conservé(s), dont {n_fuzzy} rattaché(s) par nom approchant et "
+                    f"{n_lone} rattaché(s) à une voie sans nom "
+                    f"{OSM_COORD_FALLBACK_RADIUS_M:g}–{COORD_FALLBACK_LONE_RADIUS_M:g} m — "
+                    f"{examples}"
                 )
             unlocated = self.__dict__.get("_unlocated", {})
             if unlocated:
@@ -6280,7 +7090,7 @@ if HAS_QGIS:
                 "available": None, "sent": set(), "inserted": 0, "offered": 0, "failed": 0,
             }
             # Sonde « axe des routes de la base » (fn_asbuilt_road_geometry) :
-            # une seule par run, memorisee (cf. _db_road_line).
+            # une seule par run, memorisee (cf. _road_geometry_available).
             self._road_geom_state = {"available": None, "fallback": 0}
             points_layer = self._open_be_points_layer(feedback)
             if points_layer is None:
@@ -6548,6 +7358,41 @@ if HAS_QGIS:
                     "groupe ; les points restent tous en base."
                 )
             fresh = build_segment_halves(locations, road_extents, road_lines)
+            ends = [h for h in fresh if h.point_b_intervention_id in (
+                ROAD_START_SENTINEL, ROAD_END_SENTINEL)]
+            n_stub = sum(1 for h in ends if h.length_m >= ROAD_END_STUB_M - 1e-6)
+            if n_stub:
+                feedback.pushInfo(
+                    f"Segments : {n_stub} bout(s) de rue limité(s) à "
+                    f"{ROAD_END_STUB_M:g} m (aucun point adjacent au-delà)."
+                )
+            if any(
+                c.get("length_m") and c["length_m"] > ROAD_END_STUB_M + 0.01
+                for k, c in existing.items()
+                if k[1] in (ROAD_START_SENTINEL, ROAD_END_SENTINEL)
+            ):
+                feedback.pushWarning(
+                    "Segments : des bouts de rue en base dépassent "
+                    f"{ROAD_END_STUB_M:g} m (règle modifiée) — cochez « Reconstruire "
+                    "tous les segments » une fois."
+                )
+            very_long = sorted(
+                (h.length_m, h.point_a_intervention_id, h.point_b_intervention_id)
+                for h in fresh if h.half == "a" and h.length_m > VERY_LONG_PAIR_M
+                and h.point_b_intervention_id not in (ROAD_START_SENTINEL, ROAD_END_SENTINEL)
+            )
+            if very_long:
+                feedback.pushWarning(
+                    f"Segments : {len(very_long)} paire(s) de points consécutifs à plus de "
+                    f"{VERY_LONG_PAIR_M:g} m (conservées) — "
+                    + "; ".join(f"{a}–{b} : {d:.0f} m" for d, a, b in very_long[:20])
+                )
+            n_simplified = sum(1 for h in fresh if segment_geometry_anomalies(h))
+            if n_simplified:
+                feedback.pushInfo(
+                    f"Segments : {n_simplified} demi-segment(s) simplifié(s) (décalage "
+                    "aberrant : tracé sur l'axe non décalé)."
+                )
             n_chord_roads = len({h.road_key for h in fresh if not h.axis_parts})
             if n_chord_roads:
                 feedback.pushInfo(
@@ -6562,7 +7407,12 @@ if HAS_QGIS:
                     "nulle conservé, dessiné sur l'axe sans décalage."
                 )
 
-            plan = plan_segment_sync(fresh, existing, scope_roads, multi_column=multi_column)
+            # Géométries décalées calculées UNE fois (comparaison, contrôle, écriture).
+            geometries = {segment_key(h): segment_half_geometry(h) for h in fresh}
+            plan = plan_segment_sync(
+                fresh, existing, scope_roads, multi_column=multi_column,
+                geometries=geometries,
+            )
             to_delete = plan.to_delete
             if had_connection_error or partial_read:
                 to_delete = []
@@ -6608,7 +7458,7 @@ if HAS_QGIS:
                 1 for half, _fid in writes
                 if not all(
                     lambert72_plausible(x, y)
-                    for part in segment_half_geometry(half) for x, y in part
+                    for part in geometries[segment_key(half)] for x, y in part
                 )
             )
             n_dropped_parts = 0
@@ -6626,9 +7476,7 @@ if HAS_QGIS:
                 key = segment_key(half)
                 key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
                 is_update = existing_fid is not None
-                parts, dropped = geometry_for_column(
-                    segment_half_geometry(half), multi_column
-                )
+                parts, dropped = geometry_for_column(geometries[key], multi_column)
                 n_dropped_parts += dropped
                 if multi_column:
                     geom = QgsGeometry.fromMultiPolylineXY([

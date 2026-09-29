@@ -84,7 +84,7 @@ def test_nom_d_adresse_different_rattrape_par_les_coordonnees():
     results, reasons, _ = locate_rows_on_osm(
         name_items=[("1", "Malmedyer Str.", 30.0, 5.0)], coord_items=[], ways=[MAIN, MAIN2],
     )
-    assert results["1"][1] == "coords"
+    assert results["1"][1] == "fuzzy"   # « Str. » ~ « Straße » : nom approchant
     assert results["1"][0]["road_key"] == "overpass:malmedyer strasse:10"
 
 
