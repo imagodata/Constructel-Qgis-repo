@@ -173,7 +173,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.rs.auto_configure": "Configure this repository automatically",
         "onboard.rs.note": "<small>This repository contains layer styles, SVG symbols "
                            "and layout templates specific to the Farois FTTH project.<br>"
-                           "Internal server URL: <code>http://192.168.160.31:9081/</code></small>",
+                           "Internal server URL: <code>http://192.168.160.31:9080/</code></small>",
 
         # -- Onboarding: Page 4 - FilterMate Sharing --
         "onboard.fm.title": "FilterMate — Shared favorites",
@@ -443,7 +443,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.rs.auto_configure": "Configurer ce depot automatiquement",
         "onboard.rs.note": "<small>Ce depot contient les styles de couches, les symboles SVG "
                            "et les modeles de mise en page specifiques au projet Farois FTTH.<br>"
-                           "URL du serveur interne: <code>http://192.168.160.31:9081/</code></small>",
+                           "URL du serveur interne: <code>http://192.168.160.31:9080/</code></small>",
 
         # -- Onboarding: Page 4 - Partage FilterMate --
         "onboard.fm.title": "FilterMate — Favoris partages",
@@ -713,7 +713,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "onboard.rs.auto_configure": "Configurar este repositorio automaticamente",
         "onboard.rs.note": "<small>Este repositorio contem os estilos de camadas, simbolos SVG "
                            "e modelos de layout especificos do projeto Farois FTTH.<br>"
-                           "URL do servidor interno: <code>http://192.168.160.31:9081/</code></small>",
+                           "URL do servidor interno: <code>http://192.168.160.31:9080/</code></small>",
 
         # -- Onboarding: Page 4 - Partilha FilterMate --
         "onboard.fm.title": "FilterMate — Favoritos partilhados",

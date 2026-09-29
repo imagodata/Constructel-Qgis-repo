@@ -78,15 +78,15 @@ RECOMMENDED_PLUGINS = [
 
 RESOURCE_SHARING_REPO_NAME = "Constructel"
 RESOURCE_SHARING_REPO_URL = os.environ.get(
-    "CONSTRUCTEL_RESOURCE_REPO_URL", "http://192.168.160.31:9081/"
+    "CONSTRUCTEL_RESOURCE_REPO_URL", "http://192.168.160.31:9080/"
 )
 
-# FilterMate favorites_sharing — Constructel git smart-HTTP server on port 9082.
+# FilterMate favorites_sharing — Constructel git smart-HTTP server, exposed on port 9080 under /git/ (9081/9082 are filtered by the network firewall).
 # The bare repo at server root holds the resource-repo tree; collection layout:
 #   collections/<target_collection>/filter_mate/favorites/*.fmfav-pack.json
 FILTERMATE_REPO_NAME = "Constructel"
 FILTERMATE_REPO_GIT_URL = os.environ.get(
-    "CONSTRUCTEL_FILTERMATE_GIT_URL", "http://192.168.160.31:9082/"
+    "CONSTRUCTEL_FILTERMATE_GIT_URL", "http://192.168.160.31:9080/git/"
 )
 FILTERMATE_REPO_BRANCH = os.environ.get("CONSTRUCTEL_FILTERMATE_BRANCH", "master")
 FILTERMATE_TARGET_COLLECTION = os.environ.get(
