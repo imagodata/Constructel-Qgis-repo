@@ -5087,7 +5087,7 @@ if HAS_QGIS:
                 "un projet qui les contient déjà n'est pas modifié). Un échec "
                 "partiel en cours de route (une étape, Overpass, un style) est "
                 "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
-                "ADRESSES DÉJÀ EN BASE — par défaut (case « Recalculer » décochée), "
+                "ADRESSES DÉJÀ EN BASE — par défaut (case avancée « Recalculer » décochée), "
                 "une intervention déjà présente avec un point géocodé dans "
                 "public.geofiber_asbuilt_depth_points (même intervention, ou même "
                 "WorkOrder avec la même adresse) n'est NI géocodée (Nominatim), NI "
@@ -5262,19 +5262,19 @@ if HAS_QGIS:
                     optional=True,
                 )
             )
-            # Par defaut (decoche) : une adresse deja geocodee en base 'be' n'est
+            # Parametre AVANCE. Par defaut (decoche) : une adresse deja geocodee en base 'be' n'est
             # NI re-geocodee, NI re-localisee (ref.osm_roads / Overpass), NI
             # reecrite. Coche : tout est recalcule comme avant.
-            self.addParameter(
-                QgsProcessingParameterBoolean(
-                    self.RECOMPUTE_EXISTING,
-                    self.tr(
-                        "Recalculer aussi les adresses déjà géocodées en base "
-                        "(géocodage, routes OSM/Overpass, segments)"
-                    ),
-                    defaultValue=False,
-                )
+            recompute = QgsProcessingParameterBoolean(
+                self.RECOMPUTE_EXISTING,
+                self.tr(
+                    "Recalculer aussi les adresses déjà géocodées en base "
+                    "(géocodage, routes OSM/Overpass, segments)"
+                ),
+                defaultValue=False,
             )
+            recompute.setFlags(recompute.flags() | _ADVANCED_PARAMETER_FLAG)
+            self.addParameter(recompute)
             # Parametre AVANCE : force la reconstruction de TOUS les segments
             # (ancien comportement) — a cocher apres un changement de regle
             # (seuils, decalages, cotes, ref.osm_roads) que le mode incremental,
