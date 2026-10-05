@@ -128,3 +128,13 @@ def fixed_authcfg_id_for_user(
     if wyre_user and user == wyre_user:
         return wyre_authcfg_id
     return ""
+
+
+def stale_config_ids(configs: dict, name: str, fixed_id: str) -> list:
+    """Ids of Auth Manager configs called *name* whose id is NOT *fixed_id*.
+
+    ``configs`` maps config id -> config name. Only configs carrying the
+    plugin's own name are considered: foreign configs are never listed.
+    Sorted for a deterministic cleanup order.
+    """
+    return sorted(cid for cid, cname in configs.items() if cname == name and cid != fixed_id)

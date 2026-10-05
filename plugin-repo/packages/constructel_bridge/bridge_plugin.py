@@ -336,6 +336,60 @@ def _fixed_authcfg_for_user(user: str) -> str:
         return ""
 
 
+def _check_fixed_authcfgs() -> str:
+    """Controle au demarrage : les configs Auth Manager du plugin portent l'id FIXE.
+
+    Pour wyre et be (be seulement si activee) :
+      * si l'id fixe est absent mais qu'une ancienne config du plugin existe
+        (id aleatoire), son mot de passe est repris dans une config a id
+        fixe ;
+      * les anciennes configs du plugin (meme nom, autre id) ne sont
+        supprimees QU'APRES presence de l'id fixe -- jamais de perte de
+        mot de passe.
+    Ne provoque pas de dialogue de mot de passe maitre quand `be` est
+    desactivee. Retourne un resume pour le journal ; ne leve jamais.
+    """
+    from .bridge_identity import stale_config_ids
+
+    try:
+        auth_mgr = QgsApplication.authManager()
+        if auth_mgr.isDisabled():
+            return "Auth check: Auth Manager desactive"
+        if not BE_ENABLED and not auth_mgr.masterPasswordIsSet():
+            return "Auth check: mot de passe maitre non defini, controle reporte"
+        if not _ensure_auth_manager_ready():
+            return "Auth check: Auth Manager indisponible"
+        parts = []
+        for conn in ("wyre", "be"):
+            if conn == "be" and not BE_ENABLED:
+                continue
+            fixed_id = _FIXED_AUTH_CFG_IDS[conn]
+            name = _AUTH_CFG_NAMES[conn]
+            configs = {
+                cid: cfg.name()
+                for cid, cfg in auth_mgr.availableAuthMethodConfigs().items()
+            }
+            stale = stale_config_ids(configs, name, fixed_id)
+            if fixed_id not in auth_mgr.configIds() and stale:
+                old = QgsAuthMethodConfig()
+                auth_mgr.loadAuthenticationConfig(stale[0], old, True)
+                old_pw = old.config("password", "")
+                if old_pw:
+                    _store_password_encrypted(old_pw, conn)
+            removed = 0
+            if fixed_id in auth_mgr.configIds():
+                for cid in stale:
+                    if auth_mgr.removeAuthenticationConfig(cid):
+                        removed += 1
+                QgsSettings().setValue(_AUTH_CFG_ID_KEYS[conn], fixed_id)
+                parts.append(f"{conn} ok ({fixed_id})" + (f", {removed} ancienne(s) supprimee(s)" if removed else ""))
+            else:
+                parts.append(f"{conn} id fixe {fixed_id} absent (cree a la connexion)")
+        return "Auth check: " + " | ".join(parts)
+    except Exception as exc:
+        return f"Auth check en echec: {exc}"
+
+
 def _ensure_auth_manager_ready() -> bool:
     """Ensure the Auth Manager is initialized and master password is set.
 
@@ -759,6 +813,11 @@ class ConstructelBridgePlugin:
         #
         # `be` n'a toujours pas besoin du flux _connect complet (psycopg2,
         # ref.users, onboarding) : c'est une connexion de consultation.
+        # Controle des configs Auth Manager (ids fixes wyre/be) AVANT la
+        # configuration de `be` : nettoie les anciennes configs a id
+        # aleatoire en reprenant leur mot de passe.
+        self._log(_check_fixed_authcfgs())
+
         if BE_ENABLED:
             try:
                 self._setup_qgis_pg_connection(_BE_PW, use_authcfg=True, conn="be")

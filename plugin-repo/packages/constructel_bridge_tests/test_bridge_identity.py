@@ -13,6 +13,7 @@ from constructel_bridge.bridge_identity import (
     parse_credentials_json,
     resolve_credentials_for_realm,
     resolve_username,
+    stale_config_ids,
 )
 
 
@@ -199,3 +200,21 @@ def test_fixed_authcfg_be_desactivee_ne_retourne_rien():
 def test_fixed_authcfg_utilisateur_inconnu():
     assert fixed_authcfg_id_for_user("alice", be_enabled=True, **_FIXED) == ""
     assert fixed_authcfg_id_for_user("", be_enabled=True, **_FIXED) == ""
+
+
+# --- stale_config_ids -------------------------------------------------
+
+def test_stale_config_ids_liste_les_autres_ids_du_meme_nom():
+    cfgs = {"9i19s56": "constructel_bridge_pw", "abc1234": "constructel_bridge_pw",
+            "zzz9999": "constructel_bridge_pw"}
+    assert stale_config_ids(cfgs, "constructel_bridge_pw", "9i19s56") == ["abc1234", "zzz9999"]
+
+
+def test_stale_config_ids_ignore_les_configs_etrangeres():
+    cfgs = {"x1": "ma_config_perso", "07254s7": "constructel_bridge_be_pw",
+            "y2": "constructel_bridge_mtls"}
+    assert stale_config_ids(cfgs, "constructel_bridge_be_pw", "07254s7") == []
+
+
+def test_stale_config_ids_vide():
+    assert stale_config_ids({}, "constructel_bridge_pw", "9i19s56") == []
