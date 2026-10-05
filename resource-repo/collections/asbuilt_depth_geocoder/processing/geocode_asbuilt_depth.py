@@ -4418,6 +4418,56 @@ def same_postgres_table(a, b) -> bool:
     return bool(na["database"]) and na["database"] == nb["database"]
 
 
+def address_key(address: Optional[str], postal_code: Optional[str] = None) -> str:
+    """Clé de comparaison d'une adresse : casse et espaces neutralisés.
+
+    ``"Rue de la Gare  12"`` et ``"rue de la gare 12"`` donnent la même clé ;
+    le code postal normalisé (4 chiffres) est ajouté s'il est connu. Fonction
+    PURE. Chaîne vide si l'adresse est vide.
+    """
+    text = re.sub(r"\s+", " ", (address or "").strip()).casefold()
+    if not text:
+        return ""
+    postal4 = extract_postal4(postal_code) or ""
+    return f"{text}|{postal4}"
+
+
+def build_known_keys(rows) -> tuple:
+    """Index des points déjà présents en base 'be'.
+
+    ``rows`` : itérable de ``(intervention_id, work_order, address_raw,
+    postal_code)`` (lignes de ``geofiber_asbuilt_depth_points`` ayant une
+    géométrie). Retourne ``(interventions, work_order_addresses)`` : l'ensemble
+    des ``intervention_id`` et l'ensemble des couples ``(work_order,
+    address_key)``. Fonction PURE.
+    """
+    interventions: set = set()
+    work_order_addresses: set = set()
+    for intervention_id, work_order, address_raw, postal_code in rows:
+        if intervention_id not in (None, ""):
+            interventions.add(str(intervention_id))
+        key = address_key(address_raw, postal_code)
+        if work_order and key:
+            work_order_addresses.add((str(work_order).strip(), key))
+    return interventions, work_order_addresses
+
+
+def is_already_present(rec, interventions, work_order_addresses) -> bool:
+    """Vrai si ``rec`` est déjà géocodé en base : même intervention, OU même
+    work order avec la même adresse (on ne géocode ni ne recrée de segment).
+
+    Un même work order peut couvrir plusieurs adresses : une adresse nouvelle
+    sous un work order connu reste à traiter. Fonction PURE.
+    """
+    if rec.intervention in interventions:
+        return True
+    key = address_key(rec.address, rec.postal_code)
+    return bool(
+        rec.work_order and key
+        and (rec.work_order.strip(), key) in work_order_addresses
+    )
+
+
 # ===========================================================================
 # Wrapper QGIS Processing — fin, orchestration uniquement
 # ===========================================================================
@@ -5275,7 +5325,16 @@ if HAS_QGIS:
             # WGS84 (Nominatim) -> Lambert belge 72, contexte de transformation
             # du projet (datums), quel que soit le SCR du projet.
             to_lambert, _ = lambert_transforms(context.transformContext())
-            n_ok = n_nf = 0
+            n_ok = n_nf = n_skip_be = 0
+            # Points déjà en base 'be' (même intervention, ou même work order +
+            # même adresse) : ni géocodage Nominatim, ni upsert, donc aucun
+            # point « modifié » et aucun segment recalculé pour eux.
+            be_known_ids, be_known_wo_addr = (
+                self._load_known_from_be(feedback) if deduped else (set(), set())
+            )
+            feedback.pushInfo(
+                f"{len(be_known_ids)} interventions déjà géocodées en base 'be'."
+            )
             out_of_range: list[str] = []  # contrôle de vraisemblance Lambert 72
             divergent: list[str] = []     # contrôle croisé QGIS / Python pur
             total = max(len(deduped), 1)
@@ -5293,6 +5352,14 @@ if HAS_QGIS:
             for i, rec in enumerate(deduped):
                 if feedback.isCanceled():
                     break
+                if is_already_present(rec, be_known_ids, be_known_wo_addr):
+                    n_skip_be += 1
+                    feedback.pushInfo(
+                        f"Déjà en base 'be' (work order {rec.work_order}, "
+                        f"intervention {rec.intervention}) : ni géocodage ni segment."
+                    )
+                    feedback.setProgress(int(100 * (i + 1) / total))
+                    continue
                 try:
                     hit, query, used_fallback = geocode_with_dedup_fallback(
                         rec.address,
@@ -5351,7 +5418,8 @@ if HAS_QGIS:
                 _rate_limit_pause()  # politique Nominatim : 1 req/s
 
             feedback.pushInfo(
-                f"{n_ok} interventions géocodées, {n_nf} échecs."
+                f"{n_ok} interventions géocodées, {n_nf} échecs, "
+                f"{n_skip_be} déjà en base 'be' ignorées."
             )
             if postal_mismatches:
                 feedback.pushWarning(
@@ -5765,6 +5833,29 @@ if HAS_QGIS:
                     f"dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} retirée(s) de "
                     f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
                 )
+
+        def _load_known_from_be(self, feedback):
+            """Lit en base 'be' les points déjà géocodés (intervention + work order/adresse).
+
+            Retourne ``(interventions, work_order_addresses)`` (cf.
+            build_known_keys). Best-effort : lecture impossible -> ensembles
+            vides (avertissement), tout est alors géocodé comme avant.
+            """
+            be_connection = self._be_connection()
+            if be_connection is None:
+                return set(), set()
+            try:
+                rows = be_connection.executeSql(
+                    "SELECT intervention_id, work_order, address_raw, postal_code "
+                    f"FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} WHERE geom IS NOT NULL"
+                ) or []
+            except Exception as exc:
+                feedback.pushWarning(
+                    f"Lecture des points déjà présents en base 'be' impossible "
+                    f"({exc}) — tout sera géocodé."
+                )
+                return set(), set()
+            return build_known_keys(rows)
 
         def _existing_point_ids(self, intervention_ids, feedback):
             """intervention_id parmi ``intervention_ids`` ayant deja un point en base.
