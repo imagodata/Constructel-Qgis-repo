@@ -46,3 +46,14 @@ def test_meme_adresse_autre_work_order_reste_a_traiter():
 def test_base_vide_rien_de_present():
     ids, wo = build_known_keys([])
     assert not is_already_present(_rec("1", "WO-1", "Rue X 1"), ids, wo)
+
+
+def test_dirty_ids_sans_recalcul_seuls_les_points_modifies_du_run():
+    from geocode_asbuilt_depth import initial_dirty_ids
+    assert initial_dirty_ids({"9"}, {"1", "2", "9"}, {"1", "2", "9"}, {"9"}, False) == {"9"}
+
+
+def test_dirty_ids_avec_recalcul_retente_les_points_non_couverts():
+    from geocode_asbuilt_depth import initial_dirty_ids
+    assert initial_dirty_ids(set(), {"1", "2"}, {"1", "2"}, {"1"}, True) == {"2"}
+    assert initial_dirty_ids(set(), {"1", "2"}, {"1", "2"}, {"1"}) == {"2"}

@@ -2507,7 +2507,8 @@ def inconsistent_roads(existing) -> set:
     return bad
 
 
-def initial_dirty_ids(changed_ids, eligible_ids, locatable_ids, covered_ids) -> set:
+def initial_dirty_ids(changed_ids, eligible_ids, locatable_ids, covered_ids,
+                      recompute_existing=True) -> set:
     """Points « sales » de départ du mode incrémental. Fonction PURE.
 
     * ``changed_ids`` — nouveaux/modifiés par l'upsert de CE run (catégorie,
@@ -2517,7 +2518,13 @@ def initial_dirty_ids(changed_ids, eligible_ids, locatable_ids, covered_ids) -> 
       jamais localisés, ou segments perdus (retentés à chaque run) ;
     * ``covered_ids - eligible_ids`` — points cités par des segments mais
       désormais gris ou supprimés de la table : leurs routes sont à refaire.
+
+    ``recompute_existing=False`` (point déjà géocodé = rien à refaire) : seuls
+    les ``changed_ids`` de CE run sont sales, aucune relocalisation (donc ni
+    ``ref.osm_roads`` ni Overpass) n'est relancée pour les points existants.
     """
+    if not recompute_existing:
+        return set(changed_ids)
     return (
         set(changed_ids)
         | (set(locatable_ids) - set(covered_ids))
@@ -5016,6 +5023,7 @@ if HAS_QGIS:
         INPUT_FOLDER = "INPUT_FOLDER"
         CONTACT_EMAIL = "CONTACT_EMAIL"
         FULL_REBUILD = "FULL_REBUILD"
+        RECOMPUTE_EXISTING = "RECOMPUTE_EXISTING"
 
         # -- métadonnées --------------------------------------------------
         def name(self):
@@ -5079,6 +5087,14 @@ if HAS_QGIS:
                 "un projet qui les contient déjà n'est pas modifié). Un échec "
                 "partiel en cours de route (une étape, Overpass, un style) est "
                 "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
+                "ADRESSES DÉJÀ EN BASE — par défaut (case « Recalculer » décochée), "
+                "une intervention déjà présente avec un point géocodé dans "
+                "public.geofiber_asbuilt_depth_points (même intervention, ou même "
+                "WorkOrder avec la même adresse) n'est NI géocodée (Nominatim), NI "
+                "réécrite, NI relocalisée (ref.osm_roads, Overpass) : seules les "
+                "nouvelles adresses déclenchent des requêtes et des segments. "
+                "Cochez la case pour tout recalculer (géocodage, routes OSM, "
+                "segments) comme avant.\n\n"
                 "SEGMENTS D'AXE DE RUE — recalcul INCRÉMENTAL : seules les routes "
                 "impactées (points nouveaux ou modifiés par ce run, points jamais "
                 "localisés, points devenus gris ou supprimés, et les autres points "
@@ -5246,6 +5262,19 @@ if HAS_QGIS:
                     optional=True,
                 )
             )
+            # Par defaut (decoche) : une adresse deja geocodee en base 'be' n'est
+            # NI re-geocodee, NI re-localisee (ref.osm_roads / Overpass), NI
+            # reecrite. Coche : tout est recalcule comme avant.
+            self.addParameter(
+                QgsProcessingParameterBoolean(
+                    self.RECOMPUTE_EXISTING,
+                    self.tr(
+                        "Recalculer aussi les adresses déjà géocodées en base "
+                        "(géocodage, routes OSM/Overpass, segments)"
+                    ),
+                    defaultValue=False,
+                )
+            )
             # Parametre AVANCE : force la reconstruction de TOUS les segments
             # (ancien comportement) — a cocher apres un changement de regle
             # (seuils, decalages, cotes, ref.osm_roads) que le mode incremental,
@@ -5264,6 +5293,9 @@ if HAS_QGIS:
             contact_email = self.parameterAsString(parameters, self.CONTACT_EMAIL, context)
             user_agent = build_user_agent(contact_email)
             full_rebuild = self.parameterAsBoolean(parameters, self.FULL_REBUILD, context)
+            recompute_existing = self.parameterAsBoolean(
+                parameters, self.RECOMPUTE_EXISTING, context
+            )
             self._segments_multi = None  # sonde du type de colonne, une fois par run
             self._connectors_available = None  # sonde de la table connecteurs
             # Metadonnees Nominatim/OSM des points geocodes A CE RUN (en memoire
@@ -5329,12 +5361,18 @@ if HAS_QGIS:
             # Points déjà en base 'be' (même intervention, ou même work order +
             # même adresse) : ni géocodage Nominatim, ni upsert, donc aucun
             # point « modifié » et aucun segment recalculé pour eux.
-            be_known_ids, be_known_wo_addr = (
-                self._load_known_from_be(feedback) if deduped else (set(), set())
-            )
-            feedback.pushInfo(
-                f"{len(be_known_ids)} interventions déjà géocodées en base 'be'."
-            )
+            if deduped and not recompute_existing:
+                be_known_ids, be_known_wo_addr = self._load_known_from_be(feedback)
+                feedback.pushInfo(
+                    f"{len(be_known_ids)} interventions déjà géocodées en base 'be' "
+                    "(ignorées : option « Recalculer » décochée)."
+                )
+            else:
+                be_known_ids, be_known_wo_addr = set(), set()
+                if recompute_existing:
+                    feedback.pushInfo(
+                        "Option « Recalculer » cochée : tout est géocodé et recalculé."
+                    )
             out_of_range: list[str] = []  # contrôle de vraisemblance Lambert 72
             divergent: list[str] = []     # contrôle croisé QGIS / Python pur
             total = max(len(deduped), 1)
@@ -5515,7 +5553,8 @@ if HAS_QGIS:
                 )
                 try:
                     self._sync_segments(
-                        feedback, user_agent, changed_ids, full_rebuild
+                        feedback, user_agent, changed_ids, full_rebuild,
+                        recompute_existing,
                     )
                     self._log_locate_extras(feedback)
                 except Exception as exc:
@@ -7112,7 +7151,8 @@ if HAS_QGIS:
                 new_lines,
             )
 
-        def _sync_segments(self, feedback, user_agent, changed_ids=None, full_rebuild=False):
+        def _sync_segments(self, feedback, user_agent, changed_ids=None, full_rebuild=False,
+                           recompute_existing=True):
             """Regenere les segments d'axe de rue — INCREMENTAL par defaut.
 
             Relit TOUT public.geofiber_asbuilt_depth_points et TOUTE la table des
@@ -7364,15 +7404,16 @@ if HAS_QGIS:
                 ])
                 covered_with_groups = with_companions(covered_ids, companions)
                 dirty_ids = initial_dirty_ids(
-                    changed_ids, set(rows_by_id), locatable_ids, covered_with_groups
+                    changed_ids, set(rows_by_id), locatable_ids, covered_with_groups,
+                    recompute_existing,
                 )
-                if connectors is not None:
+                if connectors is not None and recompute_existing:
                     # Points couverts par des segments mais sans connecteur (table
                     # creee apres coup, ecriture en echec) : a relocaliser.
                     dirty_ids |= (covered_with_groups & set(rows_by_id)) - set(connectors[1])
                 # Routes laissees incoherentes par un run precedent dont la
                 # purge a ete suspendue (garde-fous) : a refaire elles aussi.
-                stale_roads = inconsistent_roads(existing)
+                stale_roads = inconsistent_roads(existing) if recompute_existing else set()
                 for road_key in stale_roads:
                     dirty_ids |= road_ids.get(road_key, set())
                 if stale_roads:
