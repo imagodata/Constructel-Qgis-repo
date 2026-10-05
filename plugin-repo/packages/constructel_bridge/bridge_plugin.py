@@ -67,6 +67,15 @@ _AUTH_CFG_NAMES = {
     "be": AUTH_CFG_NAME_BE,
 }
 
+# Identifiants Auth Manager FIXES, identiques sur tous les postes : un projet
+# enregistre avec authcfg=<id> s'ouvre partout ou le plugin a cree cette
+# config, sans mot de passe en clair dans le .qgz. Ce sont les ids deja
+# utilises par les projets existants (poste de reference).
+_FIXED_AUTH_CFG_IDS = {
+    "wyre": "9i19s56",
+    "be": "07254s7",
+}
+
 # ---------------------------------------------------------------------------
 # Credentials — loaded from credentials.json next to this file
 # ---------------------------------------------------------------------------
@@ -302,6 +311,31 @@ def _precache_pg_credentials():
         creds.put(realm, BE_USER, _BE_PW)
 
 
+def _fixed_authcfg_for_user(user: str) -> str:
+    """Id d'authcfg FIXE de *user*, si cette config existe dans l'Auth Manager local.
+
+    Retourne "" si l'utilisateur n'a pas d'id fixe, ou si la config n'existe
+    pas (encore) sur ce poste : l'appelant retombe alors sur son comportement
+    historique (identifiants en clair).
+    """
+    from .bridge_identity import fixed_authcfg_id_for_user
+
+    cfg_id = fixed_authcfg_id_for_user(
+        user,
+        wyre_user=DEFAULT_USER,
+        wyre_authcfg_id=_FIXED_AUTH_CFG_IDS["wyre"],
+        be_enabled=BE_ENABLED,
+        be_user=BE_USER,
+        be_authcfg_id=_FIXED_AUTH_CFG_IDS["be"],
+    )
+    if not cfg_id:
+        return ""
+    try:
+        return cfg_id if cfg_id in QgsApplication.authManager().configIds() else ""
+    except Exception:
+        return ""
+
+
 def _ensure_auth_manager_ready() -> bool:
     """Ensure the Auth Manager is initialized and master password is set.
 
@@ -334,17 +368,28 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
         return False
     auth_mgr = QgsApplication.authManager()
     settings_key = _AUTH_CFG_ID_KEYS[conn]
-    # Look for an existing config with our name
-    cfg_id = QgsSettings().value(settings_key, "")
+    # ID FIXE (identique sur tous les postes) : on vise TOUJOURS cette
+    # config. L'ancienne config a id aleatoire d'un poste deja installe
+    # n'est pas supprimee (orpheline, inoffensive).
+    fixed_id = _FIXED_AUTH_CFG_IDS.get(conn, "")
+    if fixed_id:
+        cfg_id = fixed_id
+    else:
+        cfg_id = QgsSettings().value(settings_key, "")
     if cfg_id and cfg_id in auth_mgr.configIds():
         # Update existing config
         config = QgsAuthMethodConfig()
         auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
+        config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
         config.setConfig("password", password)
         ok = auth_mgr.updateAuthenticationConfig(config)
+        if ok:
+            QgsSettings().setValue(settings_key, cfg_id)
     else:
         # Create new config
         config = QgsAuthMethodConfig("Basic")
+        if fixed_id:
+            config.setId(fixed_id)
         config.setName(_AUTH_CFG_NAMES[conn])
         config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
         config.setConfig("password", password)
@@ -371,7 +416,11 @@ def _retrieve_password_encrypted(conn: str = "wyre") -> str:
     if not _ensure_auth_manager_ready():
         return ""
     auth_mgr = QgsApplication.authManager()
-    cfg_id = QgsSettings().value(_AUTH_CFG_ID_KEYS[conn], "")
+    fixed_id = _FIXED_AUTH_CFG_IDS.get(conn, "")
+    if fixed_id and fixed_id in auth_mgr.configIds():
+        cfg_id = fixed_id
+    else:
+        cfg_id = QgsSettings().value(_AUTH_CFG_ID_KEYS[conn], "")
     if not cfg_id or cfg_id not in auth_mgr.configIds():
         # Fallback: check legacy plaintext storage and migrate.
         # RESERVE a `wyre` : la cle historique constructel_bridge/password
@@ -395,6 +444,9 @@ def _remove_stored_password(conn: str = "wyre"):
     cfg_id = QgsSettings().value(settings_key, "")
     if cfg_id and cfg_id in auth_mgr.configIds():
         auth_mgr.removeAuthenticationConfig(cfg_id)
+    fixed_id = _FIXED_AUTH_CFG_IDS.get(conn, "")
+    if fixed_id and fixed_id != cfg_id and fixed_id in auth_mgr.configIds():
+        auth_mgr.removeAuthenticationConfig(fixed_id)
     QgsSettings().remove(settings_key)
     QgsSettings().remove("constructel_bridge/password")
 
@@ -887,7 +939,13 @@ class ConstructelBridgePlugin:
             ds = re.sub(r"\bauthcfg=\w+", "", ds)
             ds = re.sub(r"\buser='[^']*'", "", ds)
             ds = re.sub(r"\bpassword='[^']*'", "", ds)
-            ds += f" user='{target_user}' password='{target_password}'"
+            fixed_cfg = _fixed_authcfg_for_user(target_user)
+            if fixed_cfg:
+                # ID FIXE identique sur tous les postes : projet portable,
+                # sans mot de passe en clair.
+                ds += f" user='{target_user}' authcfg={fixed_cfg}"
+            else:
+                ds += f" user='{target_user}' password='{target_password}'"
             ds = re.sub(r"\s{2,}", " ", ds).strip()
             # Remplacer le contenu du noeud
             while ds_node.hasChildNodes():
@@ -1314,14 +1372,25 @@ class ConstructelBridgePlugin:
                 else:
                     needs_fix = False
             else:
-                needs_fix = bool(old_authcfg) or current_user not in known_identities
-                if needs_fix:
-                    target_user, target_password = known_identities.get(
-                        current_user, (DEFAULT_USER, password)
-                    )
-                    uri.setAuthConfigId("")
-                    uri.setUsername(target_user)
-                    uri.setPassword(target_password)
+                fixed_cfg = _fixed_authcfg_for_user(current_user)
+                if fixed_cfg:
+                    # Identite connue avec authcfg a ID FIXE present sur ce
+                    # poste : on y rattache la couche, sans mot de passe en
+                    # clair dans la datasource.
+                    needs_fix = old_authcfg != fixed_cfg or bool(uri.password())
+                    if needs_fix:
+                        uri.setAuthConfigId(fixed_cfg)
+                        uri.setUsername(current_user)
+                        uri.setPassword("")
+                else:
+                    needs_fix = bool(old_authcfg) or current_user not in known_identities
+                    if needs_fix:
+                        target_user, target_password = known_identities.get(
+                            current_user, (DEFAULT_USER, password)
+                        )
+                        uri.setAuthConfigId("")
+                        uri.setUsername(target_user)
+                        uri.setPassword(target_password)
 
             if needs_fix or not layer.isValid():
                 options = QgsDataProvider.ProviderOptions()

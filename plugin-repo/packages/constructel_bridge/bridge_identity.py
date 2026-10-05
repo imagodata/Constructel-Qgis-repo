@@ -105,3 +105,26 @@ def build_set_config_sql(username: str) -> tuple[str, str]:
     set_config_sql = f"SELECT set_config('app.current_user', '{safe_user}', true)"
     application_name_sql = f"SET application_name = 'constructel_bridge:{safe_user}'"
     return set_config_sql, application_name_sql
+
+
+def fixed_authcfg_id_for_user(
+    user: str,
+    *,
+    wyre_user: str,
+    wyre_authcfg_id: str,
+    be_enabled: bool,
+    be_user: str,
+    be_authcfg_id: str,
+) -> str:
+    """Return the FIXED Auth Manager config id attached to a PG user.
+
+    The id is identical on every workstation, so a project saved with
+    ``authcfg=<id>`` opens anywhere the plugin created that config (no
+    plaintext password stored in the .qgz). `be` is only recognised when
+    enabled. Returns "" for any other user.
+    """
+    if be_enabled and be_user and user == be_user:
+        return be_authcfg_id
+    if wyre_user and user == wyre_user:
+        return wyre_authcfg_id
+    return ""

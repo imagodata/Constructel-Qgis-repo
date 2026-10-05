@@ -9,6 +9,7 @@ from constructel_bridge.bridge_identity import (
     build_set_config_sql,
     decode_password,
     derive_email,
+    fixed_authcfg_id_for_user,
     parse_credentials_json,
     resolve_credentials_for_realm,
     resolve_username,
@@ -173,3 +174,28 @@ def test_build_set_config_sql_escapes_single_quote():
     set_config_sql, app_name_sql = build_set_config_sql("o'brien")
     assert set_config_sql == "SELECT set_config('app.current_user', 'o''brien', true)"
     assert app_name_sql == "SET application_name = 'constructel_bridge:o''brien'"
+
+
+# --- fixed_authcfg_id_for_user ----------------------------------------
+
+_FIXED = dict(
+    wyre_user="ftth_editor", wyre_authcfg_id="9i19s56",
+    be_user="bureau_etudes", be_authcfg_id="07254s7",
+)
+
+
+def test_fixed_authcfg_wyre():
+    assert fixed_authcfg_id_for_user("ftth_editor", be_enabled=True, **_FIXED) == "9i19s56"
+
+
+def test_fixed_authcfg_be_si_active():
+    assert fixed_authcfg_id_for_user("bureau_etudes", be_enabled=True, **_FIXED) == "07254s7"
+
+
+def test_fixed_authcfg_be_desactivee_ne_retourne_rien():
+    assert fixed_authcfg_id_for_user("bureau_etudes", be_enabled=False, **_FIXED) == ""
+
+
+def test_fixed_authcfg_utilisateur_inconnu():
+    assert fixed_authcfg_id_for_user("alice", be_enabled=True, **_FIXED) == ""
+    assert fixed_authcfg_id_for_user("", be_enabled=True, **_FIXED) == ""
