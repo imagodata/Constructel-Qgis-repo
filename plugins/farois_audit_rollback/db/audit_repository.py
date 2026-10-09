@@ -58,14 +58,25 @@ class AuditRepository:
                 """
                 SELECT to_regclass('audit.v_undo_candidates') IS NOT NULL
                    AND to_regclass('audit.undo_log') IS NOT NULL
-                   AND to_regprocedure('audit.revert_transaction(uuid,text)') IS NOT NULL,
+                   AND has_schema_privilege(current_user, 'audit', 'USAGE')
+                   AND has_table_privilege(current_user, to_regclass('audit.v_undo_candidates'), 'SELECT')
+                   AND to_regprocedure('audit.revert_transaction(uuid,text)') IS NOT NULL
+                   AND has_function_privilege(current_user,
+                         to_regprocedure('audit.revert_change(uuid,text)'), 'EXECUTE')
+                   AND has_function_privilege(current_user,
+                         to_regprocedure('audit.revert_transaction(uuid,text)'), 'EXECUTE'),
                    CASE
                      WHEN p.prorettype = 'jsonb'::regtype AND p.proargnames[2] = 'p_mode'
                       AND t.prorettype = 'jsonb'::regtype AND t.proargnames[2] = 'p_mode'
                       AND to_regprocedure('audit.fn_undo_caller()') IS NOT NULL
-                      AND to_regprocedure('audit.undo_window()') IS NOT NULL THEN 'legacy_field'
+                      AND to_regprocedure('audit.undo_window()') IS NOT NULL
+                      AND has_function_privilege(current_user, to_regprocedure('audit.fn_undo_caller()'), 'EXECUTE')
+                      AND has_function_privilege(current_user, to_regprocedure('audit.undo_window()'), 'EXECUTE')
+                      THEN 'legacy_field'
                      WHEN p.prorettype = 'uuid'::regtype AND t.prorettype = 'uuid'::regtype
                       AND to_regprocedure('audit.undo_candidates(name,name,uuid,integer)') IS NOT NULL
+                      AND has_function_privilege(current_user,
+                            to_regprocedure('audit.undo_candidates(name,name,uuid,integer)'), 'EXECUTE')
                       THEN 'reason'
                      ELSE 'unsupported'
                    END
@@ -216,7 +227,7 @@ class AuditRepository:
         except Exception as exc:
             if getattr(exc, "pgcode", None) == "42P01" and self.engine_available:
                 raise UndoEngineUnavailable(
-                    "Le moteur d’annulation Farois n’est pas installé dans cette base."
+                    "Le moteur d’annulation Farois est indisponible pour cette connexion (installation, contrat ou droits PostgreSQL)."
                 ) from exc
             raise
         finally:
@@ -229,7 +240,7 @@ class AuditRepository:
             self.refresh_capabilities()
         if not self.engine_available:
             raise UndoEngineUnavailable(
-                "Le moteur d’annulation Farois n’est pas installé dans cette base."
+                "Le moteur d’annulation Farois est indisponible pour cette connexion (installation, contrat ou droits PostgreSQL)."
             )
         # Reads use autocommit. A legacy FIELD revert may write some fields
         # before reporting conflicts, so its result must be checked in a real

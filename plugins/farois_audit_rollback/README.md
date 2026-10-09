@@ -1,6 +1,6 @@
 # Farois — Historique et rollback
 
-Version 0.1.7 : informations d'audit complètes avec le moteur existant,
+Version 0.1.8 : informations d'audit complètes avec le moteur existant,
 contrat d'annulation détecté, conflit sans restitution partielle, détail avant/après
 et modification des attributs actuels dans le formulaire QGIS. Le logo et les
 menus de navigation sont conservés.
@@ -266,3 +266,14 @@ Vérifier données et détail, menus navigation/modification, enregistrement QGI
 refus auteur inconnu et identité inconnue, puis succès et refus atomique sur une
 base de test avec auteur et identité configurés. Les tests offscreen ne remplacent
 pas la recette du vrai fournisseur PostgreSQL et des dialogues QGIS Desktop.
+
+
+## Correctif 0.1.8 : consultation lorsque les droits du moteur manquent
+
+La détection du moteur vérifie les droits de lecture des candidats et les droits
+EXECUTE des helpers/endpoint du contrat détecté. Un compte sans ces droits
+conserve la consultation via `audit.v_operator_changes_scoped`, si cette vue
+lui est autorisée. Les boutons d'annulation sont alors désactivés avec le motif
+installation, contrat ou droits PostgreSQL. Aucun droit n'est accordé par le plugin.
+Les archives 0.1.7 et 0.1.8 sont distinctes et immuables dans le dépôt QGIS.
+Installer 0.1.8 puis fermer complètement et redémarrer QGIS.

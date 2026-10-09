@@ -284,3 +284,28 @@ def test_451_motif_argument_and_real_uuid_result_are_preserved():
     assert repo.revert_change("id", "motif") == identifier
     assert conn.cursor_obj.calls[-1][1] == ("id", "motif")
     assert conn.commits == 1 and conn.autocommit is True
+
+
+def test_capability_query_checks_permissions_for_each_read_contract():
+    conn = Connection()
+    conn.cursor_obj.fetchone = lambda: (False, "legacy_field")
+    repo = AuditRepository(conn)
+    assert not repo.refresh_capabilities()
+    sql = conn.cursor_obj.calls[-1][0]
+    assert "has_schema_privilege(current_user, 'audit', 'USAGE')" in sql
+    assert (
+        "has_table_privilege(current_user, to_regclass('audit.v_undo_candidates'), 'SELECT')"
+        in sql
+    )
+    for signature in [
+        "audit.fn_undo_caller()",
+        "audit.undo_window()",
+        "audit.undo_candidates(name,name,uuid,integer)",
+        "audit.revert_change(uuid,text)",
+        "audit.revert_transaction(uuid,text)",
+    ]:
+        assert f"to_regprocedure('{signature}'), 'EXECUTE'" in sql
+    assert repo.history("wyre", "structures", "record") == []
+    assert "audit.v_operator_changes_scoped" in conn.cursor_obj.calls[-1][0]
+    assert "audit.fn_undo_caller()" not in conn.cursor_obj.calls[-1][0]
+    assert "audit.v_undo_candidates" not in conn.cursor_obj.calls[-1][0]

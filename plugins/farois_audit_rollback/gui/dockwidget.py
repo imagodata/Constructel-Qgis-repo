@@ -394,7 +394,7 @@ if QGIS_AVAILABLE:
                             else "Moteur d'annulation disponible."
                         )
                         if self.repository.engine_available
-                        else "Le moteur d’annulation Farois n’est pas installé dans cette base."
+                        else "Le moteur d’annulation Farois est indisponible pour cette connexion (installation, contrat ou droits PostgreSQL)."
                     )
                 )
             except Exception as exc:
@@ -489,9 +489,7 @@ if QGIS_AVAILABLE:
             except (ValueError, RuntimeError, AttributeError):
                 current = False
             if self.repository is not None and not self.repository.engine_available:
-                reason = (
-                    "Le moteur d’annulation Farois n’est pas installé dans cette base."
-                )
+                reason = "Le moteur d’annulation Farois est indisponible pour cette connexion (installation, contrat ou droits PostgreSQL)."
                 return (False, reason), (False, reason)
             project = QgsProject.instance() if hasattr(QgsProject, "instance") else None
             if project is not None and any(
