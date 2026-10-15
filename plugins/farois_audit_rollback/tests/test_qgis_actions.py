@@ -673,3 +673,93 @@ def test_api_server_error_with_json_body_is_shown_as_nothing_undone(dock, qt):
     qt.QMessageBox.warning.assert_not_called()
     dock.repository.revert_change.assert_not_called()
     dock.layer.reload.assert_not_called()
+
+
+def tx_conflict(report=True, engine="revert_transaction : conflit, transaction non annulee : {...}"):
+    member = {"change_id": "member-1", "operation": "INSERT", "conflicts": [
+        {"column": "*", "detail": "lignes referencees par : wyre.cables"}]}
+    detail = {"message": "Conflit : la transaction n'a pas été annulée.",
+              "reason": "conflict", "engine": engine}
+    if report:
+        detail["report"] = {"transaction_id": TX, "mode": "FIELD", "changes": [member]}
+    return FaroisConflict("Conflit : la transaction n'a pas été annulée.", status=409, detail=detail)
+
+
+def test_transaction_conflict_dialog_warns_about_cascades_and_shows_the_report(dock, qt):
+    dock.api = admin_api(revert_transaction=Mock(side_effect=[
+        tx_conflict(), {"transaction_id": TX, "mode": "FORCE",
+                        "changes": [{"deleted": True, "conflicts": []}]}]))
+    dock.undo_transaction_selected()
+    text = qt.QMessageBox.question.call_args.args[2]
+    assert "Les objets créés par cette transaction seront supprimés même s'ils ont été " \
+        "modifiés ou référencés depuis ; des suppressions en cascade sont possibles." in text
+    assert "member-1" in text and "lignes referencees par : wyre.cables" in text
+    assert "{}" not in text
+    assert [c.args[1] for c in dock.api.revert_transaction.call_args_list] == ["FIELD", "FORCE"]
+    dock.layer.reload.assert_called_once()
+
+
+def test_transaction_conflict_without_report_shows_the_engine_message(dock, qt):
+    qt.QMessageBox.question.side_effect = [qt.QMessageBox.Yes, qt.QMessageBox.No]
+    dock.api = admin_api(revert_transaction=Mock(side_effect=tx_conflict(
+        report=False, engine="revert_transaction : conflit, rapport illisible")))
+    dock.undo_transaction_selected()
+    text = qt.QMessageBox.question.call_args.args[2]
+    assert "revert_transaction : conflit, rapport illisible" in text and "{}" not in text
+    dock.api.revert_transaction.assert_called_once()  # refus : FORCE jamais envoyé
+    assert qt.QMessageBox.question.call_count == 2
+    dock.layer.reload.assert_not_called()
+
+
+def test_change_conflict_dialog_keeps_the_overwrite_warning_only(dock, qt):
+    conflict = FaroisConflict("Conflit : rien n'a été annulé.", status=409, detail={
+        "reason": "conflict", "report": {"conflicts": [{"column": "label", "current": "B"}]}})
+    dock.api = admin_api(revert_change=Mock(side_effect=[conflict, {"reverted": ["label"]}]))
+    dock.undo_selected()
+    text = qt.QMessageBox.question.call_args.args[2]
+    assert "Les valeurs actuelles en conflit seront écrasées." in text
+    assert "cascade" not in text and '"label"' in text
+
+
+@pytest.mark.parametrize(
+    "transaction, result",
+    [
+        (True, {"transaction_id": TX, "mode": "FIELD", "changes": []}),
+        (False, {"change_id": "change", "reverted": [], "conflicts": [],
+                 "restored": False, "deleted": False}),
+        (False, {}),
+    ],
+)
+def test_api_success_that_undid_nothing_is_not_reported_as_done(dock, qt, transaction, result):
+    dock.api = admin_api(revert_change=Mock(return_value=result),
+                         revert_transaction=Mock(return_value=result))
+    (dock.undo_transaction_selected if transaction else dock.undo_selected)()
+    assert "Rien n'a été annulé" in qt.QMessageBox.warning.call_args.args[2]
+    qt.QMessageBox.information.assert_not_called()
+    dock.layer.reload.assert_not_called()
+
+
+def test_reason_over_500_characters_is_refused_before_sending(dock, qt):
+    dock.api = admin_api()
+    qt.QInputDialog.getText.return_value = ("x" * 501, True)
+    dock.undo_selected()
+    dock.api.revert_change.assert_not_called()
+    assert "500" in qt.QMessageBox.warning.call_args.args[2]
+    dock.layer.reload.assert_not_called()
+    qt.QInputDialog.getText.return_value = ("  " + "x" * 500 + "  ", True)
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once()
+
+
+def test_reconnection_dialog_is_prefilled_with_the_last_email_after_expiry(dock, qt, monkeypatch):
+    from plugins.farois_audit_rollback.tests.test_farois_client import ME, http_error, logged_in
+
+    client, _ = logged_in(http_error(401, {"detail": "Session expirée"}))
+    dock.api = client
+    dock._render_api_status = Mock()
+    dock.undo_selected()
+    assert not client.connected
+    asked = Mock(return_value=None)
+    monkeypatch.setitem(dock.connect_farois.__func__.__globals__, "ask_credentials", asked)
+    dock.connect_farois()
+    asked.assert_called_once_with(dock, ME["email"])

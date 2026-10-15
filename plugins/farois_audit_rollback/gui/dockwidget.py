@@ -32,10 +32,13 @@ from .history_model import HistoryModel, HistoryEntry
 from .rollback_actions import action_states, transaction_uuid
 from .login_dialog import ask_credentials
 from ..api.farois_client import (
+    REASON_MAX_LENGTH,
     FaroisApiUnavailable,
     FaroisConflict,
     FaroisNotAuthenticated,
 )
+from ..db.audit_repository import AuditRepository
+from ..db.errors import UndoRejected
 from ..db.qgis_connection import repository_for_layer, selected_context, layer_context
 from .lifecycle import SignalScope, live_ui
 from .feature_navigation import (
@@ -954,7 +957,7 @@ if QGIS_AVAILABLE:
                 return
             if credentials is None:
                 credentials = ask_credentials(
-                    self, api.profile.email if api.profile else ""
+                    self, api.last_email or (api.profile.email if api.profile else "")
                 )
             if not credentials:
                 return
@@ -987,12 +990,20 @@ if QGIS_AVAILABLE:
             self.load_history(silent=True)
 
         def _undo_via_api(self, entry, transaction, target_id, reason):
-            """Envoie l'annulation à l'API ; None si rien n'a été annulé."""
+            """Envoie l'annulation à l'API ; None si rien n'a été annulé (déjà signalé)."""
+            if len(reason.strip()) > REASON_MAX_LENGTH:
+                QMessageBox.warning(
+                    self,
+                    "Farois",
+                    f"Motif trop long ({len(reason.strip())} caractères, "
+                    f"{REASON_MAX_LENGTH} au maximum) : rien n'a été envoyé.",
+                )
+                return None
             api = self.api
             send = api.revert_transaction if transaction else api.revert_change
             mode = "RESTORE" if not transaction and entry.operation == "DELETE" else "FIELD"
             try:
-                return send(target_id, mode, reason)
+                result = send(target_id, mode, reason)
             except FaroisApiUnavailable as exc:
                 self._warn_uncertain(exc)
                 return None
@@ -1008,13 +1019,20 @@ if QGIS_AVAILABLE:
             except FaroisConflict as conflict:
                 if mode == "RESTORE" or not conflict.forceable:
                     raise
-                if not self._confirm_force(conflict):
+                if not self._confirm_force(conflict, transaction):
                     return None
                 try:
-                    return send(target_id, "FORCE", reason)
+                    result = send(target_id, "FORCE", reason)
                 except FaroisApiUnavailable as exc:
                     self._warn_uncertain(exc)
                     return None
+            try:
+                # Même contrôle que le chemin PostgreSQL : un 200 vide n'est pas un succès.
+                AuditRepository._validate_result(result)
+            except UndoRejected as exc:
+                QMessageBox.warning(self, "Farois", f"Rien n'a été annulé : {exc}")
+                return None
+            return result
 
         def _reload_entry_layers(self, entry):
             """Recharge les couches de la table annulée (connexion de la source).
@@ -1056,20 +1074,29 @@ if QGIS_AVAILABLE:
                 "de relancer (une annulation déjà faite sera refusée).",
             )
 
-        def _confirm_force(self, conflict):
-            report = conflict.report or {}
-            details = json.dumps(
-                report.get("conflicts") or report.get("changes") or report,
-                ensure_ascii=False,
-                indent=2,
-                default=str,
-            )
+        def _confirm_force(self, conflict, transaction=False):
+            report = conflict.report if isinstance(conflict.report, dict) else {}
+            # Modification : ses conflits ; transaction : rapport du membre en conflit.
+            shown = report.get("conflicts") or report.get("changes")
+            if shown:
+                details = json.dumps(shown, ensure_ascii=False, indent=2, default=str)
+            else:
+                detail = conflict.detail if isinstance(conflict.detail, dict) else {}
+                engine = str(detail.get("engine") or "")
+                details = engine if engine not in str(conflict) else ""
+            consequence = "Les valeurs actuelles en conflit seront écrasées."
+            if transaction:
+                consequence += (
+                    " Les objets créés par cette transaction seront supprimés même "
+                    "s'ils ont été modifiés ou référencés depuis ; des suppressions "
+                    "en cascade sont possibles."
+                )
+            text = "\n".join(part for part in (str(conflict), details) if part)
             return (
                 QMessageBox.question(
                     self,
                     "Farois — Conflit",
-                    f"{conflict}\n{details}\n\nForcer l'annulation (FORCE) ? "
-                    "Les valeurs actuelles en conflit seront écrasées.",
+                    f"{text}\n\nForcer l'annulation (FORCE) ? {consequence}",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
