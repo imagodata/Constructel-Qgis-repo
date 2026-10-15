@@ -14,7 +14,7 @@ import pytest
 def native_qt(monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt = pytest.importorskip("PyQt5")
-    from PyQt5 import QtCore, QtWidgets, sip
+    from PyQt5 import QtCore, QtGui, QtWidgets, sip
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -115,6 +115,7 @@ def native_qt(monkeypatch):
         "qgis": ModuleType("qgis"),
         "qgis.PyQt": qt,
         "qgis.PyQt.QtCore": QtCore,
+        "qgis.PyQt.QtGui": QtGui,
         "qgis.PyQt.QtWidgets": QtWidgets,
         "qgis.PyQt.sip": sip,
         "qgis.core": core,

@@ -1,6 +1,10 @@
-"""QGIS plugin lifecycle and explicit rollback toolbar actions."""
+"""QGIS plugin lifecycle: one toolbar entry opening the history dock."""
+
+import os
 
 from .gui.dockwidget import FaroisAuditDock
+
+ICON_PATH = os.path.join(os.path.dirname(__file__), "icon.svg")
 
 
 class FaroisAuditRollback:
@@ -11,14 +15,14 @@ class FaroisAuditRollback:
 
     def initGui(self):
         from qgis.PyQt.QtWidgets import QAction
-        from qgis.PyQt.QtCore import Qt
+        from qgis.PyQt.QtGui import QIcon
 
         self._unloading = False
 
         self.toolbar = self.iface.addToolBar("Farois — Historique et rollback")
         self.toolbar.setObjectName("FaroisAuditRollbackToolbar")
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.action = QAction("Historique Farois", self.iface.mainWindow())
+        self.action.setIcon(QIcon(ICON_PATH))
         self.change_action = QAction("Annuler la modification", self.iface.mainWindow())
         self.transaction_action = QAction(
             "Annuler la transaction", self.iface.mainWindow()
@@ -27,8 +31,8 @@ class FaroisAuditRollback:
         self.change_action.triggered.connect(self.undo_change)
         self.transaction_action.triggered.connect(self.undo_transaction)
         self.actions = [self.action, self.change_action, self.transaction_action]
+        self.toolbar.addAction(self.action)
         for action in self.actions:
-            self.toolbar.addAction(action)
             self.iface.addPluginToMenu("&Farois", action)
         self.sync_actions()
 

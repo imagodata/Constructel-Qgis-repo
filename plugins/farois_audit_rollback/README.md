@@ -5,6 +5,10 @@ contrat d'annulation détecté, conflit sans restitution partielle, détail avan
 et modification des attributs actuels dans le formulaire QGIS. Le logo et les
 menus de navigation sont conservés.
 
+Barre d'outils (non publié) : une seule entrée, Historique Farois, avec le logo
+retour/avance (icon.svg, farois-logo.png 128 px), qui ouvre le panneau. Les
+annulations restent dans le clic droit de l'historique et le menu Extensions → Farois.
+
 Plugin QGIS autonome farois_audit_rollback, indépendant de Constructel Bridge.
 PostgreSQL est l’autorité pour identité, droits, périmètre, fenêtre, conflits et journalisation.
 Python n’exécute jamais de SQL fourni par l’utilisateur et ne construit pas d’UPDATE.
@@ -62,8 +66,8 @@ du projet QGIS. La sélection de l’objet source est réévaluée lorsque la co
 ou sa sélection change. L’historique peut être actualisé automatiquement toutes
 les cinq secondes, ou manuellement via le menu contextuel de la table.
 
-Le fichier mockup.svg documente l’ergonomie cible. La barre QGIS dédiée Farois et
-le panneau présentent deux actions distinctes : Annuler la modification et
+Le fichier mockup.svg documente l’ergonomie cible. Le menu Farois et le clic
+droit du panneau présentent deux actions distinctes : Annuler la modification et
 Annuler la transaction. Sélectionner une ligne de l'historique les active selon
 les informations reçues de PostgreSQL. Un UUID transaction_id valide est requis
 pour la transaction. Un identifiant numérique PostgreSQL txid n'est pas accepté
@@ -147,7 +151,7 @@ successivement. Le double-clic reste un raccourci d'identification.
 Le menu propose aussi les annulations selon les droits/moteur et le mode objet,
 Actualiser l'historique et Réinitialiser les filtres. Ces deux dernières commandes
 sont accessibles par clic droit dans la table même vide. Les annulations restent
-dans la barre Farois ; plusieurs lignes sélectionnées ne déclenchent jamais une
+dans le menu Farois ; plusieurs lignes sélectionnées ne déclenchent jamais une
 annulation groupée. L'actualisation est suspendue pendant le menu ou les dialogues.
 Les sections des versions 0.1.2 à 0.1.4 ci-dessous décrivent l'évolution passée ;
 leurs mentions de boutons du panneau sont remplacées par ce menu en 0.1.5.

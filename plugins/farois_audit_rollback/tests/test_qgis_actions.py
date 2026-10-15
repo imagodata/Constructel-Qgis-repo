@@ -35,8 +35,16 @@ class Action:
     def setToolTip(self, text):
         self.tooltip = text
 
+    def setIcon(self, icon):
+        self.icon = icon
+
     def deleteLater(self):
         pass
+
+
+class Icon:
+    def __init__(self, path):
+        self.path = path
 
 
 @pytest.fixture
@@ -78,6 +86,8 @@ def qt(monkeypatch):
     core.QItemSelectionModel = object
     core.pyqtSignal = Signal
     core.QSize = lambda w, h: (w, h)
+    gui = ModuleType("qgis.PyQt.QtGui")
+    gui.QIcon = Icon
     sip_module = ModuleType("qgis.PyQt.sip")
     sip_module.isdeleted = lambda obj: getattr(obj, "_deleted", False) is True
     qgis_core = ModuleType("qgis.core")
@@ -87,6 +97,7 @@ def qt(monkeypatch):
         "qgis.PyQt": ModuleType("qgis.PyQt"),
         "qgis.PyQt.QtWidgets": widgets,
         "qgis.PyQt.QtCore": core,
+        "qgis.PyQt.QtGui": gui,
         "qgis.PyQt.sip": sip_module,
         "qgis.core": qgis_core,
     }.items():
@@ -192,7 +203,7 @@ def test_postgresql_error_is_shown(dock, qt):
     dock.layer.reload.assert_not_called()
 
 
-def test_three_toolbar_actions_are_visible_and_synchronized(qt, monkeypatch):
+def test_toolbar_has_one_history_entry_and_menu_keeps_undo_actions(qt, monkeypatch):
     module = load_module("plugins.farois_audit_rollback._tested_plugin", "plugin.py")
     toolbar = Mock()
     iface = Mock()
@@ -204,7 +215,13 @@ def test_three_toolbar_actions_are_visible_and_synchronized(qt, monkeypatch):
         "Annuler la modification",
         "Annuler la transaction",
     ]
-    assert toolbar.addAction.call_count == 3
+    toolbar.addAction.assert_called_once_with(plugin.action)
+    assert Path(plugin.action.icon.path).name == "icon.svg"
+    assert Path(plugin.action.icon.path).is_file()
+    assert iface.addPluginToMenu.call_count == 3
+    module.FaroisAuditDock = Mock()
+    plugin.action.triggered.emit()
+    iface.addDockWidget.assert_called_once()
     assert not plugin.transaction_action.enabled
     plugin.dock = SimpleNamespace(
         is_usable=lambda: True,

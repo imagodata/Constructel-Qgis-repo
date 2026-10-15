@@ -1,1 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#21618c"/><path d="M8 8h16v4H8zm0 6h16v4H8zm0 6h10v4H8z" fill="#fff"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>Farois — Historique et rollback</title>
+  <!-- Retour (annuler) -->
+  <path d="M13 22H17A10 13 0 0 1 17 48H8" fill="none" stroke="#2E9B3E" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M3 22L14 12.5V31.5Z" fill="#2E9B3E" stroke="#2E9B3E" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Avance (rétablir) -->
+  <path d="M51 22H47A10 13 0 0 0 47 48H56" fill="none" stroke="#4FA021" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M61 22L50 12.5V31.5Z" fill="#4FA021" stroke="#4FA021" stroke-width="2" stroke-linejoin="round"/>
+</svg>
