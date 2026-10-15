@@ -67,6 +67,30 @@ def api_url():
     return str(value or DEFAULT_API_URL).rstrip("/")
 
 
+def _change_had_effect(change):
+    return isinstance(change, dict) and bool(
+        (isinstance(change.get("reverted"), list) and change["reverted"])
+        or change.get("restored") is True
+        or change.get("deleted") is True
+    )
+
+
+def undo_had_effect(report):
+    """Rapport 200 de l'API (déjà commité) : au moins un effet ?
+
+    Modification : reverted non vide, ou restored / deleted vrai. Transaction :
+    au moins un membre de changes qui remplit cette condition. Réservé au chemin
+    API ; le chemin PostgreSQL garde AuditRepository._validate_result (strict,
+    avant COMMIT).
+    """
+    if not isinstance(report, dict):
+        return False
+    if "changes" in report:
+        changes = report["changes"]
+        return isinstance(changes, list) and any(map(_change_had_effect, changes))
+    return _change_had_effect(report)
+
+
 def _decode(raw):
     try:
         return json.loads(raw.decode("utf-8")) if raw else {}

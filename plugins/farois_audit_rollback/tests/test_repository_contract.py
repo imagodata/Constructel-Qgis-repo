@@ -317,3 +317,18 @@ def test_legacy_view_exposes_in_engine_for_admin_eligibility():
     repo = AuditRepository(connection=None)
     repo.engine_available, repo.engine_contract = True, "legacy_field"
     assert "u.change_id IS NOT NULL AS in_engine" in repo._history_view()
+
+
+def test_postgresql_path_still_requires_every_transaction_member_to_have_an_effect():
+    # Le chemin PostgreSQL garde sa validation stricte (avant COMMIT) ; seule l'API,
+    # qui a déjà commité, se contente d'un membre effectif.
+    report = {"changes": [{"reverted": ["label"], "conflicts": []},
+                          {"reverted": [], "conflicts": []}]}
+    conn = Connection()
+    conn.autocommit = True
+    conn.cursor_obj.fetchone = lambda: (report,)
+    repo = AuditRepository(conn)
+    repo.engine_available, repo.engine_contract = True, "legacy_field"
+    with pytest.raises(Exception, match="aucune"):
+        repo.revert_transaction("tx", "motif")
+    assert conn.commits == 0 and conn.rollbacks == 1

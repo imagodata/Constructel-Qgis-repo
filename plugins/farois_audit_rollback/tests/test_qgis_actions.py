@@ -765,3 +765,29 @@ def test_reconnection_dialog_is_prefilled_with_the_last_email_after_expiry(dock,
     monkeypatch.setitem(dock.connect_farois.__func__.__globals__, "ask_credentials", asked)
     dock.connect_farois()
     asked.assert_called_once_with(dock, ME["email"])
+
+
+NO_EFFECT = {"reverted": [], "conflicts": [], "restored": False, "deleted": False}
+
+
+def test_api_transaction_with_one_effective_member_is_a_success(dock, qt):
+    result = {"transaction_id": TX, "mode": "FIELD", "changes": [
+        {"change_id": "a", "reverted": ["label"], "conflicts": [], "restored": False,
+         "deleted": False},
+        dict(NO_EFFECT, change_id="b"),
+    ]}
+    dock.api = admin_api(revert_transaction=Mock(return_value=result))
+    dock.undo_transaction_selected()
+    assert "Annulation enregistrée" in qt.QMessageBox.information.call_args.args[2]
+    qt.QMessageBox.warning.assert_not_called()
+    dock.layer.reload.assert_called_once()
+
+
+def test_api_transaction_whose_members_all_had_no_effect_undid_nothing(dock, qt):
+    result = {"transaction_id": TX, "mode": "FIELD",
+              "changes": [dict(NO_EFFECT, change_id="a"), dict(NO_EFFECT, change_id="b")]}
+    dock.api = admin_api(revert_transaction=Mock(return_value=result))
+    dock.undo_transaction_selected()
+    assert "Rien n'a été annulé" in qt.QMessageBox.warning.call_args.args[2]
+    qt.QMessageBox.information.assert_not_called()
+    dock.layer.reload.assert_not_called()

@@ -36,9 +36,8 @@ from ..api.farois_client import (
     FaroisApiUnavailable,
     FaroisConflict,
     FaroisNotAuthenticated,
+    undo_had_effect,
 )
-from ..db.audit_repository import AuditRepository
-from ..db.errors import UndoRejected
 from ..db.qgis_connection import repository_for_layer, selected_context, layer_context
 from .lifecycle import SignalScope, live_ui
 from .feature_navigation import (
@@ -1026,11 +1025,14 @@ if QGIS_AVAILABLE:
                 except FaroisApiUnavailable as exc:
                     self._warn_uncertain(exc)
                     return None
-            try:
-                # Même contrôle que le chemin PostgreSQL : un 200 vide n'est pas un succès.
-                AuditRepository._validate_result(result)
-            except UndoRejected as exc:
-                QMessageBox.warning(self, "Farois", f"Rien n'a été annulé : {exc}")
+            if not undo_had_effect(result):
+                # 200 sans aucun effet (changes vide, rien de restauré/annulé).
+                QMessageBox.warning(
+                    self,
+                    "Farois",
+                    "Rien n'a été annulé : l'API Farois n'a rapporté aucun effet "
+                    "(modification déjà annulée ou sans changement).",
+                )
                 return None
             return result
 

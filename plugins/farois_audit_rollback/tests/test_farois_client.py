@@ -304,3 +304,24 @@ def test_last_email_is_remembered_in_memory_after_expiry_and_failed_login():
         client.login("autre@constructel.example.be", "mauvais")
     assert client.last_email == "autre@constructel.example.be"
     assert "mauvais" not in repr(vars(client))
+
+
+@pytest.mark.parametrize(
+    "report, effect",
+    [
+        ({"reverted": ["label"], "restored": False, "deleted": False}, True),
+        ({"reverted": [], "restored": True}, True),
+        ({"reverted": [], "deleted": True}, True),
+        ({"reverted": [], "conflicts": [], "restored": False, "deleted": False}, False),
+        ({}, False),
+        ({"changes": []}, False),
+        ({"changes": [{"reverted": []}, {"reverted": ["label"]}]}, True),
+        ({"changes": [{"reverted": [], "deleted": False}, {"restored": False}]}, False),
+        ({"changes": "x"}, False),
+        ({"changes": ["x", {"deleted": True}]}, True),
+        (None, False),
+        ("ok", False),
+    ],
+)
+def test_api_undo_effect_means_at_least_one_effect(report, effect):
+    assert fc.undo_had_effect(report) is effect
