@@ -209,3 +209,47 @@ def test_run_onboarding_refreshes_identity_after_wizard(bp):
 def test_before_commit_tags_bridge_connection_with_email(bp):
     src = inspect.getsource(bp.ConstructelBridgePlugin._on_before_commit)
     assert "self._bridge_user_email or self._bridge_user" in src
+
+
+# --- Revue finale #2 : une adresse refusée retire l'ancienne ---------------
+
+def test_invalid_email_removes_stale_cached_address(bp, monkeypatch):
+    from qgis.core import QgsSettings
+    QgsSettings().setValue(bp.AUDIT_EMAIL_KEY, "ancien@constructel.be")
+    monkeypatch.setenv("PGOPTIONS", "-c search_path=wyre -c app.current_user=ancien@constructel.be")
+    assert bp._apply_audit_identity("hélènedupré@constructel.be", _Log()) is False
+    assert os.environ["PGOPTIONS"] == "-c search_path=wyre"
+    assert QgsSettings().value(bp.AUDIT_EMAIL_KEY) is None
+
+
+def test_register_with_invalid_email_does_not_keep_cached_address(bp):
+    from qgis.core import QgsSettings
+    QgsSettings().setValue(bp.AUDIT_EMAIL_KEY, EMAIL)
+    assert bp._apply_cached_audit_identity(_Log()) is True  # posée au démarrage
+    cur = _FakeCursor(existing_row=("44444444-4444-4444-4444-444444444444", "autre", "pas une adresse"))
+    plugin = _fake_plugin(bp, cur, username="autre")
+    bp.ConstructelBridgePlugin._register_bridge_user(plugin)
+    assert "PGOPTIONS" not in os.environ
+    assert QgsSettings().value(bp.AUDIT_EMAIL_KEY) is None
+
+
+# --- Revue finale #12 : jamais d'exception vers initGui / _connect ---------
+
+class _ExplodingSettings:
+    def value(self, *args, **kwargs):
+        raise TypeError("unable to convert a QVariant")
+
+    def setValue(self, *args, **kwargs):
+        raise TypeError("unable to convert a QVariant")
+
+    def remove(self, *args, **kwargs):
+        raise TypeError("unable to convert a QVariant")
+
+
+def test_apply_never_raises(bp, monkeypatch):
+    from qgis.core import Qgis
+    monkeypatch.setattr(bp, "QgsSettings", _ExplodingSettings)
+    log = _Log()
+    assert bp._apply_audit_identity(EMAIL, log) is False
+    assert bp._apply_cached_audit_identity(log) is False
+    assert any(level == Qgis.Warning for _, level in log.records)

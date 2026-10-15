@@ -41,7 +41,13 @@ from qgis.PyQt.QtWidgets import (
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
 from .bridge_expressions import register_expressions, unregister_expressions
-from .bridge_identity import build_pgoptions, decode_password, derive_email, is_valid_audit_email
+from .bridge_identity import (
+    build_pgoptions,
+    decode_password,
+    derive_email,
+    is_valid_audit_email,
+    strip_app_user_option,
+)
 from .bridge_mtls import (
     MTLS_SETTINGS_KEYS,
     build_pgpass_line,
@@ -656,30 +662,50 @@ def _get_plugin_version() -> str:
 PLUGIN_VERSION = _get_plugin_version()
 
 
+def _clear_audit_identity():
+    """Retire app.current_user de PGOPTIONS et oublie l'adresse en cache."""
+    cleaned = strip_app_user_option(os.environ.get("PGOPTIONS"))
+    if cleaned is None:
+        os.environ.pop("PGOPTIONS", None)
+    else:
+        os.environ["PGOPTIONS"] = cleaned
+    QgsSettings().remove(AUDIT_EMAIL_KEY)
+
+
 def _apply_audit_identity(email, log) -> bool:
     """Pose PGOPTIONS pour que toute NOUVELLE connexion libpq du processus
     QGIS (fournisseur PostgreSQL compris) porte app.current_user=<email>.
 
     Les connexions deja ouvertes ne sont pas modifiees (pool QGIS). Ne bloque
-    jamais : interrupteur a faux ou adresse invalide -> rien n'est pose, un
-    message est journalise et la fonction renvoie False.
+    jamais et ne leve jamais : interrupteur a faux -> rien n'est touche ;
+    adresse absente ou invalide -> l'adresse precedente est retiree (pas
+    d'attribution a un autre utilisateur) ; la fonction renvoie False.
     """
-    if not QgsSettings().value(AUDIT_EMAIL_SWITCH_KEY, True, type=bool):
-        log("Adresse d'audit desactivee (constructel_bridge/audit_email_pgoptions = false)", Qgis.Info)
+    try:
+        if not QgsSettings().value(AUDIT_EMAIL_SWITCH_KEY, True, type=bool):
+            log("Adresse d'audit desactivee (constructel_bridge/audit_email_pgoptions = false)", Qgis.Info)
+            return False
+        if not is_valid_audit_email(email):
+            _clear_audit_identity()
+            log(f"Adresse d'audit absente ou invalide ({email!r}) : editions QGIS non attribuees", Qgis.Warning)
+            return False
+        os.environ["PGOPTIONS"] = build_pgoptions(os.environ.get("PGOPTIONS"), email)
+        QgsSettings().setValue(AUDIT_EMAIL_KEY, email)
+        log(f"Adresse d'audit posee pour les nouvelles connexions PostgreSQL : {email}", Qgis.Info)
+        return True
+    except Exception as exc:  # noqa: BLE001 -- ne jamais empecher initGui/_connect
+        log(f"Adresse d'audit non posee (erreur inattendue) : {exc}", Qgis.Warning)
         return False
-    if not is_valid_audit_email(email):
-        log(f"Adresse d'audit absente ou invalide ({email!r}) : editions QGIS non attribuees", Qgis.Warning)
-        return False
-    os.environ["PGOPTIONS"] = build_pgoptions(os.environ.get("PGOPTIONS"), email)
-    QgsSettings().setValue(AUDIT_EMAIL_KEY, email)
-    log(f"Adresse d'audit posee pour les nouvelles connexions PostgreSQL : {email}", Qgis.Info)
-    return True
 
 
 def _apply_cached_audit_identity(log) -> bool:
     """Au demarrage, avant tout chargement de couche : reutilise l'adresse
-    memorisee lors de la derniere connexion Bridge reussie."""
-    cached = QgsSettings().value(AUDIT_EMAIL_KEY, "")
+    memorisee lors de la derniere connexion Bridge reussie. Ne leve jamais."""
+    try:
+        cached = QgsSettings().value(AUDIT_EMAIL_KEY, "")
+    except Exception as exc:  # noqa: BLE001 -- ne jamais empecher initGui
+        log(f"Adresse d'audit en cache illisible : {exc}", Qgis.Warning)
+        return False
     if not cached:
         return False
     return _apply_audit_identity(cached, log)

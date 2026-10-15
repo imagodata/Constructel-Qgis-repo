@@ -18,6 +18,7 @@ from constructel_bridge.bridge_identity import (
     resolve_credentials_for_realm,
     resolve_username,
     stale_config_ids,
+    strip_app_user_option,
 )
 
 
@@ -279,3 +280,16 @@ def test_build_pgoptions_invalid_email_leaves_existing_untouched():
 def test_build_pgoptions_is_idempotent():
     once = build_pgoptions("-c search_path=wyre", EMAIL)
     assert build_pgoptions(once, EMAIL) == once
+
+
+# --- strip_app_user_option (revue finale #2) -----------------------------
+
+def test_strip_app_user_option_removes_only_app_user():
+    assert strip_app_user_option(f"-c search_path=wyre -c app.current_user={EMAIL}") == "-c search_path=wyre"
+    assert strip_app_user_option("-c search_path=wyre") == "-c search_path=wyre"
+
+
+def test_strip_app_user_option_returns_none_when_nothing_left():
+    assert strip_app_user_option(None) is None
+    assert strip_app_user_option("") is None
+    assert strip_app_user_option(f"-c app.current_user={EMAIL}") is None

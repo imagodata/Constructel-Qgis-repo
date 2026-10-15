@@ -176,3 +176,11 @@ def build_pgoptions(existing, email):
     kept = " ".join(_PGOPTIONS_APP_USER_RE.sub(" ", existing or "").split())
     option = f"-c app.current_user={email}"
     return f"{kept} {option}" if kept else option
+
+
+def strip_app_user_option(existing):
+    """Return *existing* PGOPTIONS without any app.current_user option, or
+    None when nothing else remains. Used to withdraw a stale address so an
+    edit is never attributed to a previous (or different) user."""
+    kept = " ".join(_PGOPTIONS_APP_USER_RE.sub(" ", existing or "").split())
+    return kept or None
