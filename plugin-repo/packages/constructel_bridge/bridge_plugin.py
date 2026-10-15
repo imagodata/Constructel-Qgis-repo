@@ -41,7 +41,7 @@ from qgis.PyQt.QtWidgets import (
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
 from .bridge_expressions import register_expressions, unregister_expressions
-from .bridge_identity import decode_password, derive_email
+from .bridge_identity import build_pgoptions, decode_password, derive_email, is_valid_audit_email
 from .bridge_mtls import (
     MTLS_SETTINGS_KEYS,
     build_pgpass_line,
@@ -54,6 +54,12 @@ TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
 AUTH_CFG_NAME_BE = "constructel_bridge_be_pw"
 MTLS_AUTH_CFG_NAME = "constructel_bridge_mtls"
+
+# Adresse mail de l'utilisateur posee dans PGOPTIONS (app.current_user) pour que
+# l'audit Farois enregistre l'auteur des editions QGIS. Tracabilite seulement :
+# adresse DECLAREE par le poste, jamais une preuve d'identite (spec 2026-10-15).
+AUDIT_EMAIL_KEY = "constructel_bridge/audit_email"
+AUDIT_EMAIL_SWITCH_KEY = "constructel_bridge/audit_email_pgoptions"
 
 # Cle de settings ou est memorise l'ID de configuration Auth Manager, par
 # connexion. `wyre` CONSERVE la cle historique : la changer orphaniserait
@@ -650,6 +656,35 @@ def _get_plugin_version() -> str:
 PLUGIN_VERSION = _get_plugin_version()
 
 
+def _apply_audit_identity(email, log) -> bool:
+    """Pose PGOPTIONS pour que toute NOUVELLE connexion libpq du processus
+    QGIS (fournisseur PostgreSQL compris) porte app.current_user=<email>.
+
+    Les connexions deja ouvertes ne sont pas modifiees (pool QGIS). Ne bloque
+    jamais : interrupteur a faux ou adresse invalide -> rien n'est pose, un
+    message est journalise et la fonction renvoie False.
+    """
+    if not QgsSettings().value(AUDIT_EMAIL_SWITCH_KEY, True, type=bool):
+        log("Adresse d'audit desactivee (constructel_bridge/audit_email_pgoptions = false)", Qgis.Info)
+        return False
+    if not is_valid_audit_email(email):
+        log(f"Adresse d'audit absente ou invalide ({email!r}) : editions QGIS non attribuees", Qgis.Warning)
+        return False
+    os.environ["PGOPTIONS"] = build_pgoptions(os.environ.get("PGOPTIONS"), email)
+    QgsSettings().setValue(AUDIT_EMAIL_KEY, email)
+    log(f"Adresse d'audit posee pour les nouvelles connexions PostgreSQL : {email}", Qgis.Info)
+    return True
+
+
+def _apply_cached_audit_identity(log) -> bool:
+    """Au demarrage, avant tout chargement de couche : reutilise l'adresse
+    memorisee lors de la derniere connexion Bridge reussie."""
+    cached = QgsSettings().value(AUDIT_EMAIL_KEY, "")
+    if not cached:
+        return False
+    return _apply_audit_identity(cached, log)
+
+
 class ConstructelBridgePlugin:
     """Plugin QGIS — point d'entree."""
 
@@ -658,6 +693,7 @@ class ConstructelBridgePlugin:
         self._actions: list[QAction] = []
         self._bridge_user: Optional[str] = None
         self._bridge_user_id: Optional[str] = None
+        self._bridge_user_email: Optional[str] = None
         self._conn = None
         self._connected = False
         self._layer_hooks_installed = False
@@ -668,6 +704,9 @@ class ConstructelBridgePlugin:
 
     def initGui(self):
         """Appele par QGIS au chargement du plugin."""
+        # Avant tout chargement de couche (projet ouvert au demarrage compris) :
+        # les connexions PostgreSQL ouvertes ensuite porteront l'adresse d'audit.
+        _apply_cached_audit_identity(self._log)
         init_language()
         register_expressions()
         # Activer les macros projet pour que openProject/saveProject/closeProject
@@ -1282,13 +1321,14 @@ class ConstructelBridgePlugin:
         cur = self._conn.cursor()
         try:
             cur.execute(
-                "SELECT id, username FROM ref.users WHERE username = %s AND active = TRUE",
+                "SELECT id, username, email FROM ref.users WHERE username = %s AND active = TRUE",
                 (username,),
             )
             row = cur.fetchone()
 
             if row:
                 self._bridge_user_id = str(row[0])
+                self._bridge_user_email = row[2]
                 self._log(tr("user.existing", username=username, user_id=self._bridge_user_id))
             else:
                 cur.execute(
@@ -1297,11 +1337,13 @@ class ConstructelBridgePlugin:
                     VALUES (%s, %s, %s, 'OPERATOR')
                     ON CONFLICT (username) DO UPDATE
                         SET last_login = NOW(), active = TRUE
-                    RETURNING id
+                    RETURNING id, email
                     """,
                     (username, derive_email(username), username),
                 )
-                self._bridge_user_id = str(cur.fetchone()[0])
+                new_row = cur.fetchone()
+                self._bridge_user_id = str(new_row[0])
+                self._bridge_user_email = new_row[1]
                 self._log(tr("user.created", username=username, user_id=self._bridge_user_id))
                 is_new = True
 
@@ -1309,7 +1351,9 @@ class ConstructelBridgePlugin:
                 "UPDATE ref.users SET last_login = NOW() WHERE id = %s::uuid",
                 (self._bridge_user_id,),
             )
-            self._set_app_user(username)
+            # Avant _setup_qgis_pg_connection / chargement du projet (cf. _connect).
+            _apply_audit_identity(self._bridge_user_email, self._log)
+            self._set_app_user(self._bridge_user_email or username)
 
         except Exception as exc:
             self._log(tr("user.error", error=exc), Qgis.Warning)
@@ -1329,6 +1373,26 @@ class ConstructelBridgePlugin:
             self._log(f"set_config error: {exc}", Qgis.Warning)
         finally:
             cur.close()
+
+    def _refresh_audit_identity(self):
+        """Relit l'adresse dans ref.users (l'assistant d'accueil peut la
+        modifier) et la repose pour les connexions suivantes."""
+        if not self._conn or self._conn.closed or not self._bridge_user_id:
+            return
+        cur = self._conn.cursor()
+        try:
+            cur.execute("SELECT email FROM ref.users WHERE id = %s::uuid", (self._bridge_user_id,))
+            row = cur.fetchone()
+        except Exception as exc:
+            self._log(f"Relecture de l'adresse d'audit impossible : {exc}", Qgis.Warning)
+            return
+        finally:
+            cur.close()
+        email = row[0] if row else None
+        if email and email != self._bridge_user_email:
+            self._bridge_user_email = email
+            _apply_audit_identity(email, self._log)
+            self._set_app_user(email)
 
     # =====================================================================
     # Configuration connexion QGIS
@@ -2007,7 +2071,10 @@ class ConstructelBridgePlugin:
             if self._conn and not self._conn.closed:
                 cur = self._conn.cursor()
                 try:
-                    cur.execute("SELECT set_config('app.current_user', %s, true)", (self._bridge_user,))
+                    cur.execute(
+                        "SELECT set_config('app.current_user', %s, true)",
+                        (self._bridge_user_email or self._bridge_user,),
+                    )
                     cur.execute("SET application_name = %s", (f"constructel_bridge:{self._bridge_user}",))
                 finally:
                     cur.close()
@@ -2015,7 +2082,7 @@ class ConstructelBridgePlugin:
                 # Fallback: escape value for provider.executeSql() (no parameterized API)
                 from .bridge_identity import build_set_config_sql
 
-                set_config_sql, app_name_sql = build_set_config_sql(self._bridge_user)
+                set_config_sql, app_name_sql = build_set_config_sql(self._bridge_user_email or self._bridge_user)
                 provider.executeSql(set_config_sql)
                 provider.executeSql(app_name_sql)
             self._log(tr("hook.commit_tagged", user=self._bridge_user, layer=layer.name()))
@@ -2470,6 +2537,7 @@ class ConstructelBridgePlugin:
             email_domain=EMAIL_DOMAIN,
         )
         wizard.exec_()
+        self._refresh_audit_identity()
 
     def _on_onboarding(self):
         if not self._connected:
