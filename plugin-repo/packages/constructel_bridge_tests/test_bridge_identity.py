@@ -5,11 +5,15 @@ bridge_plugin.py. No QGIS import required — run with plain `pytest`.
 """
 import base64
 
+import pytest
+
 from constructel_bridge.bridge_identity import (
+    build_pgoptions,
     build_set_config_sql,
     decode_password,
     derive_email,
     fixed_authcfg_id_for_user,
+    is_valid_audit_email,
     parse_credentials_json,
     resolve_credentials_for_realm,
     resolve_username,
@@ -218,3 +222,60 @@ def test_stale_config_ids_ignore_les_configs_etrangeres():
 
 def test_stale_config_ids_vide():
     assert stale_config_ids({}, "constructel_bridge_pw", "9i19s56") == []
+
+
+# --- is_valid_audit_email / build_pgoptions (2026-10-15) ----------------
+
+
+@pytest.mark.parametrize("email", [
+    "simonducourneau@constructel.be",
+    "Jean.Dupont+qgis@constructel.be",
+    "a_b-c%d@sub.example.org",
+])
+def test_is_valid_audit_email_accepts(email):
+    assert is_valid_audit_email(email) is True
+
+
+@pytest.mark.parametrize("email", [
+    None, "", "nobody", "x@y", "a b@constructel.be", "o'brien@constructel.be",
+    "a\\b@constructel.be", "a,b@constructel.be", 'a"b@constructel.be',
+    "a" * 250 + "@constructel.be", 42,
+])
+def test_is_valid_audit_email_rejects(email):
+    assert is_valid_audit_email(email) is False
+
+
+EMAIL = "simonducourneau@constructel.be"
+
+
+def test_build_pgoptions_from_nothing():
+    assert build_pgoptions(None, EMAIL) == f"-c app.current_user={EMAIL}"
+    assert build_pgoptions("", EMAIL) == f"-c app.current_user={EMAIL}"
+
+
+def test_build_pgoptions_keeps_existing_options():
+    assert build_pgoptions("-c search_path=wyre", EMAIL) == (
+        f"-c search_path=wyre -c app.current_user={EMAIL}"
+    )
+
+
+def test_build_pgoptions_replaces_previous_app_user():
+    existing = "-c app.current_user=old@constructel.be -c statement_timeout=0"
+    assert build_pgoptions(existing, EMAIL) == (
+        f"-c statement_timeout=0 -c app.current_user={EMAIL}"
+    )
+
+
+def test_build_pgoptions_replaces_compact_and_long_forms():
+    assert build_pgoptions("-capp.current_user=old@x.be", EMAIL) == f"-c app.current_user={EMAIL}"
+    assert build_pgoptions("--app.current_user=old@x.be", EMAIL) == f"-c app.current_user={EMAIL}"
+
+
+def test_build_pgoptions_invalid_email_leaves_existing_untouched():
+    assert build_pgoptions("-c search_path=wyre", "pas une adresse") == "-c search_path=wyre"
+    assert build_pgoptions(None, None) is None
+
+
+def test_build_pgoptions_is_idempotent():
+    once = build_pgoptions("-c search_path=wyre", EMAIL)
+    assert build_pgoptions(once, EMAIL) == once

@@ -9,6 +9,7 @@ to them; this module has no dependency on bridge_plugin.py.
 from __future__ import annotations
 
 import base64
+import re
 
 
 def resolve_username(explicit_setting: str, profile_name: str, os_username: str) -> str:
@@ -138,3 +139,40 @@ def stale_config_ids(configs: dict, name: str, fixed_id: str) -> list:
     Sorted for a deterministic cleanup order.
     """
     return sorted(cid for cid, cname in configs.items() if cname == name and cid != fixed_id)
+
+
+AUDIT_EMAIL_MAX_LEN = 255
+_AUDIT_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+# Any previous app.current_user option, in libpq's "-c name=value",
+# "-cname=value" or "--name=value" forms.
+_PGOPTIONS_APP_USER_RE = re.compile(r"(?<!\S)(?:-c\s*|--)app\.current_user=\S*")
+
+
+def is_valid_audit_email(email) -> bool:
+    """True if *email* may be passed verbatim in libpq PGOPTIONS.
+
+    Whitelist only: no whitespace, quote, comma or backslash can reach the
+    libpq options parser (which splits on whitespace and treats backslash
+    as an escape). The address is DECLARED by the workstation: traceability
+    only, never a proof of identity (spec 2026-10-15).
+    """
+    return (
+        isinstance(email, str)
+        and 0 < len(email) <= AUDIT_EMAIL_MAX_LEN
+        and _AUDIT_EMAIL_RE.fullmatch(email) is not None
+    )
+
+
+def build_pgoptions(existing, email):
+    """Return the PGOPTIONS value carrying ``app.current_user=<email>``.
+
+    Keeps every option already set on the workstation, drops any previous
+    app.current_user option so values never pile up, and appends the new
+    one. An invalid or missing *email* returns *existing* unchanged
+    (possibly None): an invalid address is never sent.
+    """
+    if not is_valid_audit_email(email):
+        return existing
+    kept = " ".join(_PGOPTIONS_APP_USER_RE.sub(" ", existing or "").split())
+    option = f"-c app.current_user={email}"
+    return f"{kept} {option}" if kept else option
