@@ -482,6 +482,7 @@ def test_native_empty_table_context_has_refresh_and_reset(
         assert [a.text() for a in menu.actions()] == [
             "Actualiser l’historique",
             "Réinitialiser les filtres",
+            "Se connecter à Farois…",
         ]
         return next(a for a in menu.actions() if a.text() == choice)
 
@@ -619,3 +620,19 @@ def test_native_context_menu_invalid_uuid_actions_disabled(native_qt, monkeypatc
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     )
+
+
+def test_native_context_menu_offers_farois_login(native_qt, monkeypatch):
+    q = native_qt
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtWidgets import QMenu
+
+    seen = []
+
+    def fake_exec(menu, *args):
+        seen.extend(action.text() for action in menu.actions() if action.text())
+        return None
+
+    monkeypatch.setattr(QMenu, "exec_", fake_exec)
+    q.panel._history_context_menu(QPoint(0, 0))
+    assert "Se connecter à Farois…" in seen

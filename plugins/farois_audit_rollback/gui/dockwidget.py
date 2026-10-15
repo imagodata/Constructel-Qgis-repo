@@ -30,6 +30,8 @@ except ImportError:
     QGIS_AVAILABLE = False
 from .history_model import HistoryModel, HistoryEntry
 from .rollback_actions import action_states, transaction_uuid
+from .login_dialog import ask_credentials
+from ..api.farois_client import FaroisConflict, FaroisNotAuthenticated
 from ..db.qgis_connection import repository_for_layer, selected_context, layer_context
 from .lifecycle import SignalScope, live_ui
 from .feature_navigation import (
@@ -55,11 +57,12 @@ if QGIS_AVAILABLE:
             "Transaction",
         ]
 
-        def __init__(self, iface, parent=None):
+        def __init__(self, iface, parent=None, api=None):
             super().__init__(
                 "Farois — Historique et rollback", parent or iface.mainWindow()
             )
             self.iface, self.repository, self.model = iface, None, HistoryModel()
+            self.api = api
             self._signals = SignalScope(sip.isdeleted)
             self.destroyed.connect(self._signals.dispose)
             self._source_layer = None
@@ -71,6 +74,9 @@ if QGIS_AVAILABLE:
             self._repository_key = None
             root = QWidget()
             main = QVBoxLayout(root)
+            self.api_label = QLabel()
+            self.api_label.setWordWrap(True)
+            main.addWidget(self.api_label)
             source_box = QGroupBox("Objet source")
             source_layout = QVBoxLayout(source_box)
             source_row = QHBoxLayout()
@@ -159,6 +165,7 @@ if QGIS_AVAILABLE:
             self._connect_project_signals()
             self._populate_layers()
             self._update_actions()
+            self._render_api_status()
 
         def sizeHint(self):
             return QSize(460, 600)
@@ -372,7 +379,9 @@ if QGIS_AVAILABLE:
                 )
                 selected_ids = [e.change_id for e in self._selected_history_entries()]
                 same_context = self._last_context == (layer.id(), record_id)
-                self.model.set_entries(HistoryEntry.from_row(row) for row in rows)
+                self.model.set_entries(
+                    self._entry_view(HistoryEntry.from_row(row)) for row in rows
+                )
                 self._last_context = (layer.id(), record_id)
                 self._render(selected_ids if same_context else None)
                 shown = len(self._filtered_entries())
@@ -568,9 +577,16 @@ if QGIS_AVAILABLE:
                 menu.addSeparator()
             refresh = menu.addAction("Actualiser l’historique")
             reset = menu.addAction("Réinitialiser les filtres")
+            api = getattr(self, "api", None)
+            farois = menu.addAction(
+                "Se déconnecter de Farois"
+                if api is not None and api.connected
+                else "Se connecter à Farois…"
+            )
             idle = not self._navigation_in_progress and not self._undo_in_progress
             refresh.setEnabled(idle)
             reset.setEnabled(idle)
+            farois.setEnabled(idle and api is not None)
             self._context_menu_open = True
             try:
                 chosen = menu.exec_(self.table.viewport().mapToGlobal(position))
@@ -616,6 +632,11 @@ if QGIS_AVAILABLE:
                     self.load_history()
                 elif chosen is reset:
                     self._reset_filters()
+                elif chosen is farois:
+                    if api.connected:
+                        self.disconnect_farois()
+                    else:
+                        self.connect_farois()
 
         @live_ui
         def select_history_object(self, *args):
@@ -827,7 +848,11 @@ if QGIS_AVAILABLE:
                     raise ValueError(
                         "Enregistrez ou abandonnez les éditions PostgreSQL avant d'annuler."
                     )
-                if transaction:
+                if self._admin_api():
+                    undo_id = self._undo_via_api(entry, transaction, target_id, reason)
+                    if undo_id is None:
+                        return
+                elif transaction:
                     undo_id = repository.revert_transaction(target_id, reason)
                 else:
                     undo_id = repository.revert_change(target_id, reason)
@@ -878,6 +903,103 @@ if QGIS_AVAILABLE:
                 self._signals.connect(
                     layer.selectionChanged, self._on_selection_changed, layer
                 )
+
+        def _admin_api(self):
+            api = getattr(self, "api", None)
+            return api is not None and api.is_admin
+
+        def _entry_view(self, entry):
+            return entry.as_admin() if self._admin_api() else entry
+
+        def _render_api_status(self):
+            label = getattr(self, "api_label", None)
+            if label is None or sip.isdeleted(label):
+                return
+            api = getattr(self, "api", None)
+            if api is not None and api.connected:
+                label.setText(f"Farois : {api.profile.email} ({api.profile.role})")
+            else:
+                label.setText(
+                    "Farois : non connecté — annulations soumises aux droits PostgreSQL."
+                )
+
+        def connect_farois(self, credentials=None):
+            api = getattr(self, "api", None)
+            if api is None:
+                return
+            if credentials is None:
+                credentials = ask_credentials(
+                    self, api.profile.email if api.profile else ""
+                )
+            if not credentials:
+                return
+            try:
+                profile = api.login(*credentials)
+            except Exception as exc:
+                QMessageBox.critical(self, "Farois", str(exc))
+                return
+            if not profile.is_admin:
+                api.logout()
+                QMessageBox.warning(
+                    self,
+                    "Farois",
+                    f"Le compte {profile.email} a le rôle {profile.role} : "
+                    "l'annulation via l'API est réservée aux rôles ADMIN et MANAGER.",
+                )
+            self.api_session_changed()
+
+        def disconnect_farois(self):
+            api = getattr(self, "api", None)
+            if api is not None:
+                api.logout()
+            self.api_session_changed()
+
+        def api_session_changed(self):
+            self._render_api_status()
+            self.load_history(silent=True)
+
+        def _undo_via_api(self, entry, transaction, target_id, reason):
+            """Envoie l'annulation à l'API ; None si rien n'a été annulé."""
+            api = self.api
+            send = api.revert_transaction if transaction else api.revert_change
+            mode = "RESTORE" if not transaction and entry.operation == "DELETE" else "FIELD"
+            try:
+                return send(target_id, mode, reason)
+            except FaroisNotAuthenticated:
+                self._render_api_status()
+                QMessageBox.warning(
+                    self,
+                    "Farois",
+                    "Session Farois expirée : reconnectez-vous puis relancez l'annulation. "
+                    "Rien n'a été annulé.",
+                )
+                return None
+            except FaroisConflict as conflict:
+                if mode == "RESTORE" or not conflict.forceable:
+                    raise
+                if not self._confirm_force(conflict):
+                    return None
+                return send(target_id, "FORCE", reason)
+
+        def _confirm_force(self, conflict):
+            report = conflict.report or {}
+            details = json.dumps(
+                report.get("conflicts") or report.get("changes") or report,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            return (
+                QMessageBox.question(
+                    self,
+                    "Farois — Conflit",
+                    f"{conflict}\n{details}\n\nForcer l'annulation (FORCE) ? "
+                    "Les valeurs actuelles en conflit seront écrasées.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                == QMessageBox.Yes
+            )
 
         def dispose(self):
             self._signals.dispose()

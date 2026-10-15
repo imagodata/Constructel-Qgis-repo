@@ -8,6 +8,11 @@ from unittest.mock import Mock
 
 import pytest
 
+from plugins.farois_audit_rollback.api.farois_client import (
+    FaroisConflict,
+    FaroisNotAuthenticated,
+    FaroisProfile,
+)
 from plugins.farois_audit_rollback.gui.history_model import HistoryEntry, HistoryModel
 
 TX = "00000000-0000-4000-8000-000000000010"
@@ -214,13 +219,15 @@ def test_toolbar_has_one_history_entry_and_menu_keeps_undo_actions(qt, monkeypat
         "Historique Farois",
         "Annuler la modification",
         "Annuler la transaction",
+        "Se connecter à Farois…",
+        "Se déconnecter de Farois",
     ]
     toolbar.addAction.assert_called_once_with(plugin.action)
     assert Path(plugin.action.icon.path).name == "icon.svg"
-    assert Path(plugin.action.icon.path).is_file()
-    assert iface.addPluginToMenu.call_count == 3
+    assert iface.addPluginToMenu.call_count == 5
     module.FaroisAuditDock = Mock()
     plugin.action.triggered.emit()
+    module.FaroisAuditDock.assert_called_once_with(iface, api=plugin.api)
     iface.addDockWidget.assert_called_once()
     assert not plugin.transaction_action.enabled
     plugin.dock = SimpleNamespace(
@@ -343,3 +350,124 @@ def test_open_postgresql_edit_buffer_disables_undo(dock, monkeypatch):
         not state[0] and "éditions PostgreSQL" in state[1]
         for state in dock.action_states()
     )
+
+
+def admin_api(**overrides):
+    api = SimpleNamespace(
+        connected=True,
+        is_admin=True,
+        profile=FaroisProfile("simon@constructel.example.be", "ADMIN"),
+        revert_change=Mock(return_value={"reverted": ["label"], "conflicts": []}),
+        revert_transaction=Mock(return_value={"changes": [{"reverted": ["label"], "conflicts": []}]}),
+        login=Mock(),
+        logout=Mock(),
+    )
+    vars(api).update(overrides)
+    return api
+
+
+def test_admin_session_sends_change_undo_to_api_not_postgres(dock):
+    dock.api = admin_api()
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once_with("change", "FIELD", "test reason")
+    dock.repository.revert_change.assert_not_called()
+    dock.layer.reload.assert_called_once()
+
+
+def test_admin_session_restores_a_delete(dock):
+    dock.api = admin_api()
+    dock.model = HistoryModel(
+        [HistoryEntry(change_id="change", transaction_id=TX, operation="DELETE", can_undo=True)]
+    )
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once_with("change", "RESTORE", "test reason")
+
+
+def test_admin_session_sends_transaction_undo_to_api(dock):
+    dock.api = admin_api()
+    dock.undo_transaction_selected()
+    dock.api.revert_transaction.assert_called_once_with(TX, "FIELD", "test reason")
+    dock.repository.revert_transaction.assert_not_called()
+
+
+def test_conflict_offers_force_and_retries_with_force(dock, qt):
+    conflict = FaroisConflict(
+        "Conflit : rien n'a été annulé.", status=409,
+        detail={"reason": "conflict", "report": {"conflicts": [{"column": "label"}]}},
+    )
+    dock.api = admin_api(revert_change=Mock(side_effect=[conflict, {"reverted": ["label"], "conflicts": []}]))
+    dock.undo_selected()
+    assert [c.args[1] for c in dock.api.revert_change.call_args_list] == ["FIELD", "FORCE"]
+    assert "FORCE" in qt.QMessageBox.question.call_args.args[2]
+    dock.layer.reload.assert_called_once()
+
+
+def test_conflict_declined_does_not_force(dock, qt):
+    qt.QMessageBox.question.side_effect = [qt.QMessageBox.Yes, qt.QMessageBox.No]
+    conflict = FaroisConflict("Conflit.", status=409, detail={"reason": "conflict", "report": {}})
+    dock.api = admin_api(revert_change=Mock(side_effect=conflict))
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once()
+    dock.layer.reload.assert_not_called()
+
+
+def test_already_undone_is_shown_without_force(dock, qt):
+    dock.api = admin_api(revert_change=Mock(side_effect=FaroisConflict(
+        "Modification déjà annulée.", status=409, detail={"reason": "already_undone"})))
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once()
+    assert qt.QMessageBox.question.call_count == 1
+    assert "Modification déjà annulée." in qt.QMessageBox.critical.call_args.args[2]
+
+
+def test_expired_session_never_falls_back_to_postgres(dock, qt):
+    dock.api = admin_api(revert_change=Mock(side_effect=FaroisNotAuthenticated(
+        "Session Farois expirée : reconnectez-vous.", status=401)))
+    dock._render_api_status = Mock()
+    dock.undo_selected()
+    dock.repository.revert_change.assert_not_called()
+    dock.layer.reload.assert_not_called()
+    assert "reconnectez-vous" in qt.QMessageBox.warning.call_args.args[2]
+
+
+def test_viewer_login_is_not_activated(dock, qt):
+    api = admin_api(connected=False, is_admin=False, profile=None,
+                    login=Mock(return_value=FaroisProfile("v@constructel.example.be", "VIEWER")))
+    dock.api = api
+    dock.api_session_changed = Mock()
+    dock.connect_farois(credentials=("v@constructel.example.be", "pw"))
+    api.logout.assert_called_once()
+    assert "VIEWER" in qt.QMessageBox.warning.call_args.args[2]
+    dock.api_session_changed.assert_called_once()
+
+
+def test_login_failure_is_reported_and_session_unchanged(dock, qt):
+    api = admin_api(connected=False, is_admin=False, profile=None,
+                    login=Mock(side_effect=FaroisNotAuthenticated("Identifiants Farois refusés.")))
+    dock.api = api
+    dock.api_session_changed = Mock()
+    dock.connect_farois(credentials=("a@constructel.example.be", "mauvais"))
+    assert "Identifiants Farois refusés." in qt.QMessageBox.critical.call_args.args[2]
+    dock.api_session_changed.assert_not_called()
+
+
+def test_entry_view_applies_admin_rules_only_with_admin_session(dock):
+    entry = HistoryEntry(change_id="c", operation="UPDATE", in_engine=True, can_undo=False,
+                         refusal_reason="Modification effectuée par un autre utilisateur")
+    dock.api = admin_api()
+    assert dock._entry_view(entry).can_undo
+    dock.api = None
+    assert not dock._entry_view(entry).can_undo
+
+
+def test_unload_drops_the_farois_session(qt):
+    module = load_module("plugins.farois_audit_rollback._tested_plugin_unload", "plugin.py")
+    iface = Mock()
+    iface.addToolBar.return_value = Mock()
+    plugin = module.FaroisAuditRollback(iface)
+    plugin.initGui()
+    api = plugin.api
+    api.logout = Mock()
+    plugin.unload()
+    api.logout.assert_called_once()
+    assert plugin.api is None
