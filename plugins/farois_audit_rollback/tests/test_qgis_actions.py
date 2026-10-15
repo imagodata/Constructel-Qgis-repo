@@ -149,6 +149,7 @@ def dock(qt):
         triggerRepaint=Mock(),
     )
     panel._selected_context = lambda: (panel.layer, "wyre", "roads", "uuid-record")
+    panel._resolve_source_layer = lambda: panel.layer
     panel._last_context = ("layer", "uuid-record")
     panel._undo_in_progress = False
     panel._update_actions = Mock()
@@ -495,3 +496,165 @@ def test_unavailable_api_reports_uncertain_outcome_without_fallback(dock, qt):
     dock.repository.revert_change.assert_not_called()
     dock.layer.reload.assert_not_called()
     assert "Résultat incertain" in qt.QMessageBox.warning.call_args.args[2]
+
+
+def scope(value):
+    return SimpleNamespace(currentData=lambda: value)
+
+
+def pg_layer(ident, table="roads", database="fixture"):
+    """Couche PostgreSQL factice : source = identifiant, résolu par FakeUri."""
+    return SimpleNamespace(
+        id=lambda: ident,
+        source=lambda: f"{database}|{table}",
+        type=lambda: 0,
+        providerType=lambda: "postgres",
+        isEditable=lambda: False,
+        selectedFeatureIds=lambda: [7],
+        reload=Mock(),
+        selectByIds=Mock(),
+        triggerRepaint=Mock(),
+    )
+
+
+class FakeUri:
+    def __init__(self, source):
+        self.db, self.name = source.split("|")
+
+    def schema(self):
+        return "wyre"
+
+    def table(self):
+        return self.name
+
+    def database(self):
+        return self.db
+
+    host = port = service = username = authConfigId = lambda self: ""
+
+
+def project_with(dock, monkeypatch, *layers):
+    monkeypatch.setattr(sys.modules["qgis.core"], "QgsDataSourceUri", FakeUri, raising=False)
+    monkeypatch.setitem(
+        dock.action_states.__func__.__globals__,
+        "QgsProject",
+        SimpleNamespace(instance=lambda: SimpleNamespace(
+            mapLayers=lambda: {layer.id(): layer for layer in layers})),
+    )
+
+
+@pytest.mark.parametrize("history_scope", ["layer", "visible"])
+def test_admin_restores_a_deleted_object_from_layer_or_visible_scope(
+    dock, qt, monkeypatch, history_scope
+):
+    # Un objet supprimé n'est plus sélectionnable : sa ligne DELETE n'apparaît
+    # qu'en portée couche / tous les changements, jamais en mode objet.
+    source, twin, other = pg_layer("source"), pg_layer("twin"), pg_layer("other", table="cables")
+    foreign = pg_layer("foreign", database="another")
+    project_with(dock, monkeypatch, source, twin, other, foreign)
+    dock.layer = source
+    dock._selected_context = Mock(side_effect=ValueError("Sélectionnez exactement un objet."))
+    dock.api = admin_api(revert_change=Mock(return_value={"restored": True, "conflicts": []}))
+    dock.history_scope = scope(history_scope)
+    dock.model = HistoryModel([
+        HistoryEntry(change_id="c", transaction_id=TX, operation="DELETE", in_engine=True,
+                     schema_name="wyre", table_name="roads").as_admin()
+    ])
+    (change_ok, reason), (tx_ok, _) = dock.action_states()
+    assert change_ok and tx_ok, reason
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once_with("c", "RESTORE", "test reason")
+    dock.repository.revert_change.assert_not_called()
+    dock._selected_context.assert_not_called()
+    for layer in (source, twin):  # même table, même connexion
+        layer.reload.assert_called_once()
+        layer.triggerRepaint.assert_called_once()
+        layer.selectByIds.assert_not_called()  # hors mode objet : sélection intacte
+    other.reload.assert_not_called()
+    foreign.reload.assert_not_called()
+    assert "Annulation enregistrée" in qt.QMessageBox.information.call_args.args[2]
+
+
+def test_admin_transaction_undo_from_visible_scope(dock, qt):
+    dock.api = admin_api()
+    dock.history_scope = scope("visible")
+    dock._selected_context = Mock(side_effect=ValueError("Sélectionnez exactement un objet."))
+    dock.undo_transaction_selected()
+    dock.api.revert_transaction.assert_called_once_with(TX, "FIELD", "test reason")
+    dock._selected_context.assert_not_called()
+    dock.layer.reload.assert_called_once()  # à défaut de couche de la table : la source
+    dock.layer.selectByIds.assert_not_called()
+
+
+def test_admin_object_scope_keeps_the_map_selection(dock):
+    dock.api = admin_api()
+    dock.history_scope = scope("object")
+    dock.undo_selected()
+    dock.layer.reload.assert_called_once()
+    dock.layer.selectByIds.assert_called_once_with([7])
+
+
+@pytest.mark.parametrize("change", ["entry", "repository"])
+def test_admin_undo_refused_when_history_changed_during_dialog(dock, qt, change):
+    dock.api = admin_api()
+    dock.history_scope = scope("layer")
+
+    def changed(*args):
+        if change == "entry":
+            dock.model.set_entries([HistoryEntry(change_id="other", transaction_id=TX)])
+        else:
+            dock.repository = SimpleNamespace(engine_available=True)
+        return "motif", True
+
+    qt.QInputDialog.getText.side_effect = changed
+    dock.undo_selected()
+    dock.api.revert_change.assert_not_called()
+    dock.layer.reload.assert_not_called()
+    assert "historique a changé" in qt.QMessageBox.critical.call_args.args[2]
+
+
+def test_admin_without_loaded_history_cannot_undo(dock):
+    dock.api = admin_api()
+    dock.history_scope = scope("layer")
+    dock._last_context = None
+    assert all(not state[0] for state in dock.action_states())
+
+
+@pytest.mark.parametrize("api", [None, "viewer"])
+def test_layer_scope_without_admin_session_still_requires_object_mode(dock, qt, api):
+    dock.api = (
+        admin_api(is_admin=False, profile=FaroisProfile("v@constructel.example.be", "VIEWER"))
+        if api else None
+    )
+    dock.history_scope = scope("layer")
+    dock.model = HistoryModel([
+        HistoryEntry(change_id="c", transaction_id=TX, operation="DELETE", can_undo=True,
+                     in_engine=True)
+    ])
+    assert all(
+        not ok and "passez en mode Objet sélectionné" in reason
+        for ok, reason in dock.action_states()
+    )
+    dock.undo_selected()
+    dock.undo_transaction_selected()
+    assert "passez en mode Objet sélectionné" in qt.QMessageBox.warning.call_args.args[2]
+    dock.repository.revert_change.assert_not_called()
+    dock.repository.revert_transaction.assert_not_called()
+    dock.layer.reload.assert_not_called()
+
+
+def test_admin_flow_never_falls_back_to_postgres_if_session_drops_during_dialog(dock, qt):
+    dock.api = admin_api(revert_change=Mock(side_effect=FaroisNotAuthenticated(
+        "Connectez-vous à Farois.", status=401)))
+    dock.history_scope = scope("layer")
+    dock._render_api_status = Mock()
+
+    def logout(*args):
+        dock.api.connected = dock.api.is_admin = False
+        return "motif", True
+
+    qt.QInputDialog.getText.side_effect = logout
+    dock.undo_selected()
+    dock.api.revert_change.assert_called_once()
+    dock.repository.revert_change.assert_not_called()
+    dock.layer.reload.assert_not_called()

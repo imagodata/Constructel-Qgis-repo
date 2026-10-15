@@ -636,3 +636,43 @@ def test_native_context_menu_offers_farois_login(native_qt, monkeypatch):
     monkeypatch.setattr(QMenu, "exec_", fake_exec)
     q.panel._history_context_menu(QPoint(0, 0))
     assert "Se connecter à Farois…" in seen
+
+
+def test_native_admin_undo_actions_are_enabled_in_layer_scope(native_qt, monkeypatch):
+    from PyQt5.QtWidgets import QMenu
+
+    q = native_qt
+    row = dict(
+        change_id="fixture-change",
+        transaction_id="00000000-0000-4000-8000-000000000010",
+        schema_name="wyre",
+        table_name="zone_drop",
+        operation="DELETE",
+        in_engine=True,
+    )
+    setup_history_panel(q, [row])
+    q.panel.repository.engine_available = True
+    q.panel.api = SimpleNamespace(
+        connected=True,
+        is_admin=True,
+        profile=SimpleNamespace(email="admin@constructel.example.be", role="ADMIN"),
+    )
+    assert q.panel.history_scope.currentData() == "layer"
+    assert q.iface.layer.selectedFeatureIds() == []
+    q.panel.load_history()
+    q.panel.table.selectRow(0)
+    seen = {}
+
+    def capture(menu, position):
+        seen.update({a.text(): (a.isEnabled(), a.toolTip()) for a in menu.actions()})
+        return None
+
+    monkeypatch.setattr(QMenu, "exec_", capture)
+    q.panel._history_context_menu(
+        q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
+    )
+    assert seen["Annuler la modification"][0], seen["Annuler la modification"][1]
+    assert seen["Annuler la transaction"][0], seen["Annuler la transaction"][1]
+    q.panel.api = None  # sans session admin : mode objet toujours exigé
+    assert not q.panel.action_states()[0][0]
+    assert "mode Objet sélectionné" in q.panel.action_states()[0][1]

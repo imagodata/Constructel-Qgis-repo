@@ -40,6 +40,7 @@ from ..db.qgis_connection import repository_for_layer, selected_context, layer_c
 from .lifecycle import SignalScope, live_ui
 from .feature_navigation import (
     find_history_feature,
+    matching_layers,
     navigation_target,
     resolve_history_features,
 )
@@ -492,15 +493,21 @@ if QGIS_AVAILABLE:
             if len(self._selected_history_entries()) > 1:
                 reason = "Sélectionnez une seule modification pour une annulation."
                 return (False, reason), (False, reason)
-            scope = getattr(self, "history_scope", None)
-            if scope is not None and scope.currentData() != "object":
-                reason = "Pour annuler, passez en mode Objet sélectionné et sélectionnez cet objet."
-                return (False, reason), (False, reason)
-            try:
-                layer, _, _, record_id = self._selected_context()
-                current = self._last_context == (layer.id(), record_id)
-            except (ValueError, RuntimeError, AttributeError):
-                current = False
+            if self._admin_api():
+                # L'API annule par change_id : ni mode objet ni sélection carte
+                # (un objet supprimé n'est plus sélectionnable). « Courant » =
+                # historique chargé.
+                current = self._last_context is not None
+            else:
+                scope = getattr(self, "history_scope", None)
+                if scope is not None and scope.currentData() != "object":
+                    reason = "Pour annuler, passez en mode Objet sélectionné et sélectionnez cet objet."
+                    return (False, reason), (False, reason)
+                try:
+                    layer, _, _, record_id = self._selected_context()
+                    current = self._last_context == (layer.id(), record_id)
+                except (ValueError, RuntimeError, AttributeError):
+                    current = False
             if self.repository is not None and not self.repository.engine_available:
                 reason = "Le moteur d’annulation Farois est indisponible pour cette connexion (installation, contrat ou droits PostgreSQL)."
                 return (False, reason), (False, reason)
@@ -793,10 +800,12 @@ if QGIS_AVAILABLE:
             if not enabled:
                 QMessageBox.warning(self, "Farois", refusal)
                 return
-            layer, _, _, record_id = self._selected_context()
-            context = (layer.id(), record_id)
+            admin = self._admin_api()
+            if not admin:
+                layer, _, _, record_id = self._selected_context()
+                context = (layer.id(), record_id)
+                selected_ids = layer.selectedFeatureIds()
             repository = self.repository
-            selected_ids = layer.selectedFeatureIds()
             target_id = transaction_uuid(entry) if transaction else entry.change_id
             self._undo_in_progress = True
             self._update_actions()
@@ -833,14 +842,22 @@ if QGIS_AVAILABLE:
                 reason, ok = QInputDialog.getText(self, "Motif obligatoire", "Motif :")
                 if not self.is_usable() or not ok or not reason.strip():
                     return
-                current_layer, _, _, current_id = self._selected_context()
-                if (
-                    current_layer.id(),
-                    current_id,
-                ) != context or self.repository is not repository:
-                    raise ValueError(
-                        "La couche source ou la sélection a changé. Actualisez l'historique."
-                    )
+                if admin:
+                    if self.repository is not repository or not any(
+                        item.change_id == entry.change_id for item in self.model.entries
+                    ):
+                        raise ValueError(
+                            "L'historique a changé pendant la confirmation. Actualisez l'historique."
+                        )
+                else:
+                    current_layer, _, _, current_id = self._selected_context()
+                    if (
+                        current_layer.id(),
+                        current_id,
+                    ) != context or self.repository is not repository:
+                        raise ValueError(
+                            "La couche source ou la sélection a changé. Actualisez l'historique."
+                        )
                 project = (
                     QgsProject.instance() if hasattr(QgsProject, "instance") else None
                 )
@@ -852,7 +869,7 @@ if QGIS_AVAILABLE:
                     raise ValueError(
                         "Enregistrez ou abandonnez les éditions PostgreSQL avant d'annuler."
                     )
-                if self._admin_api():
+                if admin:
                     undo_id = self._undo_via_api(entry, transaction, target_id, reason)
                     if undo_id is None:
                         return
@@ -869,9 +886,12 @@ if QGIS_AVAILABLE:
                         json.dumps(undo_id, ensure_ascii=False, default=str),
                     )
                     return
-                layer.reload()
-                layer.selectByIds(selected_ids)
-                layer.triggerRepaint()
+                if admin:
+                    self._reload_entry_layers(entry)
+                else:
+                    layer.reload()
+                    layer.selectByIds(selected_ids)
+                    layer.triggerRepaint()
                 result_label = (
                     json.dumps(undo_id, ensure_ascii=False, indent=2, default=str)
                     if isinstance(undo_id, dict)
@@ -995,6 +1015,37 @@ if QGIS_AVAILABLE:
                 except FaroisApiUnavailable as exc:
                     self._warn_uncertain(exc)
                     return None
+
+        def _reload_entry_layers(self, entry):
+            """Recharge les couches de la table annulée (connexion de la source).
+
+            À défaut, la couche source. La sélection n'est rétablie qu'en mode
+            objet ; ailleurs elle n'est pas touchée.
+            """
+            source = self._resolve_source_layer()
+            project = QgsProject.instance() if hasattr(QgsProject, "instance") else None
+            layers = []
+            if entry.schema_name and entry.table_name and project is not None:
+                try:
+                    layers = matching_layers(
+                        entry.schema_name,
+                        entry.table_name,
+                        source,
+                        list(project.mapLayers().values()),
+                        sip.isdeleted,
+                    )
+                except ValueError:
+                    layers = []
+            if not layers and source is not None and not sip.isdeleted(source):
+                layers = [source]
+            scope = getattr(self, "history_scope", None)
+            keep_selection = scope is not None and scope.currentData() == "object"
+            for layer in layers:
+                selected_ids = layer.selectedFeatureIds() if keep_selection else None
+                layer.reload()
+                if keep_selection:
+                    layer.selectByIds(selected_ids)
+                layer.triggerRepaint()
 
         def _warn_uncertain(self, exc):
             QMessageBox.warning(

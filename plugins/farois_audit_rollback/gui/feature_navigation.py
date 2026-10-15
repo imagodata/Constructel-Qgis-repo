@@ -32,10 +32,10 @@ def _connection_key(uri):
     )
 
 
-def find_history_feature(entry, source_layer, layers, is_deleted=lambda obj: False):
-    from qgis.core import QgsDataSourceUri, QgsExpression, QgsFeatureRequest
+def matching_layers(schema, table, source_layer, layers, is_deleted=lambda obj: False):
+    """Couches PostgreSQL chargées sur schema.table, avec la connexion de la source."""
+    from qgis.core import QgsDataSourceUri
 
-    schema, table, record_id = navigation_target(entry)
     if source_layer is None or is_deleted(source_layer):
         raise ValueError("La couche source n'est plus disponible.")
     if source_layer.type() != 0 or source_layer.providerType() != "postgres":
@@ -56,6 +56,14 @@ def find_history_feature(entry, source_layer, layers, is_deleted=lambda obj: Fal
             continue
         if _connection_key(uri) == source_key:
             candidates.append(layer)
+    return candidates
+
+
+def find_history_feature(entry, source_layer, layers, is_deleted=lambda obj: False):
+    from qgis.core import QgsExpression, QgsFeatureRequest
+
+    schema, table, record_id = navigation_target(entry)
+    candidates = matching_layers(schema, table, source_layer, layers, is_deleted)
     if not candidates:
         raise LookupError(
             "Aucune couche PostgreSQL chargée ne correspond à la table et à la "

@@ -8,6 +8,7 @@ import pytest
 
 from plugins.farois_audit_rollback.gui.feature_navigation import (
     find_history_feature,
+    matching_layers,
     navigation_target,
     resolve_history_features,
 )
@@ -207,3 +208,22 @@ def test_batch_preflight_propagates_missing_target():
         resolve_history_features(
             [entry(), second], "source", [], lambda obj: False, resolver
         )
+
+
+def test_matching_layers_lists_every_loaded_layer_of_the_table_on_the_source_connection(
+    navigation,
+):
+    n = navigation
+    source = n.layer("source", table="cables")
+    twin, display = n.layer("twin"), n.layer("display")
+    foreign = n.layer("foreign", database="another-fixture")
+    deleted = object()
+    layers = [source, twin, display, foreign, n.layer("other", table="ducts"), deleted]
+    found = matching_layers("wyre", "roads", source, layers, lambda obj: obj is deleted)
+    assert found == [twin, display]
+    assert matching_layers("wyre", "cables", source, layers, lambda obj: obj is deleted) == [source]
+
+
+def test_matching_layers_requires_a_postgresql_source(navigation):
+    with pytest.raises(ValueError, match="plus disponible"):
+        matching_layers("wyre", "roads", None, [])
