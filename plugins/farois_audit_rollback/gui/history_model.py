@@ -1,6 +1,6 @@
 """Pure-Python history model, independent of QGIS and Qt."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 STATUS_MESSAGES = {
@@ -34,6 +34,8 @@ class HistoryEntry:
     transaction_id: Any = None
     cascade_root_id: Any = None
     cascade_count: int = 0
+    in_engine: bool = False
+    already_undone: bool = False
     raw: Any = None
 
     @classmethod
@@ -119,6 +121,8 @@ class HistoryEntry:
             transaction_id=get("transaction_id"),
             cascade_root_id=get("cascade_root_id"),
             cascade_count=int(get("cascade_count", 0) or 0),
+            in_engine=bool(get("in_engine", False)),
+            already_undone=bool(get("already_undone", False)),
             raw=row,
         )
 
@@ -131,6 +135,22 @@ class HistoryEntry:
             if self.can_undo
             else "Modification non annulable"
         )
+
+    def as_admin(self):
+        """Vue d'un admin connecté à l'API Farois : refus liés à l'identité levés.
+
+        Le moteur et l'API restent l'autorité ; seules les lignes connues du moteur
+        et pas encore annulées deviennent annulables.
+        """
+        if self.already_undone:
+            return replace(self, can_undo=False, refusal_reason="Modification déjà annulée")
+        if not self.in_engine:
+            return replace(
+                self,
+                can_undo=False,
+                refusal_reason=self.refusal_reason or "Changement hors périmètre du moteur",
+            )
+        return replace(self, can_undo=True, refusal_reason="")
 
 
 class HistoryModel:

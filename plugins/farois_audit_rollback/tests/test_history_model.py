@@ -94,3 +94,30 @@ def test_unknown_audit_fields_are_explicit_instead_of_blank():
     assert entry.username == "Utilisateur non identifié"
     assert entry.label == "Libellé non renseigné"
     assert entry.provenance == "Origine non renseignée"
+
+
+def test_admin_view_unlocks_engine_rows_refused_for_identity():
+    row = HistoryEntry.from_row({
+        "change_id": "c", "operation": "UPDATE", "in_engine": True, "already_undone": False,
+        "can_undo": False, "refusal_reason": "Modification effectuée par un autre utilisateur",
+    })
+    admin = row.as_admin()
+    assert admin.can_undo and admin.refusal_reason == ""
+    assert not row.can_undo
+
+
+def test_admin_view_unlocks_delete_rows_refused_as_update_only():
+    row = HistoryEntry.from_row({
+        "change_id": "c", "operation": "DELETE", "in_engine": True,
+        "refusal_reason": "Cette version annule uniquement les modifications UPDATE",
+    })
+    assert row.as_admin().can_undo
+
+
+def test_admin_view_keeps_already_undone_and_out_of_engine_refused():
+    undone = HistoryEntry.from_row({"change_id": "c", "in_engine": True, "already_undone": True})
+    assert not undone.as_admin().can_undo
+    assert undone.as_admin().status_message == "Modification déjà annulée"
+    outside = HistoryEntry.from_row({"change_id": "c", "in_engine": False})
+    assert not outside.as_admin().can_undo
+    assert outside.as_admin().status_message == "Changement hors périmètre du moteur"

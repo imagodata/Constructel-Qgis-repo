@@ -69,3 +69,14 @@ def test_direct_root_with_another_pending_group_member_requires_transaction():
     change, transaction = action_states(root)
     assert not change[0] and transaction[0]
     assert "transactionnel" in change[1]
+
+
+TX_INSERT = "00000000-0000-4000-8000-0000000000b1"
+
+
+def test_insert_change_points_to_transaction_undo():
+    row = HistoryEntry(change_id="c", operation="INSERT", transaction_id=TX_INSERT, can_undo=True)
+    (change_ok, change_reason), (tx_ok, _) = action_states(row)
+    assert not change_ok
+    assert "Annuler la transaction" in change_reason
+    assert tx_ok

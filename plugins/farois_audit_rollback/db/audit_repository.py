@@ -112,6 +112,7 @@ class AuditRepository:
         # identity; neither a QGIS username nor an actor label grants authority.
         return """(
             SELECT s.*, u.transaction_id, COALESCE(u.already_undone, FALSE) AS already_undone,
+                   u.change_id IS NOT NULL AS in_engine,
                    GREATEST((SELECT count(*) FROM audit.v_undo_candidates sibling
                               WHERE sibling.transaction_id = u.transaction_id
                                 AND NOT sibling.already_undone), 1) - 1 AS cascade_count,

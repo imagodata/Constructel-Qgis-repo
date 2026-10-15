@@ -309,3 +309,11 @@ def test_capability_query_checks_permissions_for_each_read_contract():
     assert "audit.v_operator_changes_scoped" in conn.cursor_obj.calls[-1][0]
     assert "audit.fn_undo_caller()" not in conn.cursor_obj.calls[-1][0]
     assert "audit.v_undo_candidates" not in conn.cursor_obj.calls[-1][0]
+
+
+def test_legacy_view_exposes_in_engine_for_admin_eligibility():
+    from plugins.farois_audit_rollback.db.audit_repository import AuditRepository
+
+    repo = AuditRepository(connection=None)
+    repo.engine_available, repo.engine_contract = True, "legacy_field"
+    assert "u.change_id IS NOT NULL AS in_engine" in repo._history_view()

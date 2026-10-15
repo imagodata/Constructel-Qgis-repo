@@ -30,11 +30,15 @@ def action_states(entry, connected=True, current=True):
         or entry.origin.upper() in {"CASCADE", "PIPELINE", "BULK"}
         or entry.provenance.lower() in {"cascade", "import", "auto", "pipeline", "bulk"}
     )
+    change_blocked = None
+    if linked:
+        change_blocked = "Opération liée : utilisez le rollback transactionnel."
+    elif entry.operation == "INSERT":
+        change_blocked = "Une création s'annule via « Annuler la transaction »."
     change = (
-        not linked and bool(entry.change_id),
-        "Opération liée : utilisez le rollback transactionnel."
-        if linked
-        else "Annuler uniquement la modification sélectionnée, après confirmation.",
+        change_blocked is None and bool(entry.change_id),
+        change_blocked
+        or "Annuler uniquement la modification sélectionnée, après confirmation.",
     )
     tx = transaction_uuid(entry)
     transaction = (
