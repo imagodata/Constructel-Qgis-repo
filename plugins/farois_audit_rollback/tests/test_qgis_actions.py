@@ -226,6 +226,7 @@ def test_toolbar_has_one_history_entry_and_menu_keeps_undo_actions(qt, monkeypat
     ]
     toolbar.addAction.assert_called_once_with(plugin.action)
     assert Path(plugin.action.icon.path).name == "icon.svg"
+    assert Path(plugin.action.icon.path).is_file()
     assert iface.addPluginToMenu.call_count == 5
     module.FaroisAuditDock = Mock()
     plugin.action.triggered.emit()
@@ -410,6 +411,7 @@ def test_conflict_declined_does_not_force(dock, qt):
     dock.api = admin_api(revert_change=Mock(side_effect=conflict))
     dock.undo_selected()
     dock.api.revert_change.assert_called_once()
+    assert qt.QMessageBox.question.call_count == 2
     dock.layer.reload.assert_not_called()
 
 

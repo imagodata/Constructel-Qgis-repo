@@ -4,8 +4,10 @@ Version 0.2.1 : les administrateurs (ADMIN, MANAGER) se connectent à l'API Faro
 (clic droit du panneau ou menu Farois → Se connecter à Farois…, compte AD) et peuvent
 annuler toute modification connue du moteur 442 : RESTORE pour une suppression,
 annulation de transaction pour une création, FORCE proposé après confirmation en cas
-de conflit. Le jeton reste en mémoire (8 h) ; l'URL de l'API est réglable dans les
-paramètres QGIS (`farois_audit_rollback/api_url`, défaut `http://192.168.160.31:8080`).
+de conflit, depuis toutes les portées de l'historique. Le mot de passe AD est demandé
+à la connexion et jamais stocké ; le jeton reste en mémoire (8 h). L'URL de l'API est
+réglable dans les paramètres QGIS (`farois_audit_rollback/api_url`, défaut
+`http://192.168.160.31:8080`).
 Zip : `farois_audit_rollback.0.2.1.zip` (le point est requis pour que QGIS propose la mise à jour).
 
 Version 0.1.8 : informations d'audit complètes avec le moteur existant,
@@ -18,20 +20,25 @@ retour/avance (icon.svg, farois-logo.png 128 px), qui ouvre le panneau. Les
 annulations restent dans le clic droit de l'historique et le menu Extensions → Farois.
 
 Plugin QGIS autonome farois_audit_rollback, indépendant de Constructel Bridge.
-PostgreSQL est l’autorité pour identité, droits, périmètre, fenêtre, conflits et journalisation.
+Sans session admin, PostgreSQL est l’autorité pour identité, droits, périmètre, fenêtre,
+conflits et journalisation. En session admin, l’API Farois (compte AD, rôle ADMIN/MANAGER)
+et le moteur 442 sont l’autorité : identité, droits, conflits et journal (avec le motif).
 Python n’exécute jamais de SQL fourni par l’utilisateur et ne construit pas d’UPDATE.
 
 ## Installation et utilisation
 
 Dans QGIS : Extensions → Installer depuis un ZIP, puis activer le plugin.
 La couche active doit être une couche PostgreSQL issue d’une connexion QGIS standard.
-Aucun mot de passe n’est demandé ni stocké. Ouvrir le panneau Farois et choisir
-la couche source : son historique récent se charge même sans objet sélectionné.
-Pour une annulation, passer en mode Objet sélectionné et sélectionner exactement
-un objet. Un motif est obligatoire.
+Sans session admin, aucun mot de passe n’est demandé. En mode admin, le mot de passe AD
+est demandé par « Se connecter à Farois… » et n’est jamais stocké (jeton en mémoire).
+Ouvrir le panneau Farois et choisir la couche source : son historique récent se charge
+même sans objet sélectionné. Sans session admin, une annulation exige le mode Objet
+sélectionné et exactement un objet. En session admin, elle est possible depuis toutes
+les portées (un objet supprimé n’apparaît qu’en portée couche ou « Tous les changements
+visibles »). Un motif est obligatoire (500 caractères au maximum en mode admin).
 
-Le mode utilisateur est FIELD. FORCE et RESTORE restent réservés à l’administrateur
-et sont décidés par PostgreSQL ; le MVP n’expose pas de contournement Python.
+Le mode utilisateur est FIELD. FORCE et RESTORE restent réservés à l’administrateur :
+ils passent par l’API Farois, qui les soumet au moteur 442 ; aucun contournement Python.
 Imports et cascades sont visibles mais non annulables par défaut. Après succès,
 la couche est rechargée et l’identifiant d’annulation est affiché.
 
