@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from plugins.farois_audit_rollback.api.farois_client import (
+    FaroisApiUnavailable,
     FaroisConflict,
     FaroisNotAuthenticated,
     FaroisProfile,
@@ -471,3 +472,26 @@ def test_unload_drops_the_farois_session(qt):
     plugin.unload()
     api.logout.assert_called_once()
     assert plugin.api is None
+
+
+def test_failed_relogin_while_connected_refreshes_session(dock, qt):
+    dock.api = admin_api(login=Mock(side_effect=FaroisNotAuthenticated("Identifiants Farois refusés.")))
+    dock.api_session_changed = Mock()
+    dock.connect_farois(credentials=("a@constructel.example.be", "mauvais"))
+    assert "Identifiants Farois refusés." in qt.QMessageBox.critical.call_args.args[2]
+    dock.api_session_changed.assert_called_once()
+
+
+def test_undo_redraws_session_banner_afterwards(dock):
+    dock.api = admin_api()
+    dock._render_api_status = Mock()
+    dock.undo_selected()
+    dock._render_api_status.assert_called()
+
+
+def test_unavailable_api_reports_uncertain_outcome_without_fallback(dock, qt):
+    dock.api = admin_api(revert_change=Mock(side_effect=FaroisApiUnavailable("API Farois injoignable (http://x).")))
+    dock.undo_selected()
+    dock.repository.revert_change.assert_not_called()
+    dock.layer.reload.assert_not_called()
+    assert "Résultat incertain" in qt.QMessageBox.warning.call_args.args[2]

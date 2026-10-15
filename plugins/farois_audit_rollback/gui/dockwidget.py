@@ -31,7 +31,11 @@ except ImportError:
 from .history_model import HistoryModel, HistoryEntry
 from .rollback_actions import action_states, transaction_uuid
 from .login_dialog import ask_credentials
-from ..api.farois_client import FaroisConflict, FaroisNotAuthenticated
+from ..api.farois_client import (
+    FaroisApiUnavailable,
+    FaroisConflict,
+    FaroisNotAuthenticated,
+)
 from ..db.qgis_connection import repository_for_layer, selected_context, layer_context
 from .lifecycle import SignalScope, live_ui
 from .feature_navigation import (
@@ -881,6 +885,7 @@ if QGIS_AVAILABLE:
                     QMessageBox.critical(self, "Farois", str(exc))
             finally:
                 self._undo_in_progress = False
+                self._render_api_status()
                 self.load_history(silent=True)
                 self._update_actions()
 
@@ -933,10 +938,13 @@ if QGIS_AVAILABLE:
                 )
             if not credentials:
                 return
+            was_connected = api.connected
             try:
                 profile = api.login(*credentials)
             except Exception as exc:
                 QMessageBox.critical(self, "Farois", str(exc))
+                if was_connected:
+                    self.api_session_changed()
                 return
             if not profile.is_admin:
                 api.logout()
@@ -965,6 +973,9 @@ if QGIS_AVAILABLE:
             mode = "RESTORE" if not transaction and entry.operation == "DELETE" else "FIELD"
             try:
                 return send(target_id, mode, reason)
+            except FaroisApiUnavailable as exc:
+                self._warn_uncertain(exc)
+                return None
             except FaroisNotAuthenticated:
                 self._render_api_status()
                 QMessageBox.warning(
@@ -979,7 +990,20 @@ if QGIS_AVAILABLE:
                     raise
                 if not self._confirm_force(conflict):
                     return None
-                return send(target_id, "FORCE", reason)
+                try:
+                    return send(target_id, "FORCE", reason)
+                except FaroisApiUnavailable as exc:
+                    self._warn_uncertain(exc)
+                    return None
+
+        def _warn_uncertain(self, exc):
+            QMessageBox.warning(
+                self,
+                "Farois",
+                f"{exc}\nRésultat incertain : si la requête a atteint le serveur, "
+                "l'annulation a pu être enregistrée. Actualisez l'historique avant "
+                "de relancer (une annulation déjà faite sera refusée).",
+            )
 
         def _confirm_force(self, conflict):
             report = conflict.report or {}
