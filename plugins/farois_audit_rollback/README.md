@@ -1,5 +1,13 @@
 # Farois — Historique et rollback
 
+Version 0.2.1 : les administrateurs (ADMIN, MANAGER) se connectent à l'API Farois
+(clic droit du panneau ou menu Farois → Se connecter à Farois…, compte AD) et peuvent
+annuler toute modification connue du moteur 442 : RESTORE pour une suppression,
+annulation de transaction pour une création, FORCE proposé après confirmation en cas
+de conflit. Le jeton reste en mémoire (8 h) ; l'URL de l'API est réglable dans les
+paramètres QGIS (`farois_audit_rollback/api_url`, défaut `http://192.168.160.31:8080`).
+Zip : `farois_audit_rollback.0.2.1.zip` (le point est requis pour que QGIS propose la mise à jour).
+
 Version 0.1.8 : informations d'audit complètes avec le moteur existant,
 contrat d'annulation détecté, conflit sans restitution partielle, détail avant/après
 et modification des attributs actuels dans le formulaire QGIS. Le logo et les

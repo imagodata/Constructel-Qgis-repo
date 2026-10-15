@@ -66,7 +66,7 @@ def publish(package, repository_dir, base_url, dry_run=False):
             char not in "0123456789.-abcdefghijklmnopqrstuvwxyz" for char in version
         ):
             raise ValueError("Version invalide.")
-        filename = f"{PLUGIN}_{version}.zip"
+        filename = f"{PLUGIN}.{version}.zip"  # id QGIS = file_name.partition(".")[0]
         icon_name = meta["icon"]
         if Path(icon_name).name != icon_name or not icon_name.endswith(".png"):
             raise ValueError("Icône PNG à la racine du plugin requise.")

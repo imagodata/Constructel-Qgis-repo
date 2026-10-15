@@ -43,7 +43,7 @@ def test_publication_keeps_old_entries_and_serves_icon(publication):
         nodes[1].findtext("icon")
         == "http://fixture-repository/plugin-repo/icons/farois_audit_rollback_0.1.6.png"
     )
-    assert url.endswith("/plugin-repo/packages/farois_audit_rollback_0.1.6.zip")
+    assert url.endswith("/plugin-repo/packages/farois_audit_rollback.0.1.6.zip")
     assert (root / "plugins.xml.before-farois_audit_rollback-0.1.6").read_text() == xml
     assert (
         root / "icons/farois_audit_rollback_0.1.6.png"

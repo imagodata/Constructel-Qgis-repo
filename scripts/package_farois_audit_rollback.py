@@ -12,7 +12,8 @@ VERSION = next(
     if line.startswith("version=")
 )
 DIST = ROOT / "dist"
-OUTPUT = DIST / f"farois_audit_rollback_{VERSION}.zip"
+# QGIS dérive l'id du plugin de file_name.partition(".")[0] : séparer la version par un point.
+OUTPUT = DIST / f"farois_audit_rollback.{VERSION}.zip"
 EXCLUDED = {
     ".env",
     ".env.secrets",
