@@ -658,3 +658,18 @@ def test_admin_flow_never_falls_back_to_postgres_if_session_drops_during_dialog(
     dock.api.revert_change.assert_called_once()
     dock.repository.revert_change.assert_not_called()
     dock.layer.reload.assert_not_called()
+
+
+def test_api_server_error_with_json_body_is_shown_as_nothing_undone(dock, qt):
+    from plugins.farois_audit_rollback.tests.test_farois_client import http_error, logged_in
+
+    client, _ = logged_in(http_error(503, {"detail": {
+        "message": "Délai dépassé, réessayez.", "reason": "timeout",
+        "engine": "canceling statement due to statement timeout"}}))
+    dock.api = client
+    dock.undo_selected()
+    text = qt.QMessageBox.critical.call_args.args[2]
+    assert "Rien n'a été annulé" in text and "incertain" not in text
+    qt.QMessageBox.warning.assert_not_called()
+    dock.repository.revert_change.assert_not_called()
+    dock.layer.reload.assert_not_called()

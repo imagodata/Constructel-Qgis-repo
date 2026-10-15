@@ -4,6 +4,7 @@ Stdlib uniquement (urllib). Le jeton Bearer reste en mémoire : il n'est jamais
 écrit dans les paramètres QGIS ni sur disque ; le mot de passe n'est jamais conservé.
 """
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -13,6 +14,7 @@ DEFAULT_API_URL = "http://192.168.160.31:8080"
 SETTINGS_KEY = "farois_audit_rollback/api_url"
 TIMEOUT_S = 10
 ADMIN_ROLES = frozenset({"ADMIN", "MANAGER"})
+REASON_MAX_LENGTH = 500  # contrat API : motif de 1 à 500 caractères après strip()
 
 
 class FaroisApiError(Exception):
@@ -74,12 +76,35 @@ def _decode(raw):
         ) from None
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Ne suit aucune redirection : le jeton Bearer ne part jamais ailleurs."""
+
+    def _refuse(self, req, fp, code, msg, headers):
+        if fp is not None:
+            fp.close()
+        raise FaroisApiError(
+            f"Redirection refusée (HTTP {code}) pour {req.full_url} : vérifiez "
+            f"l'URL de l'API Farois (paramètre {SETTINGS_KEY}).",
+            status=code,
+        )
+
+    http_error_301 = http_error_302 = http_error_303 = _refuse
+    http_error_307 = http_error_308 = _refuse
+
+
+def default_opener():
+    # API sur IP LAN : aucun proxy système (ProxyHandler vide), aucune redirection.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _RefuseRedirects())
+
+
 class FaroisApiClient:
     def __init__(self, base_url, opener=None):
         self.base_url = str(base_url).rstrip("/")
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or default_opener()
         self._token = None
         self.profile = None
+        # Dernière adresse saisie, en mémoire seulement : pré-remplit la reconnexion.
+        self.last_email = ""
 
     @property
     def connected(self):
@@ -91,6 +116,7 @@ class FaroisApiClient:
 
     def login(self, email, password):
         self.logout()
+        self.last_email = email
         try:
             data = self._request(
                 "POST", "/api/v1/auth/login",
@@ -106,6 +132,11 @@ class FaroisApiClient:
         self._token = token
         try:
             me = self._request("GET", "/api/v1/auth/me")
+        except FaroisNotAuthenticated as exc:
+            self.logout()
+            raise FaroisNotAuthenticated(
+                "Identifiants Farois refusés.", status=exc.status, detail=exc.detail
+            ) from None
         except Exception:
             self.logout()
             raise
@@ -144,19 +175,30 @@ class FaroisApiClient:
             with self._opener.open(request, timeout=TIMEOUT_S) as response:
                 return _decode(response.read())
         except urllib.error.HTTPError as exc:
-            raise self._http_error(exc) from None
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise self._http_error(exc, path) from None
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            http.client.HTTPException,  # IncompleteRead, BadStatusLine… : incertain
+        ) as exc:
             raise FaroisApiUnavailable(
                 f"API Farois injoignable ({self.base_url})."
             ) from exc
 
-    def _http_error(self, exc):
+    def _http_error(self, exc, path=""):
         try:
             payload = json.loads(exc.read().decode("utf-8"))
         except Exception:
             payload = None
         detail = payload.get("detail") if isinstance(payload, dict) else None
-        message = detail.get("message") if isinstance(detail, dict) else detail
+        if isinstance(detail, dict):
+            message = detail.get("message")
+        elif isinstance(detail, list):  # 422 FastAPI : liste d'erreurs de validation
+            first = detail[0] if detail and isinstance(detail[0], dict) else {}
+            message = str(first.get("msg") or "").removeprefix("Value error, ")
+        else:
+            message = detail
         message = str(message or f"Erreur de l'API Farois ({exc.code}).")
         if isinstance(detail, dict) and detail.get("engine"):
             message = f"{message} — {detail['engine']}"
@@ -169,6 +211,11 @@ class FaroisApiClient:
             return FaroisForbidden(message, status=403, detail=detail)
         if exc.code == 409:
             return FaroisConflict(message, status=409, detail=detail)
-        if exc.code >= 500 or payload is None:
+        # Seule une réponse JSON de l'API ({"detail": …}) prouve qu'elle a fait
+        # ROLLBACK ; page HTML d'un proxy ou corps illisible : résultat incertain.
+        api_answered = isinstance(payload, dict) and "detail" in payload
+        if payload is None or (exc.code >= 500 and not api_answered):
             return FaroisApiUnavailable(message, status=exc.code, detail=detail)
+        if exc.code >= 500 and path.endswith("/revert"):
+            message = f"{message}\nRien n'a été annulé (erreur {exc.code} de l'API Farois)."
         return FaroisApiError(message, status=exc.code, detail=detail)
