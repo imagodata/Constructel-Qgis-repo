@@ -14,6 +14,7 @@ from plugins.farois_audit_rollback.api.farois_client import (
     FaroisNotAuthenticated,
     FaroisProfile,
 )
+from plugins.farois_audit_rollback.gui.dockwidget import AUTO_REASON
 from plugins.farois_audit_rollback.gui.history_model import HistoryEntry, HistoryModel
 
 TX = "00000000-0000-4000-8000-000000000010"
@@ -83,9 +84,7 @@ def qt(monkeypatch):
         critical=Mock(),
         information=Mock(),
     )
-    widgets.QInputDialog = SimpleNamespace(
-        getText=Mock(return_value=("test reason", True))
-    )
+    widgets.QInputDialog = SimpleNamespace(getText=Mock(return_value=("x", True)))
     core = ModuleType("qgis.PyQt.QtCore")
     core.Qt = SimpleNamespace(ToolButtonTextOnly=0, RightDockWidgetArea=2, gray=3)
     core.QTimer = object
@@ -129,6 +128,8 @@ def dock(qt):
     from plugins.farois_audit_rollback.gui.lifecycle import SignalScope
 
     panel._signals = SignalScope()
+    panel.bar = Mock()
+    panel.iface = SimpleNamespace(messageBar=lambda: panel.bar)
     panel.is_usable = lambda: not panel._signals.disposed
     panel.repository = SimpleNamespace(
         engine_available=True,
@@ -159,15 +160,15 @@ def dock(qt):
 
 def test_transaction_button_dispatches_only_transaction(dock, qt):
     dock.undo_transaction_selected()
-    dock.repository.revert_transaction.assert_called_once_with(TX, "test reason")
+    dock.repository.revert_transaction.assert_called_once_with(TX, AUTO_REASON)
     dock.repository.revert_change.assert_not_called()
     dock.layer.selectByIds.assert_called_once_with([7])
-    assert TX in qt.QMessageBox.question.call_args.args[2]
+    assert TX[:8] in qt.QMessageBox.question.call_args.args[2]
 
 
 def test_unit_button_does_not_silently_undo_transaction(dock):
     dock.undo_selected()
-    dock.repository.revert_change.assert_called_once_with("change", "test reason")
+    dock.repository.revert_change.assert_called_once_with("change", AUTO_REASON)
     dock.repository.revert_transaction.assert_not_called()
 
 
@@ -181,9 +182,9 @@ def test_cancel_confirmation_does_not_call_database(dock, qt):
 def test_changed_selection_during_dialog_does_not_call_database(dock, qt):
     def changed(*args):
         dock._selected_context = lambda: (dock.layer, "wyre", "roads", "other-record")
-        return "test", True
+        return qt.QMessageBox.Yes
 
-    qt.QInputDialog.getText.side_effect = changed
+    qt.QMessageBox.question.side_effect = changed
     dock.undo_transaction_selected()
     dock.repository.revert_transaction.assert_not_called()
     qt.QMessageBox.critical.assert_called_once()
@@ -362,7 +363,7 @@ def admin_api(**overrides):
 def test_admin_session_sends_change_undo_to_api_not_postgres(dock):
     dock.api = admin_api()
     dock.undo_selected()
-    dock.api.revert_change.assert_called_once_with("change", "FIELD", "test reason")
+    dock.api.revert_change.assert_called_once_with("change", "FIELD", AUTO_REASON)
     dock.repository.revert_change.assert_not_called()
     dock.layer.reload.assert_called_once()
 
@@ -373,13 +374,13 @@ def test_admin_session_restores_a_delete(dock):
         [HistoryEntry(change_id="change", transaction_id=TX, operation="DELETE", can_undo=True)]
     )
     dock.undo_selected()
-    dock.api.revert_change.assert_called_once_with("change", "RESTORE", "test reason")
+    dock.api.revert_change.assert_called_once_with("change", "RESTORE", AUTO_REASON)
 
 
 def test_admin_session_sends_transaction_undo_to_api(dock):
     dock.api = admin_api()
     dock.undo_transaction_selected()
-    dock.api.revert_transaction.assert_called_once_with(TX, "FIELD", "test reason")
+    dock.api.revert_transaction.assert_called_once_with(TX, "FIELD", AUTO_REASON)
     dock.repository.revert_transaction.assert_not_called()
 
 
@@ -558,7 +559,7 @@ def test_admin_restores_a_deleted_object_from_layer_or_visible_scope(
     (change_ok, reason), (tx_ok, _) = dock.action_states()
     assert change_ok and tx_ok, reason
     dock.undo_selected()
-    dock.api.revert_change.assert_called_once_with("c", "RESTORE", "test reason")
+    dock.api.revert_change.assert_called_once_with("c", "RESTORE", AUTO_REASON)
     dock.repository.revert_change.assert_not_called()
     dock._selected_context.assert_not_called()
     for layer in (source, twin):  # même table, même connexion
@@ -567,7 +568,7 @@ def test_admin_restores_a_deleted_object_from_layer_or_visible_scope(
         layer.selectByIds.assert_not_called()  # hors mode objet : sélection intacte
     other.reload.assert_not_called()
     foreign.reload.assert_not_called()
-    assert "Annulation enregistrée" in qt.QMessageBox.information.call_args.args[2]
+    dock.bar.pushSuccess.assert_called_once()
 
 
 def test_admin_transaction_undo_from_visible_scope(dock, qt):
@@ -575,7 +576,7 @@ def test_admin_transaction_undo_from_visible_scope(dock, qt):
     dock.history_scope = scope("visible")
     dock._selected_context = Mock(side_effect=ValueError("Sélectionnez exactement un objet."))
     dock.undo_transaction_selected()
-    dock.api.revert_transaction.assert_called_once_with(TX, "FIELD", "test reason")
+    dock.api.revert_transaction.assert_called_once_with(TX, "FIELD", AUTO_REASON)
     dock._selected_context.assert_not_called()
     dock.layer.reload.assert_called_once()  # à défaut de couche de la table : la source
     dock.layer.selectByIds.assert_not_called()
@@ -599,9 +600,9 @@ def test_admin_undo_refused_when_history_changed_during_dialog(dock, qt, change)
             dock.model.set_entries([HistoryEntry(change_id="other", transaction_id=TX)])
         else:
             dock.repository = SimpleNamespace(engine_available=True)
-        return "motif", True
+        return qt.QMessageBox.Yes
 
-    qt.QInputDialog.getText.side_effect = changed
+    qt.QMessageBox.question.side_effect = changed
     dock.undo_selected()
     dock.api.revert_change.assert_not_called()
     dock.layer.reload.assert_not_called()
@@ -646,9 +647,9 @@ def test_admin_flow_never_falls_back_to_postgres_if_session_drops_during_dialog(
 
     def logout(*args):
         dock.api.connected = dock.api.is_admin = False
-        return "motif", True
+        return qt.QMessageBox.Yes
 
-    qt.QInputDialog.getText.side_effect = logout
+    qt.QMessageBox.question.side_effect = logout
     dock.undo_selected()
     dock.api.revert_change.assert_called_once()
     dock.repository.revert_change.assert_not_called()
@@ -729,19 +730,20 @@ def test_api_success_that_undid_nothing_is_not_reported_as_done(dock, qt, transa
     dock.api = admin_api(revert_change=Mock(return_value=result),
                          revert_transaction=Mock(return_value=result))
     (dock.undo_transaction_selected if transaction else dock.undo_selected)()
-    assert "Rien n'a été annulé" in qt.QMessageBox.warning.call_args.args[2]
+    assert "Rien n'a été annulé" in dock.bar.pushWarning.call_args.args[1]
     qt.QMessageBox.information.assert_not_called()
     dock.layer.reload.assert_not_called()
 
 
-def test_reason_over_500_characters_is_refused_before_sending(dock, qt):
+def test_reason_over_500_characters_is_refused_before_sending(dock, qt, monkeypatch):
     dock.api = admin_api()
-    qt.QInputDialog.getText.return_value = ("x" * 501, True)
+    glb = dock.undo_selected.__func__.__globals__
+    monkeypatch.setitem(glb, "AUTO_REASON", "x" * 501)
     dock.undo_selected()
     dock.api.revert_change.assert_not_called()
     assert "500" in qt.QMessageBox.warning.call_args.args[2]
     dock.layer.reload.assert_not_called()
-    qt.QInputDialog.getText.return_value = ("  " + "x" * 500 + "  ", True)
+    monkeypatch.setitem(glb, "AUTO_REASON", "  " + "x" * 500 + "  ")
     dock.undo_selected()
     dock.api.revert_change.assert_called_once()
 
@@ -771,7 +773,7 @@ def test_api_transaction_with_one_effective_member_is_a_success(dock, qt):
     ]}
     dock.api = admin_api(revert_transaction=Mock(return_value=result))
     dock.undo_transaction_selected()
-    assert "Annulation enregistrée" in qt.QMessageBox.information.call_args.args[2]
+    dock.bar.pushSuccess.assert_called_once()
     qt.QMessageBox.warning.assert_not_called()
     dock.layer.reload.assert_called_once()
 
@@ -781,7 +783,7 @@ def test_api_transaction_whose_members_all_had_no_effect_undid_nothing(dock, qt)
               "changes": [dict(NO_EFFECT, change_id="a"), dict(NO_EFFECT, change_id="b")]}
     dock.api = admin_api(revert_transaction=Mock(return_value=result))
     dock.undo_transaction_selected()
-    assert "Rien n'a été annulé" in qt.QMessageBox.warning.call_args.args[2]
+    assert "Rien n'a été annulé" in dock.bar.pushWarning.call_args.args[1]
     qt.QMessageBox.information.assert_not_called()
     dock.layer.reload.assert_not_called()
 
@@ -1164,10 +1166,57 @@ def test_edit_buffer_appearing_during_confirmation_blocks_the_call(dock, qt, mon
 
     def edit_meanwhile(*args):
         editing(twin, "Routes")
-        return "test", True
+        return qt.QMessageBox.Yes
 
-    qt.QInputDialog.getText.side_effect = edit_meanwhile
+    qt.QMessageBox.question.side_effect = edit_meanwhile
     dock.undo_selected()
     dock.repository.revert_change.assert_not_called()
     qt.QMessageBox.critical.assert_called_once()
     assert "Routes" in qt.QMessageBox.critical.call_args.args[2]
+
+
+def test_undo_never_asks_for_a_reason(dock, qt):
+    dock.undo_selected()
+    dock.undo_transaction_selected()
+    qt.QInputDialog.getText.assert_not_called()
+    assert AUTO_REASON == "Annulation depuis QGIS (plugin historique)"
+
+
+@pytest.mark.parametrize("transaction", [False, True])
+def test_confirmation_is_short_and_shows_no_values(dock, qt, transaction):
+    dock.model = HistoryModel([HistoryEntry(
+        change_id="change", transaction_id=TX, can_undo=True,
+        before={"nom": "avant-secret"}, after={"nom": "apres-secret"})])
+    (dock.undo_transaction_selected if transaction else dock.undo_selected)()
+    message = qt.QMessageBox.question.call_args.args[2]
+    for forbidden in ("Avant", "Après", "secret", "{"):
+        assert forbidden not in message
+    assert message.startswith("Annuler ")
+    if transaction:
+        assert "toute la transaction" in message and TX[:8] in message
+    assert qt.QMessageBox.question.call_args.args[4] == qt.QMessageBox.No
+
+
+def test_success_goes_to_the_message_bar_not_a_dialog(dock, qt):
+    dock.undo_selected()
+    dock.bar.pushSuccess.assert_called_once_with("Farois", "Annulation enregistrée.")
+    qt.QMessageBox.information.assert_not_called()
+
+
+def test_success_without_message_bar_shows_nothing(dock, qt):
+    dock.iface = SimpleNamespace()
+    dock.undo_selected()
+    qt.QMessageBox.information.assert_not_called()
+    qt.QMessageBox.critical.assert_not_called()
+
+
+def test_nothing_undone_is_a_message_bar_warning(dock, qt):
+    dock.api = admin_api(revert_change=Mock(return_value={}))
+    dock.undo_selected()
+    assert "Rien n'a été annulé" in dock.bar.pushWarning.call_args.args[1]
+    dock.bar.pushSuccess.assert_not_called()
+
+
+def test_postgres_path_receives_the_automatic_reason(dock):
+    dock.undo_selected()
+    dock.repository.revert_change.assert_called_once_with("change", AUTO_REASON)

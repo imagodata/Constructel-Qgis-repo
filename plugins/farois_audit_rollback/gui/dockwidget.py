@@ -13,7 +13,6 @@ try:
         QTableWidget,
         QTableWidgetItem,
         QMessageBox,
-        QInputDialog,
         QComboBox,
         QLabel,
         QGroupBox,
@@ -56,6 +55,8 @@ AUTO_CONNECTED, AUTO_EXPIRED, AUTO_NOT_ADMIN = "connected", "expired", "not_admi
 AUTO_UNREACHABLE, AUTO_FAILED = "unreachable", "failed"
 # Jeton gardé après un échec passager : une nouvelle tentative a un sens.
 AUTO_CONNECT_RETRY = frozenset({AUTO_UNREACHABLE, AUTO_FAILED})
+# Motif transmis à l'audit : l'annulation ne demande plus de saisie.
+AUTO_REASON = "Annulation depuis QGIS (plugin historique)"
 
 if QGIS_AVAILABLE:
 
@@ -832,21 +833,16 @@ if QGIS_AVAILABLE:
                 if transaction:
                     title = "Confirmer l'annulation de la transaction"
                     message = (
-                        f"Transaction : {target_id}\n"
-                        "Toutes les modifications de cette transaction sont concernées, "
-                        "y compris celles des autres objets et les cascades éventuelles.\n"
-                        "Le périmètre complet n'est pas prévisualisé par ce panneau. "
-                        "PostgreSQL vérifiera les droits et les conflits. Continuer ?"
+                        f"Annuler toute la transaction {str(target_id)[:8]} "
+                        "(y compris les autres objets et cascades) ?"
                     )
                 else:
                     title = "Confirmer l'annulation de la modification"
-                    preview = json.dumps(
-                        {"Avant": entry.before, "Après": entry.after},
-                        ensure_ascii=False,
-                        indent=2,
-                        default=str,
+                    label = entry.label or entry.record_id
+                    message = (
+                        f"Annuler la modification de « {label} » "
+                        f"({entry.table_name}) ?"
                     )
-                    message = f"Modification : {target_id}\n{preview}\nContinuer ?"
                 if (
                     QMessageBox.question(
                         self,
@@ -858,8 +854,8 @@ if QGIS_AVAILABLE:
                     != QMessageBox.Yes
                 ):
                     return
-                reason, ok = QInputDialog.getText(self, "Motif obligatoire", "Motif :")
-                if not self.is_usable() or not ok or not reason.strip():
+                reason = AUTO_REASON
+                if not self.is_usable():
                     return
                 if admin:
                     if self.repository is not repository or not any(
@@ -903,14 +899,7 @@ if QGIS_AVAILABLE:
                     layer.reload()
                     layer.selectByIds(selected_ids)
                     layer.triggerRepaint()
-                result_label = (
-                    json.dumps(undo_id, ensure_ascii=False, indent=2, default=str)
-                    if isinstance(undo_id, dict)
-                    else str(undo_id)
-                )
-                QMessageBox.information(
-                    self, "Farois", f"Annulation enregistrée : {result_label}"
-                )
+                self._notify("Annulation enregistrée.")
             except Exception as exc:
                 if self.is_usable():
                     QMessageBox.critical(self, "Farois", str(exc))
@@ -1100,11 +1089,10 @@ if QGIS_AVAILABLE:
                     return None
             if not undo_had_effect(result):
                 # 200 sans aucun effet (changes vide, rien de restauré/annulé).
-                QMessageBox.warning(
-                    self,
-                    "Farois",
+                self._notify(
                     "Rien n'a été annulé : l'API Farois n'a rapporté aucun effet "
                     "(modification déjà annulée ou sans changement).",
+                    warning=True,
                 )
                 return None
             return result
@@ -1139,6 +1127,14 @@ if QGIS_AVAILABLE:
                 if keep_selection:
                     layer.selectByIds(selected_ids)
                 layer.triggerRepaint()
+
+        def _notify(self, text, warning=False):
+            """Message court dans la barre de messages QGIS (rien si indisponible)."""
+            try:
+                bar = self.iface.messageBar()
+                (bar.pushWarning if warning else bar.pushSuccess)("Farois", text)
+            except (AttributeError, RuntimeError):
+                pass
 
         def _warn_uncertain(self, exc):
             QMessageBox.warning(
