@@ -1,5 +1,7 @@
 # Farois — Historique et rollback
 
+0.2.4 : plus de saisie de motif (motif automatique dans l'audit), confirmation courte sans valeurs, succès dans la barre de messages
+
 0.2.3 : la raison d'une annulation impossible s'affiche dans le menu ; seules les modifications non enregistrées de la couche concernée bloquent l'annulation.
 
 Version 0.2.2 : colonne Avant → après, détail Champ | Avant | Après, « création »/« suppression » dans Colonnes.
@@ -45,7 +47,7 @@ de conflit, depuis toutes les portées de l'historique. Le mot de passe AD est d
 0.2.2 seul le jeton de rafraîchissement peut être mémorisé (voir ci-dessus). L'URL de l'API est
 réglable dans les paramètres QGIS (`farois_audit_rollback/api_url`, défaut
 `http://192.168.160.31:8080`).
-Zip : `farois_audit_rollback.0.2.3.zip` (le point est requis pour que QGIS propose la mise à jour).
+Zip : `farois_audit_rollback.0.2.4.zip` (le point est requis pour que QGIS propose la mise à jour).
 
 Version 0.1.8 : informations d'audit complètes avec le moteur existant,
 contrat d'annulation détecté, conflit sans restitution partielle, détail avant/après
