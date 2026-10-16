@@ -29,7 +29,7 @@ try:
 except ImportError:
     QGIS_AVAILABLE = False
 from .history_model import HistoryModel, HistoryEntry
-from .rollback_actions import action_states, transaction_uuid
+from .rollback_actions import action_states, disabled_action_text, transaction_uuid
 from .login_dialog import ask_credentials, bridge_email
 from .change_details import columns_label, summary_text, show_change_details
 from ..api.farois_client import (
@@ -45,6 +45,7 @@ from .feature_navigation import (
     find_history_feature,
     matching_layers,
     navigation_target,
+    pending_edit_layer,
     resolve_history_features,
 )
 
@@ -506,6 +507,26 @@ if QGIS_AVAILABLE:
             self.table.setRowCount(0)
             self._update_actions()
 
+        def _pending_edit_reason(self, entry):
+            """Raison de blocage si une couche de la table de l'entrée a des
+            modifications non enregistrées (sinon None). Même règle pour
+            l'état des actions et la revérification avant l'appel."""
+            project = QgsProject.instance() if hasattr(QgsProject, "instance") else None
+            if project is None or entry is None:
+                return None
+            layer = pending_edit_layer(
+                entry,
+                self._resolve_source_layer(),
+                list(project.mapLayers().values()),
+                sip.isdeleted,
+            )
+            if layer is None:
+                return None
+            return (
+                "Enregistrez ou annulez d'abord les modifications de la couche "
+                f"« {layer.name()} »."
+            )
+
         def action_states(self):
             if not self.is_usable():
                 return (False, "Panneau fermé."), (False, "Panneau fermé.")
@@ -530,16 +551,9 @@ if QGIS_AVAILABLE:
             if self.repository is not None and not self.repository.engine_available:
                 reason = "Le moteur d’annulation Farois est indisponible pour cette connexion (installation, contrat ou droits PostgreSQL)."
                 return (False, reason), (False, reason)
-            project = QgsProject.instance() if hasattr(QgsProject, "instance") else None
-            if project is not None and any(
-                item.providerType() == "postgres" and item.isEditable()
-                for item in project.mapLayers().values()
-                if hasattr(item, "providerType") and hasattr(item, "isEditable")
-            ):
-                reason = (
-                    "Enregistrez ou abandonnez les éditions PostgreSQL avant d'annuler."
-                )
-                return (False, reason), (False, reason)
+            blocked = self._pending_edit_reason(self._entry_for_current_row())
+            if blocked:
+                return (False, blocked), (False, blocked)
             return action_states(
                 self._entry_for_current_row(),
                 connected=self.repository is not None,
@@ -577,6 +591,7 @@ if QGIS_AVAILABLE:
                 self.table.setCurrentCell(item.row(), item.column())
                 self.table.selectRow(item.row())
             menu = QMenu(self)
+            menu.setToolTipsVisible(True)
             identify = zoom = select = edit = details = undo = transaction = None
             if item is not None:
                 identify = menu.addAction("Identifier les objets")
@@ -604,6 +619,8 @@ if QGIS_AVAILABLE:
                 ):
                     action.setEnabled(enabled)
                     action.setToolTip(reason)
+                    if not enabled:
+                        action.setText(disabled_action_text(action.text(), reason))
                 menu.addSeparator()
             refresh = menu.addAction("Actualiser l’historique")
             reset = menu.addAction("Réinitialiser les filtres")
@@ -860,17 +877,9 @@ if QGIS_AVAILABLE:
                         raise ValueError(
                             "La couche source ou la sélection a changé. Actualisez l'historique."
                         )
-                project = (
-                    QgsProject.instance() if hasattr(QgsProject, "instance") else None
-                )
-                if project is not None and any(
-                    item.providerType() == "postgres" and item.isEditable()
-                    for item in project.mapLayers().values()
-                    if hasattr(item, "providerType") and hasattr(item, "isEditable")
-                ):
-                    raise ValueError(
-                        "Enregistrez ou abandonnez les éditions PostgreSQL avant d'annuler."
-                    )
+                blocked = self._pending_edit_reason(entry)
+                if blocked:
+                    raise ValueError(blocked)
                 if admin:
                     undo_id = self._undo_via_api(entry, transaction, target_id, reason)
                     if undo_id is None:
