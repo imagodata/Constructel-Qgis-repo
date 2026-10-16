@@ -1,10 +1,15 @@
 """Client HTTP minimal de l'API Farois (annulation admin, spec 2026-10-15).
 
-Stdlib uniquement (urllib). Le jeton Bearer reste en mémoire : il n'est jamais
-écrit dans les paramètres QGIS ni sur disque ; le mot de passe n'est jamais conservé.
+Stdlib uniquement (urllib). Le jeton d'accès (Bearer) reste en mémoire. Le jeton
+de rafraîchissement (cookie refresh_token du login, 30 jours) aussi, et n'est
+confié au magasin de session (session_store) que si l'utilisateur demande « Se
+souvenir de moi ». Le mot de passe AD n'est jamais conservé ni transmis au
+magasin. Aucun cookie jar : l'en-tête Cookie n'est posé à la main que pour
+/auth/refresh, jamais à côté d'un Authorization: Bearer.
 """
 
 import http.client
+import http.cookies
 import json
 import urllib.error
 import urllib.request
@@ -91,6 +96,21 @@ def undo_had_effect(report):
     return _change_had_effect(report)
 
 
+def _cookie(headers, name):
+    """Valeur du cookie `name` dans les en-têtes Set-Cookie (suppressions ignorées)."""
+    found = None
+    for header in (headers.get_all("Set-Cookie") if headers is not None else None) or ():
+        jar = http.cookies.SimpleCookie()
+        try:
+            jar.load(header)
+        except http.cookies.CookieError:
+            continue
+        morsel = jar.get(name)
+        if morsel is not None and morsel.value and morsel["max-age"] != "0":
+            found = morsel.value
+    return found
+
+
 def _decode(raw):
     try:
         return json.loads(raw.decode("utf-8")) if raw else {}
@@ -122,10 +142,12 @@ def default_opener():
 
 
 class FaroisApiClient:
-    def __init__(self, base_url, opener=None):
+    def __init__(self, base_url, opener=None, store=None):
         self.base_url = str(base_url).rstrip("/")
         self._opener = opener or default_opener()
+        self._store = store  # magasin de session (« Se souvenir de moi ») ou None
         self._token = None
+        self._refresh_token = None
         self.profile = None
         # Dernière adresse saisie, en mémoire seulement : pré-remplit la reconnexion.
         self.last_email = ""
@@ -138,11 +160,11 @@ class FaroisApiClient:
     def is_admin(self):
         return self.connected and self.profile.is_admin
 
-    def login(self, email, password):
+    def login(self, email, password, remember=False):
         self.logout()
         self.last_email = email
         try:
-            data = self._request(
+            data, headers = self._send(
                 "POST", "/api/v1/auth/login",
                 {"email": email, "password": password}, auth=False,
             )
@@ -154,23 +176,42 @@ class FaroisApiClient:
         if not token:
             raise FaroisApiError("Réponse de connexion Farois invalide.")
         self._token = token
+        self._refresh_token = _cookie(headers, "refresh_token")
         try:
-            me = self._request("GET", "/api/v1/auth/me")
+            self._load_profile(email)
         except FaroisNotAuthenticated as exc:
-            self.logout()
             raise FaroisNotAuthenticated(
                 "Identifiants Farois refusés.", status=exc.status, detail=exc.detail
             ) from None
-        except Exception:
-            self.logout()
-            raise
-        self.profile = FaroisProfile(
-            email=str(me.get("email") or email), role=str(me.get("role") or "")
-        )
+        if self._store is not None:
+            if remember and self._refresh_token:
+                self._store.save(email, self._refresh_token)
+            else:
+                self._store.clear()
+        return self.profile
+
+    def resume(self, refresh_token):
+        """Reprend une session mémorisée : /auth/refresh (cookie seul) puis /me."""
+        self.forget()
+        self._token = self._refresh(refresh_token)
+        self._refresh_token = refresh_token
+        self._load_profile("")
+        self.last_email = self.profile.email or self.last_email
         return self.profile
 
     def logout(self):
+        """Révoque la session côté serveur (erreurs ignorées), puis l'oublie."""
+        if self._token is not None:
+            try:
+                self._request("POST", "/api/v1/auth/logout")
+            except Exception:
+                pass
+        self.forget()
+
+    def forget(self):
+        """Oublie jetons et profil sans rien révoquer (déchargement du plugin)."""
         self._token = None
+        self._refresh_token = None
         self.profile = None
 
     def revert_change(self, change_id, mode, reason):
@@ -185,9 +226,58 @@ class FaroisApiClient:
             {"mode": mode, "reason": reason},
         )
 
+    def _load_profile(self, fallback_email):
+        try:
+            me, _ = self._send("GET", "/api/v1/auth/me")
+        except Exception:
+            self.forget()
+            raise
+        me = me if isinstance(me, dict) else {}
+        self.profile = FaroisProfile(
+            email=str(me.get("email") or fallback_email), role=str(me.get("role") or "")
+        )
+
+    def _refresh(self, refresh_token):
+        """Nouveau jeton d'accès : cookie refresh_token seul, sans Authorization."""
+        token = str(refresh_token or "")
+        if not token or any(char in token for char in ";,\r\n \t\""):
+            raise FaroisNotAuthenticated("Session Farois mémorisée invalide.", status=401)
+        _, headers = self._send(
+            "POST", "/api/v1/auth/refresh", auth=False, cookie=f"refresh_token={token}"
+        )
+        access_token = _cookie(headers, "access_token")
+        if not access_token:
+            raise FaroisApiError("Réponse de renouvellement Farois invalide.")
+        return access_token
+
     def _request(self, method, path, payload=None, auth=True):
         if auth and self._token is None:
             raise FaroisNotAuthenticated("Connectez-vous à Farois.", status=401)
+        try:
+            return self._send(method, path, payload, auth)[0]
+        except FaroisNotAuthenticated:
+            if not (auth and self._renew_access_token()):
+                self.forget()
+                raise
+        # Une requête refusée en 401 n'a pas été exécutée : UNE seule relance.
+        try:
+            return self._send(method, path, payload, auth)[0]
+        except FaroisNotAuthenticated:
+            self.forget()
+            raise
+
+    def _renew_access_token(self):
+        """Rafraîchissement silencieux, une seule tentative ; False si impossible."""
+        if self._refresh_token is None:
+            return False
+        try:
+            self._token = self._refresh(self._refresh_token)
+        except FaroisApiError:
+            return False
+        return True
+
+    def _send(self, method, path, payload=None, auth=True, cookie=None):
+        """Une requête, sans relance : (corps JSON décodé, en-têtes de réponse)."""
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base_url + path, data=body, method=method)
         request.add_header("Accept", "application/json")
@@ -195,9 +285,11 @@ class FaroisApiClient:
             request.add_header("Content-Type", "application/json")
         if auth:
             request.add_header("Authorization", f"Bearer {self._token}")
+        if cookie is not None:
+            request.add_header("Cookie", cookie)
         try:
             with self._opener.open(request, timeout=TIMEOUT_S) as response:
-                return _decode(response.read())
+                return _decode(response.read()), getattr(response, "headers", None)
         except urllib.error.HTTPError as exc:
             raise self._http_error(exc, path) from None
         except (
@@ -226,8 +318,7 @@ class FaroisApiClient:
         message = str(message or f"Erreur de l'API Farois ({exc.code}).")
         if isinstance(detail, dict) and detail.get("engine"):
             message = f"{message} — {detail['engine']}"
-        if exc.code == 401:
-            self.logout()
+        if exc.code == 401:  # session oubliée par _request (après un éventuel refresh)
             return FaroisNotAuthenticated(
                 "Session Farois expirée : reconnectez-vous.", status=401, detail=detail
             )
