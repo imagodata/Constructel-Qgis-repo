@@ -11,7 +11,16 @@ GEOMETRY_TEXT = "géométrie"
 GEOMETRY_CHANGED_TEXT = "géométrie modifiée"
 VALUE_LIMIT = 40
 CELL_LIMIT = 200
-GEOMETRY_KEYS = {"geom"}
+GEOMETRY_KEYS = {"geom", "geometry", "the_geom"}
+WKT_PREFIXES = (
+    "POINT",
+    "LINESTRING",
+    "POLYGON",
+    "MULTIPOINT",
+    "MULTILINESTRING",
+    "MULTIPOLYGON",
+    "GEOMETRYCOLLECTION",
+)
 TECHNICAL_COLUMNS = {"id", "created_at", "updated_at"}
 ARROW = " → "
 
@@ -28,7 +37,14 @@ def _as_dict(values):
 def _is_geometry(key, value):
     if key in GEOMETRY_KEYS:
         return True
-    return isinstance(value, str) and value.lstrip().startswith(("SRID=", '{"type":'))
+    if isinstance(value, dict):
+        return "type" in value and ("coordinates" in value or "geometries" in value)
+    if isinstance(value, str):
+        text = value.strip()
+        return text.startswith(("SRID=", '{"type":')) or text.upper().startswith(
+            WKT_PREFIXES
+        )
+    return False
 
 
 def _text(value):
@@ -67,11 +83,11 @@ def columns_label(entry):
     return {"INSERT": "création", "DELETE": "suppression"}.get(entry.operation, "")
 
 
-def _side(key, value, update, present):
+def _side(key, value, modified, present):
     if not present:
         return NONE_TEXT
     if _is_geometry(key, value):
-        return GEOMETRY_CHANGED_TEXT if update else GEOMETRY_TEXT
+        return GEOMETRY_CHANGED_TEXT if modified else GEOMETRY_TEXT
     return _text(value)
 
 
@@ -86,6 +102,7 @@ def change_rows(entry, all_fields=False):
     else:
         source = after if entry.operation == "INSERT" else before
         keys = [key for key, value in source.items() if value is not None]
+    changed = set(_update_fields(entry, before, after)) if update else set()
     rows = []
     for key in keys:
         old, new = before.get(key), after.get(key)
@@ -96,8 +113,8 @@ def change_rows(entry, all_fields=False):
         rows.append(
             (
                 key,
-                _side(key, old, update, old is not None),
-                _side(key, new, update, new is not None),
+                _side(key, old, key in changed, old is not None),
+                _side(key, new, key in changed, new is not None),
             )
         )
     return rows
@@ -208,6 +225,14 @@ def build_dialog(entry, parent=None):
 
 
 def show_change_details(entry, parent=None):
+    try:
+        from qgis.PyQt import sip
+    except ImportError:  # pragma: no cover - hors QGIS
+        from PyQt5 import sip
+
     dialog = build_dialog(entry, parent)
-    dialog.exec_()
-    return dialog
+    try:
+        dialog.exec_()
+    finally:
+        if not sip.isdeleted(dialog):
+            dialog.deleteLater()

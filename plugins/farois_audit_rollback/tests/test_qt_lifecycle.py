@@ -278,6 +278,7 @@ def test_native_before_after_column_follows_columns_with_tooltip(native_qt):
 
 
 def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch):
+    from PyQt5.QtCore import QEvent
     from PyQt5.QtWidgets import QDialog, QMenu
 
     q = native_qt
@@ -294,6 +295,7 @@ def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch)
         seen["editable"] = bool(table.item(0, 1).flags() & q.Qt.ItemIsEditable)
         dialog.show_all.setChecked(True)
         seen["all"] = [table.item(r, 0).text() for r in range(table.rowCount())]
+        seen["dialog"] = dialog
         return 0
 
     monkeypatch.setattr(QDialog, "exec_", run_dialog)
@@ -307,6 +309,8 @@ def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch)
     position = q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     q.panel._history_context_menu(position)
     assert seen["headers"] == ["Champ", "Avant", "Après"]
+    q.app.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert q.sip.isdeleted(seen["dialog"])
     assert seen["default"] == ["label"]
     assert seen["all"] == ["label", "status"]
     assert seen["editable"] is False

@@ -143,3 +143,34 @@ def test_non_dict_values_are_tolerated():
     e = entry(changed_columns=("a",), before=None, after=None)
     assert summary_text(e) == "a : ∅ → ∅"
     assert change_rows(e) == [("a", "∅", "∅")]
+
+
+def test_geometry_detected_for_dict_geojson_and_wkt_and_extra_keys():
+    e = entry(
+        changed_columns=("a", "b", "geometry", "the_geom"),
+        before={
+            "a": {"type": "Point", "coordinates": [0, 0]},
+            "b": " multipolygon(((0 0)))",
+            "geometry": "x",
+            "the_geom": "y",
+        },
+        after={
+            "a": {"type": "Point", "coordinates": [1, 1]},
+            "b": "POLYGON((0 0))",
+            "geometry": "z",
+            "the_geom": "w",
+        },
+    )
+    assert summary_text(e).split(" ; ") == [
+        f"{k} : géométrie modifiée" for k in ("a", "b", "geometry", "the_geom")
+    ]
+
+
+def test_all_fields_unchanged_geometry_is_plain_geometry_label():
+    e = entry(
+        changed_columns=("label",),
+        before={"label": "a", "geom": "SRID=1;P"},
+        after={"label": "b", "geom": "SRID=1;P"},
+    )
+    assert ("geom", "géométrie", "géométrie") in change_rows(e, all_fields=True)
+    assert change_rows(e) == [("label", "a", "b")]
