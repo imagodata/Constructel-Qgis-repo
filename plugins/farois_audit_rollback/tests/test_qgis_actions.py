@@ -1026,22 +1026,36 @@ def test_auto_connect_runs_once_on_first_dock_opening(qt):
     plugin.dock.auto_connect_farois.assert_not_called()
 
 
-@pytest.mark.parametrize("resumed", [True, False])
-def test_menu_connect_uses_the_remembered_session_before_asking(qt, resumed):
-    module, plugin = started_plugin(f"_tested_plugin_menu_connect_{resumed}")
-    plugin.api = SimpleNamespace(connected=False, logout=Mock(), forget=Mock())
+def test_menu_connect_lets_the_dock_try_the_kept_token_once(qt):
+    module, plugin = started_plugin("_tested_plugin_menu_connect")
     dock = Mock()
-
-    def auto():
-        plugin.api.connected = resumed
-
-    dock.auto_connect_farois.side_effect = auto
     module.FaroisAuditDock = Mock(return_value=dock)
-    plugin.connect_farois()
+    plugin.connect_farois()  # première ouverture par le menu
+    dock.connect_farois.assert_called_once_with()  # reprise puis, si besoin, dialogue
+    dock.auto_connect_farois.assert_not_called()  # pas de double tentative réseau
+
+
+@pytest.mark.parametrize("kept", ["unreachable", "failed"])
+def test_kept_token_rearms_the_automatic_attempt_for_the_next_opening(qt, kept):
+    module, plugin = started_plugin(f"_tested_plugin_rearm_{kept}")
+    dock = Mock()
+    dock.auto_connect_farois.side_effect = [kept, "connected"]
+    module.FaroisAuditDock = Mock(return_value=dock)
+    plugin.show_dock()
+    plugin.show_dock()  # nouvel essai : l'API répond cette fois
+    plugin.show_dock()
+    assert dock.auto_connect_farois.call_count == 2
+
+
+@pytest.mark.parametrize("final", ["expired", "not_admin", None])
+def test_definitive_outcomes_do_not_rearm_the_automatic_attempt(qt, final):
+    module, plugin = started_plugin(f"_tested_plugin_no_rearm_{final}")
+    dock = Mock()
+    dock.auto_connect_farois.return_value = final
+    module.FaroisAuditDock = Mock(return_value=dock)
+    plugin.show_dock()
+    plugin.show_dock()
     dock.auto_connect_farois.assert_called_once()
-    assert dock.connect_farois.call_count == int(not resumed)
-    plugin.connect_farois()  # demande explicite suivante : toujours le dialogue
-    assert dock.connect_farois.call_count == int(not resumed) + 1
 
 
 def test_menu_disconnect_clears_the_store_and_cancels_auto_connect(qt):
@@ -1056,3 +1070,62 @@ def test_menu_disconnect_clears_the_store_and_cancels_auto_connect(qt):
     plugin.dock.is_usable.return_value = True
     plugin.disconnect_farois()  # panneau ouvert : il gère lui-même la déconnexion
     plugin.dock.disconnect_farois.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "failure, outcome",
+    [
+        (FaroisNotAuthenticated("Session Farois expirée : reconnectez-vous.", status=401), "expired"),
+        (FaroisApiUnavailable("API Farois injoignable (http://x)."), "unreachable"),
+        (RuntimeError("inattendu"), "failed"),
+    ],
+)
+def test_auto_connect_reports_its_outcome(auto_dock, failure, outcome):
+    auto_dock.api = logged_out_api(resume=Mock(side_effect=failure))
+    assert auto_dock.auto_connect_farois() == outcome
+
+
+def test_auto_connect_reports_success_non_admin_and_nothing_to_do(auto_dock):
+    auto_dock.api = logged_out_api("ADMIN")
+    assert auto_dock.auto_connect_farois() == "connected"
+    assert auto_dock.auto_connect_farois() is None  # déjà connecté
+    auto_dock.api = logged_out_api("VIEWER")
+    assert auto_dock.auto_connect_farois() == "not_admin"
+    assert auto_dock.auto_connect_farois() is None  # magasin vidé
+
+
+def test_manual_connect_reuses_the_kept_token_without_asking(auto_dock):
+    auto_dock.api = logged_out_api("ADMIN")
+    auto_dock.connect_farois()  # ask_credentials interdit par la fixture
+    auto_dock.api.resume.assert_called_once_with("rt-1")
+    assert auto_dock.api.connected
+    assert auto_dock.api_label.text() == f"Farois : {EMAIL} (ADMIN)"
+
+
+@pytest.mark.parametrize(
+    "failure, kept",
+    [
+        (FaroisNotAuthenticated("Session Farois expirée : reconnectez-vous.", status=401), False),
+        (FaroisApiUnavailable("API Farois injoignable (http://x)."), True),
+    ],
+)
+def test_manual_connect_asks_for_the_password_only_if_the_kept_token_fails(
+    auto_dock, monkeypatch, failure, kept
+):
+    asked = Mock(return_value=None)
+    monkeypatch.setitem(auto_dock.connect_farois.__func__.__globals__, "ask_credentials", asked)
+    auto_dock.api = logged_out_api(resume=Mock(side_effect=failure))
+    auto_dock.connect_farois()
+    auto_dock.api.resume.assert_called_once_with("rt-1")
+    asked.assert_called_once_with(auto_dock, EMAIL)
+    assert auto_dock.store.load() == ((EMAIL, "rt-1") if kept else None)
+    auto_dock.api.login.assert_not_called()  # dialogue annulé
+
+
+def test_manual_connect_while_connected_asks_without_resuming(auto_dock, monkeypatch):
+    asked = Mock(return_value=None)
+    monkeypatch.setitem(auto_dock.connect_farois.__func__.__globals__, "ask_credentials", asked)
+    auto_dock.api = admin_api()  # changement de compte
+    auto_dock.connect_farois()
+    auto_dock.api.resume.assert_not_called()
+    asked.assert_called_once()

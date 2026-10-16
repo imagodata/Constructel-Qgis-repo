@@ -50,6 +50,11 @@ from .feature_navigation import (
 
 SESSION_EXPIRED = "Farois : session expirée — reconnectez-vous (clic droit)"
 API_UNREACHABLE = "Farois : API injoignable — connexion automatique impossible"
+# Issues de auto_connect_farois() ; None : rien à faire (pas de session mémorisée…).
+AUTO_CONNECTED, AUTO_EXPIRED, AUTO_NOT_ADMIN = "connected", "expired", "not_admin"
+AUTO_UNREACHABLE, AUTO_FAILED = "unreachable", "failed"
+# Jeton gardé après un échec passager : une nouvelle tentative a un sens.
+AUTO_CONNECT_RETRY = frozenset({AUTO_UNREACHABLE, AUTO_FAILED})
 
 if QGIS_AVAILABLE:
 
@@ -960,14 +965,15 @@ if QGIS_AVAILABLE:
             """Reprend la session mémorisée, sans aucun dialogue (bandeau seulement).
 
             401 : jeton oublié. API injoignable ou autre erreur : jeton gardé pour
-            une prochaine ouverture de QGIS. Compte non admin : session fermée.
+            un nouvel essai. Compte non admin : session fermée. Renvoie l'issue
+            (AUTO_*), ou None s'il n'y avait rien à reprendre.
             """
             api, store = getattr(self, "api", None), getattr(self, "store", None)
             if api is None or store is None or api.connected:
-                return
+                return None
             saved = store.load()
             if not saved:
-                return
+                return None
             email, refresh_token = saved
             if email and not getattr(api, "last_email", ""):
                 api.last_email = email
@@ -975,16 +981,17 @@ if QGIS_AVAILABLE:
                 profile = api.resume(refresh_token)
             except FaroisNotAuthenticated:
                 store.clear()
-                self._api_notice = SESSION_EXPIRED
+                self._api_notice, outcome = SESSION_EXPIRED, AUTO_EXPIRED
             except FaroisApiUnavailable:
-                self._api_notice = API_UNREACHABLE
+                self._api_notice, outcome = API_UNREACHABLE, AUTO_UNREACHABLE
             except Exception as exc:
                 self._api_notice = f"Farois : connexion automatique impossible — {exc}"
+                outcome = AUTO_FAILED
             else:
                 if profile.is_admin:
                     self._api_notice = None
                     self.api_session_changed()
-                    return
+                    return AUTO_CONNECTED
                 store.clear()
                 api.logout()
                 self._api_notice = (
@@ -992,13 +999,19 @@ if QGIS_AVAILABLE:
                     "connexion automatique annulée (annulation via l'API réservée aux "
                     "rôles ADMIN et MANAGER)."
                 )
+                outcome = AUTO_NOT_ADMIN
             self._render_api_status()
+            return outcome
 
         def connect_farois(self, credentials=None):
             api = getattr(self, "api", None)
             if api is None:
                 return
             if credentials is None:
+                # Session mémorisée gardée (API injoignable plus tôt…) : la reprendre
+                # sans mot de passe ; le dialogue seulement si elle échoue.
+                if not api.connected and self.auto_connect_farois() == AUTO_CONNECTED:
+                    return
                 credentials = ask_credentials(self, self._prefill_email(api))
             if not credentials:
                 return

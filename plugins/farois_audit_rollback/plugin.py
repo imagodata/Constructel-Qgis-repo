@@ -2,7 +2,7 @@
 
 import os
 
-from .gui.dockwidget import FaroisAuditDock
+from .gui.dockwidget import AUTO_CONNECT_RETRY, FaroisAuditDock
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "icon.svg")
 
@@ -60,11 +60,21 @@ class FaroisAuditRollback:
         self.sync_actions()
 
     def show_dock(self):
+        if not self._open_dock():
+            return
+        if self._auto_connect_pending:
+            self._auto_connect_pending = False
+            # API injoignable (jeton gardé) : nouvel essai à la prochaine ouverture.
+            if self.dock.auto_connect_farois() in AUTO_CONNECT_RETRY:
+                self._auto_connect_pending = True
+
+    def _open_dock(self):
+        """Crée ou réaffiche le panneau ; False pendant le déchargement."""
         from qgis.PyQt.QtCore import Qt
         from qgis.PyQt import sip
 
         if self._unloading:
-            return
+            return False
 
         if self.dock is not None and not self.dock.is_usable():
             old, self.dock = self.dock, None
@@ -79,16 +89,12 @@ class FaroisAuditRollback:
         self.dock.show()
         self.dock.raise_()
         self.dock.refresh_context()
-        if self._auto_connect_pending:
-            self._auto_connect_pending = False
-            self.dock.auto_connect_farois()
+        return True
 
     def connect_farois(self):
-        first_opening = self._auto_connect_pending
-        self.show_dock()
-        if first_opening and self.api is not None and self.api.connected:
-            return  # session mémorisée reprise à l'ouverture : rien à redemander
-        if self.dock is not None and self.dock.is_usable():
+        # Pas de tentative automatique ici : connect_farois() du panneau reprend
+        # d'abord la session mémorisée, puis demande le mot de passe si besoin.
+        if self._open_dock() and self.dock.is_usable():
             self.dock.connect_farois()
 
     def disconnect_farois(self):
