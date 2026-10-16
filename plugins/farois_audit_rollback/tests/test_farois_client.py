@@ -575,3 +575,24 @@ def test_default_opener_reads_set_cookie_and_never_replays_cookies():
     assert me.get_header("Cookie") is None and me_again.get_header("Cookie") is None
     assert refresh.get_header("Cookie") == f"refresh_token={REFRESH}"
     assert me_again.get_header("Authorization") == "Bearer tok2"
+
+
+def test_automatic_resume_uses_the_short_timeout_interactive_calls_keep_theirs():
+    opener = Opener(
+        refresh_response("tok2"), ME,
+        http_error(401, {"detail": "Token expire"}), refresh_response("tok3"),
+        {"change_id": "c-1", "reverted": ["label"], "conflicts": []},
+    )
+    client = fc.FaroisApiClient("http://api:8080", opener=opener)
+    client.resume(REFRESH)
+    client.revert_change("c-1", "FIELD", "motif")
+    assert (fc.RESUME_TIMEOUT_S, fc.TIMEOUT_S) == (5, 10)
+    # resume + /me : 5 s ; requête, rafraîchissement silencieux et relance : 10 s.
+    assert [timeout for _, timeout in opener.requests] == [5, 5, 10, 10, 10]
+
+
+def test_resume_timeout_is_a_client_parameter():
+    opener = Opener(refresh_response(), ME)
+    client = fc.FaroisApiClient("http://api", opener=opener, resume_timeout=2)
+    client.resume(REFRESH)
+    assert [timeout for _, timeout in opener.requests] == [2, 2]

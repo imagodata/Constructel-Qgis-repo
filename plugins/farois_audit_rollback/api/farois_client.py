@@ -18,6 +18,8 @@ from dataclasses import dataclass
 DEFAULT_API_URL = "http://192.168.160.31:8080"
 SETTINGS_KEY = "farois_audit_rollback/api_url"
 TIMEOUT_S = 10
+# Connexion automatique (non interactive) : resume + /me n'attendent pas plus.
+RESUME_TIMEOUT_S = 5
 ADMIN_ROLES = frozenset({"ADMIN", "MANAGER"})
 REASON_MAX_LENGTH = 500  # contrat API : motif de 1 à 500 caractères après strip()
 
@@ -142,9 +144,10 @@ def default_opener():
 
 
 class FaroisApiClient:
-    def __init__(self, base_url, opener=None, store=None):
+    def __init__(self, base_url, opener=None, store=None, resume_timeout=RESUME_TIMEOUT_S):
         self.base_url = str(base_url).rstrip("/")
         self._opener = opener or default_opener()
+        self.resume_timeout = resume_timeout
         self._store = store  # magasin de session (« Se souvenir de moi ») ou None
         self._token = None
         self._refresh_token = None
@@ -191,11 +194,14 @@ class FaroisApiClient:
         return self.profile
 
     def resume(self, refresh_token):
-        """Reprend une session mémorisée : /auth/refresh (cookie seul) puis /me."""
+        """Reprend une session mémorisée : /auth/refresh (cookie seul) puis /me.
+
+        Non interactif : délai court (resume_timeout) pour ces deux requêtes.
+        """
         self.forget()
-        self._token = self._refresh(refresh_token)
+        self._token = self._refresh(refresh_token, timeout=self.resume_timeout)
         self._refresh_token = refresh_token
-        self._load_profile("")
+        self._load_profile("", timeout=self.resume_timeout)
         self.last_email = self.profile.email or self.last_email
         return self.profile
 
@@ -226,9 +232,9 @@ class FaroisApiClient:
             {"mode": mode, "reason": reason},
         )
 
-    def _load_profile(self, fallback_email):
+    def _load_profile(self, fallback_email, timeout=TIMEOUT_S):
         try:
-            me, _ = self._send("GET", "/api/v1/auth/me")
+            me, _ = self._send("GET", "/api/v1/auth/me", timeout=timeout)
         except Exception:
             self.forget()
             raise
@@ -237,13 +243,14 @@ class FaroisApiClient:
             email=str(me.get("email") or fallback_email), role=str(me.get("role") or "")
         )
 
-    def _refresh(self, refresh_token):
+    def _refresh(self, refresh_token, timeout=TIMEOUT_S):
         """Nouveau jeton d'accès : cookie refresh_token seul, sans Authorization."""
         token = str(refresh_token or "")
         if not token or any(char in token for char in ";,\r\n \t\""):
             raise FaroisNotAuthenticated("Session Farois mémorisée invalide.", status=401)
         _, headers = self._send(
-            "POST", "/api/v1/auth/refresh", auth=False, cookie=f"refresh_token={token}"
+            "POST", "/api/v1/auth/refresh", auth=False,
+            cookie=f"refresh_token={token}", timeout=timeout,
         )
         access_token = _cookie(headers, "access_token")
         if not access_token:
@@ -276,7 +283,7 @@ class FaroisApiClient:
             return False
         return True
 
-    def _send(self, method, path, payload=None, auth=True, cookie=None):
+    def _send(self, method, path, payload=None, auth=True, cookie=None, timeout=TIMEOUT_S):
         """Une requête, sans relance : (corps JSON décodé, en-têtes de réponse)."""
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base_url + path, data=body, method=method)
@@ -288,7 +295,7 @@ class FaroisApiClient:
         if cookie is not None:
             request.add_header("Cookie", cookie)
         try:
-            with self._opener.open(request, timeout=TIMEOUT_S) as response:
+            with self._opener.open(request, timeout=timeout) as response:
                 return _decode(response.read()), getattr(response, "headers", None)
         except urllib.error.HTTPError as exc:
             raise self._http_error(exc, path) from None
