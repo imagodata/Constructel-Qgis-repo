@@ -80,3 +80,12 @@ def test_insert_change_points_to_transaction_undo():
     assert not change_ok
     assert "Annuler la transaction" in change_reason
     assert tx_ok
+
+
+def test_disabled_action_text_truncates_the_reason_to_70_characters():
+    from plugins.farois_audit_rollback.gui.rollback_actions import disabled_action_text
+
+    assert disabled_action_text("Annuler", "Court.") == "Annuler — Court."
+    assert disabled_action_text("Annuler", "") == "Annuler"
+    text = disabled_action_text("Annuler", "x" * 100)
+    assert text == "Annuler — " + "x" * 69 + "…"

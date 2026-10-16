@@ -48,3 +48,17 @@ def action_states(entry, connected=True, current=True):
         else "UUID de transaction absent ou incompatible avec le moteur Farois.",
     )
     return change, transaction
+
+
+def disabled_action_text(label, reason, limit=70):
+    """Texte de menu d'une action désactivée : la raison, tronquée, visible.
+
+    Le menu clic droit n'affiche pas toujours les infobulles ; l'infobulle
+    garde la raison complète.
+    """
+    reason = " ".join(str(reason or "").split())
+    if not reason:
+        return label
+    if len(reason) > limit:
+        reason = reason[: limit - 1] + "…"
+    return f"{label} — {reason}"

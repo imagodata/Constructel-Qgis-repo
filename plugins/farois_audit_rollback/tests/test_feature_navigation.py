@@ -10,6 +10,7 @@ from plugins.farois_audit_rollback.gui.feature_navigation import (
     find_history_feature,
     matching_layers,
     navigation_target,
+    pending_edit_layer,
     resolve_history_features,
 )
 from plugins.farois_audit_rollback.gui.history_model import HistoryEntry
@@ -227,3 +228,52 @@ def test_matching_layers_lists_every_loaded_layer_of_the_table_on_the_source_con
 def test_matching_layers_requires_a_postgresql_source(navigation):
     with pytest.raises(ValueError, match="plus disponible"):
         matching_layers("wyre", "roads", None, [])
+
+
+def edited(layer, name, editable=True, modified=True):
+    layer.name = lambda: name
+    layer.isEditable = lambda: editable
+    layer.isModified = lambda: modified
+    return layer
+
+
+def test_pending_edit_layer_blocks_on_modified_edited_layer_of_the_table(navigation):
+    n = navigation
+    source = edited(n.layer("source"), "Routes", editable=False, modified=False)
+    twin = edited(n.layer("twin"), "Routes (copie)")
+    assert pending_edit_layer(entry(), source, [source, twin]) is twin
+
+
+def test_pending_edit_layer_ignores_edited_layer_without_changes(navigation):
+    n = navigation
+    source = edited(n.layer("source"), "Routes", modified=False)
+    assert pending_edit_layer(entry(), source, [source]) is None
+
+
+def test_pending_edit_layer_ignores_other_tables_and_connections(navigation):
+    n = navigation
+    source = edited(n.layer("source"), "Routes", editable=False, modified=False)
+    other_table = edited(n.layer("ducts", table="ducts"), "Fourreaux")
+    other_db = edited(n.layer("foreign", database="another"), "Étrangère")
+    assert pending_edit_layer(entry(), source, [source, other_table, other_db]) is None
+
+
+def test_pending_edit_layer_without_source_does_not_crash(navigation):
+    other = edited(navigation.layer("other"), "Routes")
+    assert pending_edit_layer(entry(), None, [other]) is None
+    gone = edited(navigation.layer("gone"), "Routes")
+    assert pending_edit_layer(entry(), gone, [gone], lambda obj: obj is gone) is None
+
+
+def test_pending_edit_layer_falls_back_to_a_matching_source_when_matching_raises(
+    navigation, monkeypatch
+):
+    source = edited(navigation.layer("source"), "Routes")
+    monkeypatch.setattr(
+        "plugins.farois_audit_rollback.gui.feature_navigation.matching_layers",
+        Mock(side_effect=ValueError("boom")),
+    )
+    assert pending_edit_layer(entry(), source, []) is source
+    other = edited(navigation.layer("o", table="ducts"), "Fourreaux")
+    assert pending_edit_layer(entry(), other, []) is None
+    assert pending_edit_layer(None, source, [source]) is None

@@ -59,6 +59,42 @@ def matching_layers(schema, table, source_layer, layers, is_deleted=lambda obj: 
     return candidates
 
 
+def pending_edit_layer(entry, source_layer, layers, is_deleted=lambda obj: False):
+    """Couche de la table de l'entrée avec des modifications non enregistrées.
+
+    Seules les couches de la même table et de la même connexion que la source
+    comptent, et seulement si elles sont en édition ET modifiées. Pour une
+    annulation de transaction, on ne connaît pas toutes les tables touchées
+    côté plugin : la vérification porte au minimum sur la table de l'entrée.
+    """
+    if entry is None or not entry.schema_name or not entry.table_name:
+        return None
+    try:
+        candidates = matching_layers(
+            entry.schema_name, entry.table_name, source_layer, layers, is_deleted
+        )
+    except (ValueError, RuntimeError, AttributeError, TypeError):
+        # Couche source indisponible ou introuvable : ne bloquer que sur la
+        # source, et seulement si elle correspond à la table.
+        candidates = []
+        try:
+            from qgis.core import QgsDataSourceUri
+
+            if source_layer is not None and not is_deleted(source_layer):
+                uri = QgsDataSourceUri(source_layer.source())
+                if (uri.schema(), uri.table()) == (entry.schema_name, entry.table_name):
+                    candidates = [source_layer]
+        except Exception:
+            candidates = []
+    for layer in candidates:
+        try:
+            if layer.isEditable() and layer.isModified():
+                return layer
+        except RuntimeError:
+            continue
+    return None
+
+
 def find_history_feature(entry, source_layer, layers, is_deleted=lambda obj: False):
     from qgis.core import QgsExpression, QgsFeatureRequest
 

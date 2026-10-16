@@ -810,3 +810,36 @@ def test_native_auto_connect_reports_in_the_banner_without_any_dialog(native_qt,
     q.panel.auto_connect_farois()
     assert q.panel.api_label.text() == "Farois : session expirée — reconnectez-vous (clic droit)"
     assert store.load() is None
+
+
+def test_native_context_menu_shows_the_refusal_reason_in_the_disabled_undo_texts(
+    native_qt, monkeypatch
+):
+    from PyQt5.QtWidgets import QMenu
+
+    q = native_qt
+    setup_history_panel(
+        q,
+        [dict(change_id="fixture-change", schema_name="wyre", table_name="zone_drop")],
+    )
+    q.panel.load_history()
+    q.panel.table.selectRow(0)
+    full = q.panel.action_states()[0][1]
+    seen = {}
+
+    def capture(menu, position):
+        seen["tips"] = menu.toolTipsVisible()
+        seen["actions"] = [(a.text(), a.isEnabled(), a.toolTip()) for a in menu.actions()]
+        return None
+
+    monkeypatch.setattr(QMenu, "exec_", capture)
+    q.panel._history_context_menu(
+        q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
+    )
+    assert seen["tips"]
+    short = full if len(full) <= 70 else full[:69] + "…"
+    by_prefix = {a[0].split(" — ")[0]: a for a in seen["actions"]}
+    for label in ("Annuler la modification", "Annuler la transaction"):
+        text, enabled, tip = by_prefix[label]
+        assert not enabled and tip == full
+        assert text == f"{label} — {short}"

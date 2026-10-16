@@ -342,21 +342,6 @@ def test_modify_current_object_uses_qgis_form_and_respects_editability(
     assert not dock._navigation_in_progress
 
 
-def test_open_postgresql_edit_buffer_disables_undo(dock, monkeypatch):
-    layer = SimpleNamespace(providerType=lambda: "postgres", isEditable=lambda: True)
-    monkeypatch.setitem(
-        dock.action_states.__func__.__globals__,
-        "QgsProject",
-        SimpleNamespace(
-            instance=lambda: SimpleNamespace(mapLayers=lambda: {"layer": layer})
-        ),
-    )
-    assert all(
-        not state[0] and "éditions PostgreSQL" in state[1]
-        for state in dock.action_states()
-    )
-
-
 def admin_api(**overrides):
     api = SimpleNamespace(
         connected=True,
@@ -1129,3 +1114,60 @@ def test_manual_connect_while_connected_asks_without_resuming(auto_dock, monkeyp
     auto_dock.connect_farois()
     auto_dock.api.resume.assert_not_called()
     asked.assert_called_once()
+
+
+def editing(layer, name, modified=True):
+    layer.name = lambda: name
+    layer.isEditable = lambda: True
+    layer.isModified = lambda: modified
+    return layer
+
+
+def roads_entry():
+    return HistoryEntry(change_id="change", transaction_id=TX, can_undo=True,
+                        schema_name="wyre", table_name="roads")
+
+
+def test_modified_edit_buffer_of_the_entry_table_refuses_undo_with_layer_name(dock, qt, monkeypatch):
+    source = pg_layer("source")
+    twin = editing(pg_layer("twin"), "Routes éditées")
+    project_with(dock, monkeypatch, source, twin)
+    dock.layer = source
+    dock._last_context = ("source", "uuid-record")
+    dock.model = HistoryModel([roads_entry()])
+    for state in dock.action_states():
+        assert not state[0]
+        assert state[1] == "Enregistrez ou annulez d'abord les modifications de la couche « Routes éditées »."
+    dock.undo_selected()
+    dock.repository.revert_change.assert_not_called()
+    assert "Routes éditées" in qt.QMessageBox.warning.call_args.args[2]
+
+
+def test_edit_buffer_of_another_table_or_without_changes_does_not_block(dock, monkeypatch):
+    source = pg_layer("source")
+    other = editing(pg_layer("cables", table="cables"), "Câbles")
+    idle = editing(pg_layer("idle"), "Routes", modified=False)
+    project_with(dock, monkeypatch, source, other, idle)
+    dock.layer = source
+    dock._last_context = ("source", "uuid-record")
+    dock.model = HistoryModel([roads_entry()])
+    assert all(state[0] for state in dock.action_states())
+
+
+def test_edit_buffer_appearing_during_confirmation_blocks_the_call(dock, qt, monkeypatch):
+    source = pg_layer("source")
+    twin = pg_layer("twin")
+    project_with(dock, monkeypatch, source, twin)
+    dock.layer = source
+    dock._last_context = ("source", "uuid-record")
+    dock.model = HistoryModel([roads_entry()])
+
+    def edit_meanwhile(*args):
+        editing(twin, "Routes")
+        return "test", True
+
+    qt.QInputDialog.getText.side_effect = edit_meanwhile
+    dock.undo_selected()
+    dock.repository.revert_change.assert_not_called()
+    qt.QMessageBox.critical.assert_called_once()
+    assert "Routes" in qt.QMessageBox.critical.call_args.args[2]
