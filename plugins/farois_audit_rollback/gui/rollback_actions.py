@@ -32,7 +32,7 @@ def action_states(entry, connected=True, current=True):
     )
     change_blocked = None
     if linked:
-        change_blocked = "Opération liée : utilisez le rollback transactionnel."
+        change_blocked = "Liée à d'autres changements : utilisez « Annuler la transaction »."
     elif entry.operation == "INSERT":
         change_blocked = "Une création s'annule via « Annuler la transaction »."
     change = (
