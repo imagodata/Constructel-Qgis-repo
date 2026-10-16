@@ -757,7 +757,7 @@ def drive_login_dialog(monkeypatch, fill):
         email = next(e for e in edits if e is not password)
         boxes = dialog.findChildren(QCheckBox)
         seen.update(email=email.text(), boxes=[(b.text(), b.isChecked()) for b in boxes],
-                    password=password)
+                    tips=[b.toolTip() for b in boxes], password=password)
         fill(email, password, boxes)
         return QDialog.Accepted
 
@@ -772,6 +772,7 @@ def test_native_login_dialog_offers_remember_me_checked_by_default(native_qt, mo
     result = ask_credentials(native_qt.panel, "simon@constructel.example.be")
     assert seen["email"] == "simon@constructel.example.be"
     assert seen["boxes"] == [("Se souvenir de moi (30 jours)", True)]
+    assert "mot de passe maître" in seen["tips"][0]
     assert result == ("simon@constructel.example.be", "pw", True)
     assert seen["password"].text() == ""  # champ vidé dès la fermeture
 

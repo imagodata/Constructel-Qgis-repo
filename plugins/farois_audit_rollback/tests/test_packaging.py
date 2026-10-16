@@ -30,3 +30,11 @@ def test_zip_name_lets_qgis_derive_the_plugin_id():
     assert module.VERSION == "0.2.2"
     assert module.OUTPUT.name == "farois_audit_rollback.0.2.2.zip"
     assert module.OUTPUT.name.partition(".")[0] == "farois_audit_rollback"
+
+
+def test_readme_warns_that_remember_me_can_trigger_the_qgis_master_password():
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    section = readme.split("Version 0.2.1 :")[0]
+    assert "« Se souvenir de moi (30 jours) », cochée par défaut" in section
+    assert "mot de passe maître" in section and "en faire créer un" in section
+    assert "relu à l'ouverture du panneau" in section

@@ -10,14 +10,24 @@ de la session (30 jours depuis la connexion) est conservé, chiffré dans le
 gestionnaire d'authentification QGIS (configuration « Farois — session historique »,
 identifiant dans `farois_audit_rollback/session_authcfg`). Le mot de passe AD n'est
 jamais stocké, le jeton d'accès reste en mémoire. Case décochée : rien n'est conservé
-et une session mémorisée auparavant est oubliée.
+et une session mémorisée auparavant est oubliée. Si l'enregistrement échoue, la
+session mémorisée auparavant est effacée (jamais d'ancienne identité reprise).
+
+Mot de passe maître QGIS : la case étant cochée par défaut, la première connexion
+peut faire demander par QGIS son mot de passe maître, ou en faire créer un s'il
+n'en existe pas encore. Le jeton est relu à l'ouverture du panneau : QGIS peut
+alors aussi demander ce mot de passe, s'il n'est pas déjà déverrouillé dans la
+session ni enregistré dans le gestionnaire de mots de passe du système. Refuser
+laisse simplement la session non reprise (jeton gardé).
+
 À la première ouverture du panneau dans une session QGIS (jamais au démarrage de
 QGIS), le plugin reprend la session mémorisée sans aucune boîte de dialogue du
-plugin : session expirée ou révoquée → jeton effacé, bandeau « session expirée —
-reconnectez-vous (clic droit) » ; API injoignable → jeton gardé, bandeau « API
-injoignable » ; compte non ADMIN/MANAGER → session fermée et jeton effacé. Si le mot
-de passe maître QGIS n'est pas encore déverrouillé (ni enregistré dans le
-gestionnaire de mots de passe du système), QGIS le demande pour lire ce jeton.
+plugin, avec un délai court (5 s) : session expirée ou révoquée → jeton effacé,
+bandeau « session expirée — reconnectez-vous (clic droit) » ; API injoignable →
+jeton gardé, bandeau « API injoignable », nouvel essai à la prochaine ouverture du
+panneau ; compte non ADMIN/MANAGER → session fermée et jeton effacé.
+« Se connecter à Farois… » essaie d'abord ce jeton gardé, sans mot de passe, et
+n'ouvre le dialogue que s'il échoue.
 En cours d'utilisation, un jeton d'accès expiré est renouvelé une seule fois en
 silence et la requête refusée (donc non exécutée) est rejouée une seule fois ;
 sinon le panneau demande de se reconnecter, sans jamais repasser par PostgreSQL.

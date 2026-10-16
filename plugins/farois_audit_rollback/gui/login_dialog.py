@@ -33,7 +33,8 @@ def ask_credentials(parent, email="", remember=True):
     remember_box.setChecked(bool(remember))
     remember_box.setToolTip(
         "Garde un jeton de session Farois (30 jours) chiffré dans le gestionnaire "
-        "d'authentification QGIS. Le mot de passe n'est jamais enregistré."
+        "d'authentification QGIS, qui peut demander (ou faire créer) son mot de "
+        "passe maître. Le mot de passe Farois n'est jamais enregistré."
     )
     form.addRow("Adresse mail", email_edit)
     form.addRow("Mot de passe", password_edit)
