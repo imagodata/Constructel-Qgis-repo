@@ -68,7 +68,7 @@ def test_direct_root_with_another_pending_group_member_requires_transaction():
     root = entry(origin="DIRECT", provenance="MANUAL", cascade_count=1)
     change, transaction = action_states(root)
     assert not change[0] and transaction[0]
-    assert "transactionnel" in change[1]
+    assert "Annuler la transaction" in change[1]
 
 
 TX_INSERT = "00000000-0000-4000-8000-0000000000b1"
@@ -89,3 +89,18 @@ def test_disabled_action_text_truncates_the_reason_to_70_characters():
     assert disabled_action_text("Annuler", "") == "Annuler"
     text = disabled_action_text("Annuler", "x" * 100)
     assert text == "Annuler — " + "x" * 69 + "…"
+
+
+def test_linked_change_points_to_transaction_with_short_reason():
+    entry = HistoryEntry(
+        change_id="c",
+        operation="UPDATE",
+        transaction_id="00000000-0000-4000-8000-0000000000c1",
+        cascade_count=2,
+        can_undo=True,
+    )
+    (change_ok, change_reason), (tx_ok, _) = action_states(entry)
+    assert not change_ok
+    assert change_reason == "Liée à d'autres changements : utilisez « Annuler la transaction »."
+    assert len(change_reason) <= 70
+    assert tx_ok

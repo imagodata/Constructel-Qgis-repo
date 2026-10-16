@@ -1,5 +1,8 @@
 # Farois — Historique et rollback
 
+Version 0.2.5 : une modification liée à d'autres changements (cascade, transaction à plusieurs
+lignes) indique désormais clairement d'utiliser « Annuler la transaction ».
+
 0.2.4 : plus de saisie de motif (motif automatique dans l'audit), confirmation courte sans valeurs, succès dans la barre de messages
 
 0.2.3 : la raison d'une annulation impossible s'affiche dans le menu ; seules les modifications non enregistrées de la couche concernée bloquent l'annulation.
