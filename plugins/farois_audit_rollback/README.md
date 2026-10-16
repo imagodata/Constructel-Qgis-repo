@@ -1,14 +1,49 @@
 # Farois — Historique et rollback
 
+Version 0.2.2 : colonne Avant → après, détail Champ | Avant | Après, « création »/« suppression » dans Colonnes.
+
+Connexion automatique à l'API Farois (0.2.2). La boîte « Se connecter à Farois »
+propose « Se souvenir de moi (30 jours) », cochée par défaut ; l'adresse est
+préremplie avec la dernière saisie, à défaut celle de Constructel Bridge
+(`constructel_bridge/audit_email`). Case cochée : seul le jeton de rafraîchissement
+de la session (30 jours depuis la connexion) est conservé, chiffré dans le
+gestionnaire d'authentification QGIS (configuration « Farois — session historique »,
+identifiant dans `farois_audit_rollback/session_authcfg`). Le mot de passe AD n'est
+jamais stocké, le jeton d'accès reste en mémoire. Case décochée : rien n'est conservé
+et une session mémorisée auparavant est oubliée. Si l'enregistrement échoue, la
+session mémorisée auparavant est effacée (jamais d'ancienne identité reprise).
+
+Mot de passe maître QGIS : la case étant cochée par défaut, la première connexion
+peut faire demander par QGIS son mot de passe maître, ou en faire créer un s'il
+n'en existe pas encore. Le jeton est relu à l'ouverture du panneau : QGIS peut
+alors aussi demander ce mot de passe, s'il n'est pas déjà déverrouillé dans la
+session ni enregistré dans le gestionnaire de mots de passe du système. Refuser
+laisse simplement la session non reprise (jeton gardé).
+
+À la première ouverture du panneau dans une session QGIS (jamais au démarrage de
+QGIS), le plugin reprend la session mémorisée sans aucune boîte de dialogue du
+plugin, avec un délai court (5 s) : session expirée ou révoquée → jeton effacé,
+bandeau « session expirée — reconnectez-vous (clic droit) » ; API injoignable →
+jeton gardé, bandeau « API injoignable », nouvel essai à la prochaine ouverture du
+panneau ; compte non ADMIN/MANAGER → session fermée et jeton effacé.
+« Se connecter à Farois… » essaie d'abord ce jeton gardé, sans mot de passe, et
+n'ouvre le dialogue que s'il échoue.
+En cours d'utilisation, un jeton d'accès expiré est renouvelé une seule fois en
+silence et la requête refusée (donc non exécutée) est rejouée une seule fois ;
+sinon le panneau demande de se reconnecter, sans jamais repasser par PostgreSQL.
+« Se déconnecter » révoque la session côté API et efface le jeton mémorisé ;
+fermer QGIS ou désactiver le plugin ne la révoque pas.
+
 Version 0.2.1 : les administrateurs (ADMIN, MANAGER) se connectent à l'API Farois
 (clic droit du panneau ou menu Farois → Se connecter à Farois…, compte AD) et peuvent
 annuler toute modification connue du moteur 442 : RESTORE pour une suppression,
 annulation de transaction pour une création, FORCE proposé après confirmation en cas
 de conflit, depuis toutes les portées de l'historique. Le mot de passe AD est demandé
-à la connexion et jamais stocké ; le jeton reste en mémoire (8 h). L'URL de l'API est
+à la connexion et jamais stocké ; le jeton d'accès reste en mémoire (8 h), et depuis
+0.2.2 seul le jeton de rafraîchissement peut être mémorisé (voir ci-dessus). L'URL de l'API est
 réglable dans les paramètres QGIS (`farois_audit_rollback/api_url`, défaut
 `http://192.168.160.31:8080`).
-Zip : `farois_audit_rollback.0.2.1.zip` (le point est requis pour que QGIS propose la mise à jour).
+Zip : `farois_audit_rollback.0.2.2.zip` (le point est requis pour que QGIS propose la mise à jour).
 
 Version 0.1.8 : informations d'audit complètes avec le moteur existant,
 contrat d'annulation détecté, conflit sans restitution partielle, détail avant/après
@@ -30,7 +65,8 @@ Python n’exécute jamais de SQL fourni par l’utilisateur et ne construit pas
 Dans QGIS : Extensions → Installer depuis un ZIP, puis activer le plugin.
 La couche active doit être une couche PostgreSQL issue d’une connexion QGIS standard.
 Sans session admin, aucun mot de passe n’est demandé. En mode admin, le mot de passe AD
-est demandé par « Se connecter à Farois… » et n’est jamais stocké (jeton en mémoire).
+est demandé par « Se connecter à Farois… » et n’est jamais stocké ; avec « Se souvenir
+de moi », seul le jeton de rafraîchissement (30 jours) est conservé, chiffré par QGIS.
 Ouvrir le panneau Farois et choisir la couche source : son historique récent se charge
 même sans objet sélectionné. Sans session admin, une annulation exige le mode Objet
 sélectionné et exactement un objet. En session admin, elle est possible depuis toutes

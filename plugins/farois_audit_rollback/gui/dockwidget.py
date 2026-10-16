@@ -30,7 +30,8 @@ except ImportError:
     QGIS_AVAILABLE = False
 from .history_model import HistoryModel, HistoryEntry
 from .rollback_actions import action_states, transaction_uuid
-from .login_dialog import ask_credentials
+from .login_dialog import ask_credentials, bridge_email
+from .change_details import columns_label, summary_text, show_change_details
 from ..api.farois_client import (
     REASON_MAX_LENGTH,
     FaroisApiUnavailable,
@@ -47,6 +48,14 @@ from .feature_navigation import (
     resolve_history_features,
 )
 
+SESSION_EXPIRED = "Farois : session expirée — reconnectez-vous (clic droit)"
+API_UNREACHABLE = "Farois : API injoignable — connexion automatique impossible"
+# Issues de auto_connect_farois() ; None : rien à faire (pas de session mémorisée…).
+AUTO_CONNECTED, AUTO_EXPIRED, AUTO_NOT_ADMIN = "connected", "expired", "not_admin"
+AUTO_UNREACHABLE, AUTO_FAILED = "unreachable", "failed"
+# Jeton gardé après un échec passager : une nouvelle tentative a un sens.
+AUTO_CONNECT_RETRY = frozenset({AUTO_UNREACHABLE, AUTO_FAILED})
+
 if QGIS_AVAILABLE:
 
     class FaroisAuditDock(QDockWidget):
@@ -59,17 +68,20 @@ if QGIS_AVAILABLE:
             "Libellé",
             "Opération",
             "Colonnes",
+            "Avant → après",
             "Provenance",
             "Statut",
             "Transaction",
         ]
 
-        def __init__(self, iface, parent=None, api=None):
+        def __init__(self, iface, parent=None, api=None, store=None):
             super().__init__(
                 "Farois — Historique et rollback", parent or iface.mainWindow()
             )
             self.iface, self.repository, self.model = iface, None, HistoryModel()
             self.api = api
+            self.store = store  # session mémorisée (« Se souvenir de moi »)
+            self._api_notice = None  # bandeau d'un échec de connexion automatique
             self._signals = SignalScope(sip.isdeleted)
             self.destroyed.connect(self._signals.dispose)
             self._source_layer = None
@@ -444,7 +456,8 @@ if QGIS_AVAILABLE:
                     e.record_id,
                     e.label,
                     e.operation,
-                    ", ".join(e.changed_columns),
+                    columns_label(e),
+                    summary_text(e),
                     e.provenance,
                     e.status_message,
                     e.transaction_id,
@@ -469,6 +482,10 @@ if QGIS_AVAILABLE:
                             default=str,
                         )
                     )
+                    if c == self.HEADERS.index("Avant → après"):
+                        full = summary_text(e, full=True)
+                        if full:
+                            item.setToolTip(full)
                     self.table.setItem(r, c, item)
                 if str(e.change_id) in selected_ids:
                     index = self.table.model().index(r, 0)
@@ -615,24 +632,7 @@ if QGIS_AVAILABLE:
                 elif chosen is details:
                     entry = self._entry_for_current_row()
                     if entry is not None:
-                        QMessageBox.information(
-                            self,
-                            "Farois — Détail du changement",
-                            json.dumps(
-                                {
-                                    "Utilisateur": entry.username,
-                                    "Libellé": entry.label,
-                                    "Provenance": entry.provenance,
-                                    "Colonnes": entry.changed_columns,
-                                    "Avant": entry.before,
-                                    "Après": entry.after,
-                                    "Annulation": entry.status_message,
-                                },
-                                ensure_ascii=False,
-                                indent=2,
-                                default=str,
-                            ),
-                        )
+                        show_change_details(entry, self)
                 elif chosen is zoom:
                     self.zoom_history_objects()
                 elif chosen is select:
@@ -943,23 +943,79 @@ if QGIS_AVAILABLE:
             if label is None or sip.isdeleted(label):
                 return
             api = getattr(self, "api", None)
+            notice = getattr(self, "_api_notice", None)
             if api is not None and api.connected:
                 label.setText(f"Farois : {api.profile.email} ({api.profile.role})")
+            elif notice:
+                label.setText(notice)
             else:
                 label.setText(
                     "Farois : non connecté — annulations soumises aux droits PostgreSQL."
                 )
+
+        def _prefill_email(self, api):
+            """Dernière adresse saisie, sinon celle du profil, sinon celle de Bridge."""
+            return (
+                getattr(api, "last_email", "")
+                or (api.profile.email if api.profile else "")
+                or bridge_email()
+            )
+
+        def auto_connect_farois(self):
+            """Reprend la session mémorisée, sans aucun dialogue (bandeau seulement).
+
+            401 : jeton oublié. API injoignable ou autre erreur : jeton gardé pour
+            un nouvel essai. Compte non admin : session fermée. Renvoie l'issue
+            (AUTO_*), ou None s'il n'y avait rien à reprendre.
+            """
+            api, store = getattr(self, "api", None), getattr(self, "store", None)
+            if api is None or store is None or api.connected:
+                return None
+            saved = store.load()
+            if not saved:
+                return None
+            email, refresh_token = saved
+            if email and not getattr(api, "last_email", ""):
+                api.last_email = email
+            try:
+                profile = api.resume(refresh_token)
+            except FaroisNotAuthenticated:
+                store.clear()
+                self._api_notice, outcome = SESSION_EXPIRED, AUTO_EXPIRED
+            except FaroisApiUnavailable:
+                self._api_notice, outcome = API_UNREACHABLE, AUTO_UNREACHABLE
+            except Exception as exc:
+                self._api_notice = f"Farois : connexion automatique impossible — {exc}"
+                outcome = AUTO_FAILED
+            else:
+                if profile.is_admin:
+                    self._api_notice = None
+                    self.api_session_changed()
+                    return AUTO_CONNECTED
+                store.clear()
+                api.logout()
+                self._api_notice = (
+                    f"Farois : le compte {profile.email} a le rôle {profile.role} — "
+                    "connexion automatique annulée (annulation via l'API réservée aux "
+                    "rôles ADMIN et MANAGER)."
+                )
+                outcome = AUTO_NOT_ADMIN
+            self._render_api_status()
+            return outcome
 
         def connect_farois(self, credentials=None):
             api = getattr(self, "api", None)
             if api is None:
                 return
             if credentials is None:
-                credentials = ask_credentials(
-                    self, api.last_email or (api.profile.email if api.profile else "")
-                )
+                # Session mémorisée gardée (API injoignable plus tôt…) : la reprendre
+                # sans mot de passe ; le dialogue seulement si elle échoue.
+                if not api.connected and self.auto_connect_farois() == AUTO_CONNECTED:
+                    return
+                credentials = ask_credentials(self, self._prefill_email(api))
             if not credentials:
                 return
+            self._api_notice = None  # choix explicite : l'échec automatique est périmé
             was_connected = api.connected
             try:
                 profile = api.login(*credentials)
@@ -967,8 +1023,13 @@ if QGIS_AVAILABLE:
                 QMessageBox.critical(self, "Farois", str(exc))
                 if was_connected:
                     self.api_session_changed()
+                else:
+                    self._render_api_status()
                 return
             if not profile.is_admin:
+                store = getattr(self, "store", None)
+                if store is not None:
+                    store.clear()
                 api.logout()
                 QMessageBox.warning(
                     self,
@@ -979,9 +1040,12 @@ if QGIS_AVAILABLE:
             self.api_session_changed()
 
         def disconnect_farois(self):
-            api = getattr(self, "api", None)
+            api, store = getattr(self, "api", None), getattr(self, "store", None)
             if api is not None:
                 api.logout()
+            if store is not None:
+                store.clear()
+            self._api_notice = None
             self.api_session_changed()
 
         def api_session_changed(self):
