@@ -743,3 +743,69 @@ def test_native_admin_undo_actions_are_enabled_in_layer_scope(native_qt, monkeyp
     q.panel.api = None  # sans session admin : mode objet toujours exigé
     assert not q.panel.action_states()[0][0]
     assert "mode Objet sélectionné" in q.panel.action_states()[0][1]
+
+
+def drive_login_dialog(monkeypatch, fill):
+    """Remplace exec_ : relève l'état initial du dialogue puis le remplit."""
+    from PyQt5.QtWidgets import QCheckBox, QDialog, QLineEdit
+
+    seen = {}
+
+    def fake_exec(dialog):
+        edits = dialog.findChildren(QLineEdit)
+        password = next(e for e in edits if e.echoMode() == QLineEdit.Password)
+        email = next(e for e in edits if e is not password)
+        boxes = dialog.findChildren(QCheckBox)
+        seen.update(email=email.text(), boxes=[(b.text(), b.isChecked()) for b in boxes],
+                    password=password)
+        fill(email, password, boxes)
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, "exec_", fake_exec)
+    return seen
+
+
+def test_native_login_dialog_offers_remember_me_checked_by_default(native_qt, monkeypatch):
+    from plugins.farois_audit_rollback.gui.login_dialog import ask_credentials
+
+    seen = drive_login_dialog(monkeypatch, lambda email, password, boxes: password.setText("pw"))
+    result = ask_credentials(native_qt.panel, "simon@constructel.example.be")
+    assert seen["email"] == "simon@constructel.example.be"
+    assert seen["boxes"] == [("Se souvenir de moi (30 jours)", True)]
+    assert result == ("simon@constructel.example.be", "pw", True)
+    assert seen["password"].text() == ""  # champ vidé dès la fermeture
+
+
+def test_native_login_dialog_remember_me_can_be_declined(native_qt, monkeypatch):
+    from plugins.farois_audit_rollback.gui.login_dialog import ask_credentials
+
+    def fill(email, password, boxes):
+        password.setText("pw")
+        boxes[0].setChecked(False)
+
+    seen = drive_login_dialog(monkeypatch, fill)
+    assert ask_credentials(native_qt.panel, "a@constructel.example.be") == (
+        "a@constructel.example.be", "pw", False)
+    seen = drive_login_dialog(monkeypatch, lambda email, password, boxes: password.setText("pw"))
+    assert ask_credentials(native_qt.panel, "a@constructel.example.be", remember=False)[2] is False
+    assert seen["boxes"] == [("Se souvenir de moi (30 jours)", False)]
+
+
+def test_native_auto_connect_reports_in_the_banner_without_any_dialog(native_qt, monkeypatch):
+    from PyQt5.QtWidgets import QMessageBox
+    from plugins.farois_audit_rollback.api.farois_client import FaroisNotAuthenticated
+    from plugins.farois_audit_rollback.api.session_store import MemorySessionStore
+
+    for name in ("critical", "warning", "information", "question"):
+        monkeypatch.setattr(QMessageBox, name, Mock(side_effect=AssertionError(name)))
+    q = native_qt
+    store = MemorySessionStore()
+    store.save("simon@constructel.example.be", "rt-1")
+    q.panel.store = store
+    q.panel.api = SimpleNamespace(
+        connected=False, profile=None, last_email="",
+        resume=Mock(side_effect=FaroisNotAuthenticated("Session expirée", status=401)),
+    )
+    q.panel.auto_connect_farois()
+    assert q.panel.api_label.text() == "Farois : session expirée — reconnectez-vous (clic droit)"
+    assert store.load() is None

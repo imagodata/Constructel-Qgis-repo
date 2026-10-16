@@ -10,7 +10,10 @@ ICON_PATH = os.path.join(os.path.dirname(__file__), "icon.svg")
 class FaroisAuditRollback:
     def __init__(self, iface):
         self.iface, self.dock, self.toolbar = iface, None, None
-        self.api = None
+        self.api = self.store = None
+        # Connexion automatique : une seule tentative, à la première ouverture du
+        # panneau (jamais dans initGui : le démarrage de QGIS n'attend pas l'API).
+        self._auto_connect_pending = False
         self.actions = []
         self._unloading = False
 
@@ -29,8 +32,12 @@ class FaroisAuditRollback:
             "Annuler la transaction", self.iface.mainWindow()
         )
         from .api.farois_client import FaroisApiClient, api_url
+        from .api.session_store import QgisSessionStore
 
-        self.api = FaroisApiClient(api_url())
+        # Aucun accès réseau ni au gestionnaire d'authentification ici.
+        self.store = QgisSessionStore()
+        self.api = FaroisApiClient(api_url(), store=self.store)
+        self._auto_connect_pending = True
         self.connect_action = QAction("Se connecter à Farois…", self.iface.mainWindow())
         self.disconnect_action = QAction(
             "Se déconnecter de Farois", self.iface.mainWindow()
@@ -66,23 +73,33 @@ class FaroisAuditRollback:
                 self.iface.removeDockWidget(old)
                 old.deleteLater()
         if self.dock is None:
-            self.dock = FaroisAuditDock(self.iface, api=self.api)
+            self.dock = FaroisAuditDock(self.iface, api=self.api, store=self.store)
             self.dock.actionsChanged.connect(self.sync_actions)
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock)
         self.dock.show()
         self.dock.raise_()
         self.dock.refresh_context()
+        if self._auto_connect_pending:
+            self._auto_connect_pending = False
+            self.dock.auto_connect_farois()
 
     def connect_farois(self):
+        first_opening = self._auto_connect_pending
         self.show_dock()
+        if first_opening and self.api is not None and self.api.connected:
+            return  # session mémorisée reprise à l'ouverture : rien à redemander
         if self.dock is not None and self.dock.is_usable():
             self.dock.connect_farois()
 
     def disconnect_farois(self):
+        self._auto_connect_pending = False
+        if self.dock is not None and self.dock.is_usable():
+            self.dock.disconnect_farois()
+            return
         if self.api is not None:
             self.api.logout()
-        if self.dock is not None and self.dock.is_usable():
-            self.dock.api_session_changed()
+        if self.store is not None:
+            self.store.clear()
 
     def sync_actions(self):
         from qgis.PyQt import sip
@@ -117,9 +134,13 @@ class FaroisAuditRollback:
         from qgis.PyQt import sip
 
         self._unloading = True
+        self._auto_connect_pending = False
         if self.api is not None:
-            self.api.logout()
+            # Oublie sans révoquer : la session mémorisée doit survivre à la
+            # fermeture de QGIS, qui ne doit pas non plus attendre l'API.
+            self.api.forget()
             self.api = None
+        self.store = None
 
         if self.dock:
             self.dock.dispose()

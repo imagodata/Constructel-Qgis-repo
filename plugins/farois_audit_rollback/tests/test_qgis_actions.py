@@ -230,7 +230,9 @@ def test_toolbar_has_one_history_entry_and_menu_keeps_undo_actions(qt, monkeypat
     assert iface.addPluginToMenu.call_count == 5
     module.FaroisAuditDock = Mock()
     plugin.action.triggered.emit()
-    module.FaroisAuditDock.assert_called_once_with(iface, api=plugin.api)
+    module.FaroisAuditDock.assert_called_once_with(
+        iface, api=plugin.api, store=plugin.store
+    )
     iface.addDockWidget.assert_called_once()
     assert not plugin.transaction_action.enabled
     plugin.dock = SimpleNamespace(
@@ -364,6 +366,9 @@ def admin_api(**overrides):
         revert_transaction=Mock(return_value={"changes": [{"reverted": ["label"], "conflicts": []}]}),
         login=Mock(),
         logout=Mock(),
+        resume=Mock(),
+        forget=Mock(),
+        last_email="",
     )
     vars(api).update(overrides)
     return api
@@ -471,10 +476,13 @@ def test_unload_drops_the_farois_session(qt):
     plugin = module.FaroisAuditRollback(iface)
     plugin.initGui()
     api = plugin.api
-    api.logout = Mock()
+    api.logout, api.forget = Mock(), Mock()
     plugin.unload()
-    api.logout.assert_called_once()
-    assert plugin.api is None
+    # Oublie sans révoquer : /auth/logout tuerait la session mémorisée à chaque
+    # fermeture de QGIS (et bloquerait la fermeture si l'API est injoignable).
+    api.forget.assert_called_once()
+    api.logout.assert_not_called()
+    assert plugin.api is None and plugin.store is None
 
 
 def test_failed_relogin_while_connected_refreshes_session(dock, qt):
@@ -791,3 +799,260 @@ def test_api_transaction_whose_members_all_had_no_effect_undid_nothing(dock, qt)
     assert "Rien n'a été annulé" in qt.QMessageBox.warning.call_args.args[2]
     qt.QMessageBox.information.assert_not_called()
     dock.layer.reload.assert_not_called()
+
+
+# ── Connexion automatique (session mémorisée) et « Se souvenir de moi » ──
+
+EMAIL = "simon@constructel.example.be"
+EXPIRED = "Farois : session expirée — reconnectez-vous (clic droit)"
+UNREACHABLE = "Farois : API injoignable — connexion automatique impossible"
+
+
+class Label:
+    def __init__(self):
+        self.value = ""
+
+    def setText(self, text):
+        self.value = text
+
+    def text(self):
+        return self.value
+
+
+@pytest.fixture
+def auto_dock(dock, qt, monkeypatch):
+    """Panneau avec bandeau, session mémorisée et interdiction de tout dialogue."""
+    from plugins.farois_audit_rollback.api.session_store import MemorySessionStore
+
+    dock.api_label = Label()
+    dock.store = MemorySessionStore()
+    dock.store.save(EMAIL, "rt-1")
+    monkeypatch.setitem(
+        dock.connect_farois.__func__.__globals__,
+        "ask_credentials",
+        Mock(side_effect=AssertionError("aucun dialogue en connexion automatique")),
+    )
+    yield dock
+    for name in ("warning", "critical", "information", "question"):
+        getattr(qt.QMessageBox, name).assert_not_called()
+
+
+def logged_out_api(resume_role=None, **overrides):
+    api = admin_api(connected=False, is_admin=False, profile=None, **overrides)
+
+    def resume(token):
+        api.profile = FaroisProfile(EMAIL, resume_role)
+        api.connected, api.is_admin = True, api.profile.is_admin
+        return api.profile
+
+    def logout():
+        api.connected = api.is_admin = False
+        api.profile = None
+
+    if resume_role is not None:
+        api.resume = Mock(side_effect=resume)
+    api.logout = Mock(side_effect=logout)  # comme le vrai client : session oubliée
+    return api
+
+
+def test_auto_connect_resumes_a_remembered_admin_session_silently(auto_dock):
+    auto_dock.api = logged_out_api("ADMIN")
+    auto_dock.auto_connect_farois()
+    auto_dock.api.resume.assert_called_once_with("rt-1")
+    assert auto_dock.api_label.text() == f"Farois : {EMAIL} (ADMIN)"
+    auto_dock.load_history.assert_called_once_with(silent=True)
+    assert auto_dock.store.load() == (EMAIL, "rt-1")
+
+
+def test_auto_connect_expired_session_clears_the_store_and_says_so(auto_dock):
+    auto_dock.api = logged_out_api(resume=Mock(side_effect=FaroisNotAuthenticated(
+        "Session Farois expirée : reconnectez-vous.", status=401)))
+    auto_dock.auto_connect_farois()
+    assert auto_dock.store.load() is None
+    assert auto_dock.api_label.text() == EXPIRED
+    assert auto_dock.api.last_email == EMAIL  # pré-remplira la reconnexion
+    auto_dock.load_history.assert_not_called()
+
+
+def test_auto_connect_unreachable_api_keeps_the_remembered_token(auto_dock):
+    auto_dock.api = logged_out_api(resume=Mock(side_effect=FaroisApiUnavailable(
+        "API Farois injoignable (http://x).")))
+    auto_dock.auto_connect_farois()
+    assert auto_dock.store.load() == (EMAIL, "rt-1")
+    assert auto_dock.api_label.text() == UNREACHABLE
+
+
+def test_auto_connect_other_api_error_keeps_the_token_and_explains(auto_dock):
+    from plugins.farois_audit_rollback.api.farois_client import FaroisApiError
+
+    auto_dock.api = logged_out_api(resume=Mock(side_effect=FaroisApiError(
+        "Réponse de renouvellement Farois invalide.")))
+    auto_dock.auto_connect_farois()
+    assert auto_dock.store.load() == (EMAIL, "rt-1")
+    assert "connexion automatique impossible" in auto_dock.api_label.text()
+    assert "Réponse de renouvellement Farois invalide." in auto_dock.api_label.text()
+
+
+def test_auto_connect_non_admin_account_is_dropped(auto_dock):
+    auto_dock.api = logged_out_api("VIEWER")
+    auto_dock.auto_connect_farois()
+    assert auto_dock.store.load() is None
+    auto_dock.api.logout.assert_called_once()
+    assert "VIEWER" in auto_dock.api_label.text()
+    assert "ADMIN et MANAGER" in auto_dock.api_label.text()
+
+
+def test_auto_connect_needs_a_remembered_session_and_a_logged_out_client(auto_dock):
+    auto_dock.api = logged_out_api("ADMIN")
+    auto_dock.store.clear()
+    auto_dock.auto_connect_farois()
+    auto_dock.api.resume.assert_not_called()
+    auto_dock.store.save(EMAIL, "rt-1")
+    auto_dock.api = admin_api()  # déjà connecté
+    auto_dock.auto_connect_farois()
+    auto_dock.api.resume.assert_not_called()
+    auto_dock.store = None
+    auto_dock.api = logged_out_api("ADMIN")
+    auto_dock.auto_connect_farois()  # sans magasin : rien
+    auto_dock.api.resume.assert_not_called()
+
+
+def test_connection_dialog_is_prefilled_from_constructel_bridge(dock, monkeypatch):
+    settings = {"constructel_bridge/audit_email": "bridge@constructel.example.be"}
+
+    class Settings:
+        def value(self, key, default=None):
+            return settings.get(key, default)
+
+    monkeypatch.setattr(sys.modules["qgis.core"], "QgsSettings", Settings, raising=False)
+    dock.api = logged_out_api()
+    asked = Mock(return_value=None)
+    monkeypatch.setitem(dock.connect_farois.__func__.__globals__, "ask_credentials", asked)
+    dock.connect_farois()
+    asked.assert_called_once_with(dock, "bridge@constructel.example.be")
+    dock.api.last_email = "saisie@constructel.example.be"  # la dernière saisie prime
+    dock.connect_farois()
+    assert asked.call_args.args == (dock, "saisie@constructel.example.be")
+
+
+@pytest.mark.parametrize("remember", [True, False])
+def test_remember_me_choice_decides_what_is_stored(dock, qt, remember):
+    from plugins.farois_audit_rollback.api.farois_client import FaroisApiClient
+    from plugins.farois_audit_rollback.api.session_store import MemorySessionStore
+    from plugins.farois_audit_rollback.tests.test_farois_client import (
+        ME, REFRESH, Opener, login_response,
+    )
+
+    store = MemorySessionStore()
+    dock.store = store
+    dock.api = FaroisApiClient("http://api:8080", opener=Opener(login_response(), ME), store=store)
+    dock.connect_farois(credentials=(ME["email"], "secret", remember))
+    assert dock.api.is_admin
+    assert store.load() == ((ME["email"], REFRESH) if remember else None)
+    assert "secret" not in repr(vars(store))
+    qt.QMessageBox.critical.assert_not_called()
+
+
+def test_manual_non_admin_login_is_not_remembered(dock, qt):
+    from plugins.farois_audit_rollback.api.farois_client import FaroisApiClient
+    from plugins.farois_audit_rollback.api.session_store import MemorySessionStore
+    from plugins.farois_audit_rollback.tests.test_farois_client import (
+        ME, Opener, login_response,
+    )
+
+    store = MemorySessionStore()
+    opener = Opener(login_response(), dict(ME, role="VIEWER"), {"detail": "ok"})
+    dock.store = store
+    dock.api = FaroisApiClient("http://api:8080", opener=opener, store=store)
+    dock.connect_farois(credentials=(ME["email"], "secret", True))
+    assert store.load() is None and not dock.api.connected
+    assert opener.requests[-1][0].full_url.endswith("/api/v1/auth/logout")
+    assert "VIEWER" in qt.QMessageBox.warning.call_args.args[2]
+
+
+def test_disconnect_revokes_and_forgets_the_remembered_session(auto_dock):
+    auto_dock.api = admin_api()
+    auto_dock.disconnect_farois()
+    auto_dock.api.logout.assert_called_once()
+    assert auto_dock.store.load() is None
+    auto_dock.load_history.assert_called_once_with(silent=True)
+
+
+def test_explicit_login_replaces_the_auto_connect_banner(auto_dock):
+    auto_dock.api = logged_out_api(resume=Mock(side_effect=FaroisApiUnavailable("down")))
+    auto_dock.auto_connect_farois()
+    assert auto_dock.api_label.text() == UNREACHABLE
+    auto_dock.api = admin_api()
+    auto_dock.connect_farois(credentials=(EMAIL, "pw", True))
+    assert auto_dock.api_label.text() == f"Farois : {EMAIL} (ADMIN)"
+    auto_dock.api = logged_out_api()
+    auto_dock.disconnect_farois()
+    assert "non connecté" in auto_dock.api_label.text()
+
+
+def started_plugin(name):
+    module = load_module(f"plugins.farois_audit_rollback.{name}", "plugin.py")
+    iface = Mock()
+    iface.addToolBar.return_value = Mock()
+    plugin = module.FaroisAuditRollback(iface)
+    plugin.initGui()
+    module.FaroisAuditDock = Mock(side_effect=lambda *args, **kwargs: Mock())
+    return module, plugin
+
+
+def test_plugin_wires_one_qgis_store_into_client_and_dock(qt):
+    from plugins.farois_audit_rollback.api.session_store import QgisSessionStore
+
+    module, plugin = started_plugin("_tested_plugin_store")
+    assert isinstance(plugin.store, QgisSessionStore)
+    assert plugin.api._store is plugin.store
+    assert plugin.dock is None  # initGui : ni panneau, ni réseau, ni magasin lu
+    plugin.show_dock()
+    module.FaroisAuditDock.assert_called_once_with(
+        plugin.iface, api=plugin.api, store=plugin.store
+    )
+
+
+def test_auto_connect_runs_once_on_first_dock_opening(qt):
+    module, plugin = started_plugin("_tested_plugin_auto_once")
+    plugin.show_dock()
+    first = plugin.dock
+    first.auto_connect_farois.assert_called_once()
+    plugin.show_dock()
+    first.auto_connect_farois.assert_called_once()
+    first.is_usable.return_value = False  # panneau détruit : recréé, sans relance
+    plugin.show_dock()
+    assert plugin.dock is not first
+    plugin.dock.auto_connect_farois.assert_not_called()
+
+
+@pytest.mark.parametrize("resumed", [True, False])
+def test_menu_connect_uses_the_remembered_session_before_asking(qt, resumed):
+    module, plugin = started_plugin(f"_tested_plugin_menu_connect_{resumed}")
+    plugin.api = SimpleNamespace(connected=False, logout=Mock(), forget=Mock())
+    dock = Mock()
+
+    def auto():
+        plugin.api.connected = resumed
+
+    dock.auto_connect_farois.side_effect = auto
+    module.FaroisAuditDock = Mock(return_value=dock)
+    plugin.connect_farois()
+    dock.auto_connect_farois.assert_called_once()
+    assert dock.connect_farois.call_count == int(not resumed)
+    plugin.connect_farois()  # demande explicite suivante : toujours le dialogue
+    assert dock.connect_farois.call_count == int(not resumed) + 1
+
+
+def test_menu_disconnect_clears_the_store_and_cancels_auto_connect(qt):
+    module, plugin = started_plugin("_tested_plugin_menu_disconnect")
+    plugin.api = SimpleNamespace(connected=True, logout=Mock(), forget=Mock())
+    plugin.store = Mock()
+    plugin.disconnect_farois()  # panneau jamais ouvert
+    plugin.api.logout.assert_called_once()
+    plugin.store.clear.assert_called_once()
+    plugin.show_dock()
+    plugin.dock.auto_connect_farois.assert_not_called()
+    plugin.dock.is_usable.return_value = True
+    plugin.disconnect_farois()  # panneau ouvert : il gère lui-même la déconnexion
+    plugin.dock.disconnect_farois.assert_called_once()
