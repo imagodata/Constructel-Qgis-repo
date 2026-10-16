@@ -31,6 +31,7 @@ except ImportError:
 from .history_model import HistoryModel, HistoryEntry
 from .rollback_actions import action_states, transaction_uuid
 from .login_dialog import ask_credentials
+from .change_details import columns_label, summary_text, show_change_details
 from ..api.farois_client import (
     REASON_MAX_LENGTH,
     FaroisApiUnavailable,
@@ -59,6 +60,7 @@ if QGIS_AVAILABLE:
             "Libellé",
             "Opération",
             "Colonnes",
+            "Avant → après",
             "Provenance",
             "Statut",
             "Transaction",
@@ -444,7 +446,8 @@ if QGIS_AVAILABLE:
                     e.record_id,
                     e.label,
                     e.operation,
-                    ", ".join(e.changed_columns),
+                    columns_label(e),
+                    summary_text(e),
                     e.provenance,
                     e.status_message,
                     e.transaction_id,
@@ -469,6 +472,10 @@ if QGIS_AVAILABLE:
                             default=str,
                         )
                     )
+                    if c == self.HEADERS.index("Avant → après"):
+                        full = summary_text(e, full=True)
+                        if full:
+                            item.setToolTip(full)
                     self.table.setItem(r, c, item)
                 if str(e.change_id) in selected_ids:
                     index = self.table.model().index(r, 0)
@@ -615,24 +622,7 @@ if QGIS_AVAILABLE:
                 elif chosen is details:
                     entry = self._entry_for_current_row()
                     if entry is not None:
-                        QMessageBox.information(
-                            self,
-                            "Farois — Détail du changement",
-                            json.dumps(
-                                {
-                                    "Utilisateur": entry.username,
-                                    "Libellé": entry.label,
-                                    "Provenance": entry.provenance,
-                                    "Colonnes": entry.changed_columns,
-                                    "Avant": entry.before,
-                                    "Après": entry.after,
-                                    "Annulation": entry.status_message,
-                                },
-                                ensure_ascii=False,
-                                indent=2,
-                                default=str,
-                            ),
-                        )
+                        show_change_details(entry, self)
                 elif chosen is zoom:
                     self.zoom_history_objects()
                 elif chosen is select:

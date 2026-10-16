@@ -249,6 +249,69 @@ def test_native_layer_history_populates_without_selection(native_qt):
     assert not q.panel.cancelable.isChecked() and not q.panel.cancelable.isEnabled()
 
 
+def _update_row():
+    return dict(
+        change_id="chg-1",
+        table_name="zone_drop",
+        actor="synthetic",
+        changed_at="fixture-date",
+        changed_columns=["label"],
+        operation="UPDATE",
+        label="L1",
+        before_values={"label": "a0", "status": "TODO"},
+        after_values={"label": "w1", "status": "TODO"},
+    )
+
+
+def test_native_before_after_column_follows_columns_with_tooltip(native_qt):
+    q = native_qt
+    setup_history_panel(q, [_update_row()])
+    q.panel.load_history()
+    headers = q.panel.HEADERS
+    col = headers.index("Avant → après")
+    assert col == headers.index("Colonnes") + 1
+    assert q.panel.table.columnCount() == len(headers)
+    item = q.panel.table.item(0, col)
+    assert "label : a0 → w1" in item.text()
+    assert item.toolTip() == "label : a0 → w1"
+    assert q.panel.table.item(0, headers.index("Colonnes")).text() == "label"
+
+
+def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch):
+    from PyQt5.QtWidgets import QDialog, QMenu
+
+    q = native_qt
+    setup_history_panel(q, [_update_row()])
+    q.panel.load_history()
+    seen = {}
+
+    def run_dialog(dialog):
+        table = dialog.table
+        seen["headers"] = [
+            table.horizontalHeaderItem(i).text() for i in range(table.columnCount())
+        ]
+        seen["default"] = [table.item(r, 0).text() for r in range(table.rowCount())]
+        seen["editable"] = bool(table.item(0, 1).flags() & q.Qt.ItemIsEditable)
+        dialog.show_all.setChecked(True)
+        seen["all"] = [table.item(r, 0).text() for r in range(table.rowCount())]
+        return 0
+
+    monkeypatch.setattr(QDialog, "exec_", run_dialog)
+    monkeypatch.setattr(
+        QMenu,
+        "exec_",
+        lambda menu, pos: next(
+            a for a in menu.actions() if a.text() == "Voir les valeurs avant/après"
+        ),
+    )
+    position = q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
+    q.panel._history_context_menu(position)
+    assert seen["headers"] == ["Champ", "Avant", "Après"]
+    assert seen["default"] == ["label"]
+    assert seen["all"] == ["label", "status"]
+    assert seen["editable"] is False
+
+
 def test_native_filters_explain_empty_table_and_reset(native_qt):
     q = native_qt
     setup_history_panel(q, [dict(change_id="fixture-change", actor="synthetic")])
