@@ -191,11 +191,24 @@ def test_qgis_store_master_password_refused_is_swallowed(qgis_auth):
     store.save(EMAIL, TOKEN)
     qgis_auth.manager.unlocked = False
     assert store.load() is None
-    assert ss.SETTINGS_KEY in qgis_auth.settings  # session gardée pour plus tard
-    store.save(EMAIL, "rt-2")  # ne lève pas
+    assert ss.SETTINGS_KEY in qgis_auth.settings  # lecture refusée : session gardée
+    store.save("autre@constructel.example.be", "rt-2")  # ne lève pas
+    # Échec d'enregistrement : l'identité mémorisée auparavant ne doit pas survivre.
+    assert qgis_auth.manager.configs == {}
+    assert ss.SETTINGS_KEY not in qgis_auth.settings
     qgis_auth.manager.unlocked = True
-    assert store.load() == (EMAIL, TOKEN)
+    assert store.load() is None
     assert qgis_auth.logged and all(tag == "Farois" for _, tag, _ in qgis_auth.logged)
+
+
+def test_qgis_store_save_crash_drops_the_previous_identity_and_logs_the_type_only(qgis_auth):
+    store = ss.QgisSessionStore()
+    store.save(EMAIL, TOKEN)
+    qgis_auth.manager.broken = True  # RuntimeError("authentication database locked")
+    store.save("autre@constructel.example.be", "rt-2")
+    assert ss.SETTINGS_KEY not in qgis_auth.settings
+    assert any("RuntimeError" in message for message, _, _ in qgis_auth.logged)
+    assert all("database locked" not in message for message, _, _ in qgis_auth.logged)
 
 
 def test_qgis_store_disabled_or_broken_manager_is_swallowed(qgis_auth):
@@ -203,13 +216,39 @@ def test_qgis_store_disabled_or_broken_manager_is_swallowed(qgis_auth):
     store.save(EMAIL, TOKEN)
     qgis_auth.manager.disabled = True
     assert store.load() is None
-    store.save(EMAIL, "rt-2")
     qgis_auth.manager.disabled, qgis_auth.manager.broken = False, True
     assert store.load() is None
-    store.save(EMAIL, "rt-3")
+    assert qgis_auth.logged
+    assert all("database locked" not in message for message, _, _ in qgis_auth.logged)
+
+
+@pytest.mark.parametrize("failure", ["disabled", "broken", "refused"])
+def test_qgis_store_clear_keeps_the_key_until_the_config_is_really_deleted(qgis_auth, failure):
+    store = ss.QgisSessionStore()
+    store.save(EMAIL, TOKEN)
+    authcfg = qgis_auth.settings[ss.SETTINGS_KEY]
+    manager = qgis_auth.manager
+    if failure == "refused":
+        manager.removeAuthenticationConfig = lambda ident: False
+    else:
+        setattr(manager, failure, True)
+    store.clear()
+    assert qgis_auth.settings[ss.SETTINGS_KEY] == authcfg  # un clear() ultérieur réessaiera
+    assert authcfg in manager.configs  # rien n'a été supprimé
+    assert all("database locked" not in message for message, _, _ in qgis_auth.logged)
+    assert qgis_auth.logged
+    vars(manager).pop("removeAuthenticationConfig", None)
+    manager.disabled = manager.broken = False
+    store.clear()
+    assert manager.configs == {} and ss.SETTINGS_KEY not in qgis_auth.settings
+
+
+def test_qgis_store_clear_of_a_config_deleted_in_qgis_drops_the_key(qgis_auth):
+    store = ss.QgisSessionStore()
+    store.save(EMAIL, TOKEN)
+    qgis_auth.manager.configs.clear()
     store.clear()
     assert ss.SETTINGS_KEY not in qgis_auth.settings
-    assert qgis_auth.logged
 
 
 def test_qgis_store_forgets_a_config_deleted_in_qgis(qgis_auth):

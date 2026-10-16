@@ -49,13 +49,47 @@ def _saved_id(settings):
     return str(settings.value(SETTINGS_KEY, "") or "")
 
 
+def _store(manager, email, refresh_token):
+    """Enregistre une nouvelle configuration ; son identifiant, ou "" si refus."""
+    from qgis.core import QgsAuthMethodConfig
+
+    if manager.isDisabled():
+        _log("Gestionnaire d'authentification QGIS désactivé : "
+             "session Farois non mémorisée.")
+        return ""
+    config = QgsAuthMethodConfig(AUTHCFG_METHOD)
+    config.setName(AUTHCFG_NAME)
+    config.setConfig("username", str(email))
+    config.setConfig("password", str(refresh_token))
+    ok, stored = _outcome(manager.storeAuthenticationConfig(config), config)
+    authcfg = str(stored.id() or "") if ok else ""
+    if not authcfg:
+        _log("Session Farois non mémorisée (gestionnaire d'authentification "
+             "QGIS verrouillé ou refusé).")
+    return authcfg
+
+
+def _delete_config(manager, authcfg):
+    """True si la configuration n'existe plus (supprimée, ou déjà absente).
+
+    La suppression ne demande pas le mot de passe maître QGIS.
+    """
+    if manager.isDisabled():
+        return False
+    if authcfg not in manager.configIds():
+        return True
+    return bool(manager.removeAuthenticationConfig(authcfg))
+
+
 class QgisSessionStore:
     """Configuration « Basic » du gestionnaire d'authentification QGIS.
 
     username = adresse mail, password = jeton de rafraîchissement ; l'identifiant
     de la configuration est gardé dans QgsSettings (SETTINGS_KEY). Toute erreur
     du gestionnaire (désactivé, mot de passe maître refusé…) est avalée : load()
-    renvoie None, save() et clear() ne lèvent pas, un message va au journal QGIS.
+    renvoie None, save() et clear() ne lèvent pas, un message (type d'erreur
+    seulement) va au journal QGIS. Un save() en échec efface la session mémorisée
+    auparavant : une ancienne identité n'est jamais reprise à la place de la nouvelle.
     """
 
     def load(self):
@@ -89,41 +123,46 @@ class QgisSessionStore:
 
     def save(self, email, refresh_token):
         try:
-            from qgis.core import QgsApplication, QgsAuthMethodConfig, QgsSettings
+            from qgis.core import QgsApplication, QgsSettings
 
-            manager = QgsApplication.authManager()
-            if manager.isDisabled():
-                _log("Gestionnaire d'authentification QGIS désactivé : "
-                     "session Farois non mémorisée.")
-                return
-            settings = QgsSettings()
+            manager, settings = QgsApplication.authManager(), QgsSettings()
             previous = _saved_id(settings)
-            config = QgsAuthMethodConfig(AUTHCFG_METHOD)
-            config.setName(AUTHCFG_NAME)
-            config.setConfig("username", str(email))
-            config.setConfig("password", str(refresh_token))
-            ok, stored = _outcome(manager.storeAuthenticationConfig(config), config)
-            authcfg = str(stored.id() or "") if ok else ""
-            if not authcfg:
-                _log("Session Farois non mémorisée (gestionnaire d'authentification "
-                     "QGIS verrouillé ou refusé).")
-                return
-            settings.setValue(SETTINGS_KEY, authcfg)
-            if previous and previous != authcfg:
-                manager.removeAuthenticationConfig(previous)
         except Exception as exc:
             _log(f"Session Farois non mémorisée ({type(exc).__name__}).")
+            return
+        try:
+            authcfg = _store(manager, email, refresh_token)
+        except Exception as exc:
+            _log(f"Session Farois non mémorisée ({type(exc).__name__}).")
+            authcfg = ""
+        try:
+            if authcfg:
+                settings.setValue(SETTINGS_KEY, authcfg)
+                if previous and previous != authcfg:
+                    _delete_config(manager, previous)
+            elif previous:
+                # Échec : l'identité mémorisée auparavant ne doit pas être reprise.
+                settings.remove(SETTINGS_KEY)
+                _delete_config(manager, previous)
+        except Exception as exc:
+            _log(f"Session Farois précédente non effacée ({type(exc).__name__}).")
 
     def clear(self):
+        """Supprime la configuration, puis la clé ; la clé reste si la suppression
+        échoue, pour qu'un clear() ultérieur réessaie."""
         try:
             from qgis.core import QgsApplication, QgsSettings
 
             settings = QgsSettings()
             authcfg = _saved_id(settings)
-            settings.remove(SETTINGS_KEY)
-            if authcfg:
-                manager = QgsApplication.authManager()
-                if not manager.isDisabled():
-                    manager.removeAuthenticationConfig(authcfg)
+            if not authcfg:
+                return
+            if _delete_config(QgsApplication.authManager(), authcfg):
+                settings.remove(SETTINGS_KEY)
+            else:
+                _log("Session Farois mémorisée non effacée (gestionnaire "
+                     "d'authentification QGIS indisponible) : nouvel essai au prochain "
+                     "effacement.")
         except Exception as exc:
-            _log(f"Session Farois mémorisée non effacée ({type(exc).__name__}).")
+            _log(f"Session Farois mémorisée non effacée ({type(exc).__name__}) : "
+                 "nouvel essai au prochain effacement.")
