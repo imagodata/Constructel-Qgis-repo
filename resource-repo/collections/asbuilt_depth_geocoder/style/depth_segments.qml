@@ -64,7 +64,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>
@@ -111,7 +117,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>
@@ -158,7 +170,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>
@@ -205,7 +223,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>
@@ -252,7 +276,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>
@@ -299,7 +329,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>
@@ -358,7 +394,13 @@
             <data_defined_properties>
               <Option type="Map">
                 <Option value="" name="name" type="QString"/>
-                <Option name="properties"/>
+                <Option name="properties" type="Map">
+                  <Option name="5" type="Map">
+                    <Option name="active" type="bool" value="true"/>
+                    <Option name="expression" type="QString" value="clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"/>
+                    <Option name="type" type="int" value="3"/>
+                  </Option>
+                </Option>
                 <Option value="collection" name="type" type="QString"/>
               </Option>
             </data_defined_properties>

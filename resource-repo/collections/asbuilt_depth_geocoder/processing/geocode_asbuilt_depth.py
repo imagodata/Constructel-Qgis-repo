@@ -50,6 +50,8 @@ import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Optional
 
@@ -79,9 +81,12 @@ try:
         QgsProcessingParameterFile,
         QgsProcessingParameterString,
         QgsProject,
+        QgsProperty,
         QgsProviderRegistry,
         QgsRendererCategory,
         QgsSymbol,
+        QgsSymbolLayer,
+        QgsUnitTypes,
         QgsVectorLayer,
         QgsWkbTypes,
     )
@@ -155,6 +160,9 @@ class InterventionRecord:
     place: str = ""
     depth_raw: str = ""
     source_message: str = ""
+    # Date d'envoi du rapport (.msg), UTC (cf. normalize_report_date) ; None
+    # pour un .xlsx/.csv ou un email sans date lisible.
+    report_date: Optional[datetime] = None
 
 
 @dataclass
@@ -216,7 +224,9 @@ def parse_depth_cm(raw: Optional[str]) -> Optional[float]:
         value = float(s.replace(",", "."))
     except ValueError:
         return None
-    return value * 100.0 if is_decimal else value
+    value = value * 100.0 if is_decimal else value
+    # « nan », « inf », « 1e400 » passent float() : jamais une profondeur.
+    return value if math.isfinite(value) else None
 
 
 def categorize_depth(depth_cm: Optional[float]) -> str:
@@ -412,6 +422,43 @@ def clean_duplicated_address(address: str) -> str:
     return last
 
 
+# Bornes de vraisemblance d'une date de rapport : extract-msg rend une
+# FILETIME nulle en 1601 ou en « NullDate » (an 4500) ; une date future
+# (horloge décalée) figerait le point (tout rapport réel serait « plus ancien »).
+REPORT_DATE_MIN_YEAR = 2000
+REPORT_DATE_MAX_AHEAD = timedelta(days=1)
+
+
+def normalize_report_date(value, now=None) -> Optional[datetime]:
+    """Date d'envoi d'un rapport -> ``datetime`` UTC à la seconde, ou ``None``.
+
+    Accepte un ``datetime`` (sans fuseau : considéré UTC) ou un en-tête email
+    RFC 2822 (``"Mon, 13 Oct 2026 10:00:00 +0200"``) — selon la version
+    d'``extract-msg``, ``Message.date`` renvoie l'un ou l'autre. Tronquée à la
+    seconde (même valeur relue en base quel que soit le chemin d'écriture).
+    ``None`` si illisible, antérieure à :data:`REPORT_DATE_MIN_YEAR` ou au-delà
+    de ``now`` + :data:`REPORT_DATE_MAX_AHEAD`. Fonction PURE (``now`` injecté).
+    """
+    if isinstance(value, str):
+        try:
+            value = parsedate_to_datetime(value.strip())
+        except (TypeError, ValueError, IndexError):
+            return None
+    if not isinstance(value, datetime):
+        return None
+    try:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        value = value.astimezone(timezone.utc).replace(microsecond=0)
+        now = now or datetime.now(timezone.utc)
+        if value.year < REPORT_DATE_MIN_YEAR or value > now + REPORT_DATE_MAX_AHEAD:
+            return None
+    except (OverflowError, ValueError):
+        return None
+    return datetime(value.year, value.month, value.day, value.hour, value.minute,
+                    value.second, tzinfo=timezone.utc)
+
+
 def _record_completeness(rec: InterventionRecord) -> int:
     """Nombre de champs exploitables d'une ligne (cf. dedupe_records)."""
     return (
@@ -422,6 +469,54 @@ def _record_completeness(rec: InterventionRecord) -> int:
     )
 
 
+_OLDEST_DATE = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def has_measure(rec: InterventionRecord) -> bool:
+    """Vrai si la ligne porte une profondeur exploitable (pas « manquante »).
+
+    Une valeur sous :data:`THRESHOLD_MISSING_CM` (« 0 », « 5 ») est classée
+    « manquante » comme une cellule vide : elle n'efface jamais une mesure.
+    Fonction PURE.
+    """
+    return categorize_depth(parse_depth_cm(rec.depth_raw)) != "manquante"
+
+
+def _record_rank(rec: InterventionRecord) -> tuple:
+    """Rang d'une ligne pour :func:`dedupe_records` (le plus grand l'emporte)."""
+    return (
+        has_measure(rec),
+        rec.report_date or _OLDEST_DATE,
+        _record_completeness(rec),
+    )
+
+
+# Champs d'adresse complétés par dedupe_records depuis les autres occurrences.
+_ADDRESS_FIELDS = ("work_order", "address", "postal_code", "place")
+
+
+def _fill_address_fields(chosen, occurrences):
+    """``chosen`` dont les champs d'adresse vides sont pris aux autres occurrences.
+
+    Donneurs par complétude décroissante (à égalité, ordre de lecture). Copie,
+    l'entrée n'est pas modifiée. Fonction PURE.
+    """
+    donors = sorted(
+        (r for r in occurrences if r is not chosen),
+        key=_record_completeness, reverse=True,
+    )
+    fill = {}
+    for name in _ADDRESS_FIELDS:
+        if (getattr(chosen, name) or "").strip():
+            continue
+        for donor in donors:
+            value = getattr(donor, name)
+            if (value or "").strip():
+                fill[name] = value
+                break
+    return dataclasses.replace(chosen, **fill) if fill else chosen
+
+
 def dedupe_records(records: list[InterventionRecord]) -> list[InterventionRecord]:
     """Dédoublonnage du lot par identifiant d'intervention : UNE ligne par clé.
 
@@ -429,28 +524,37 @@ def dedupe_records(records: list[InterventionRecord]) -> list[InterventionRecord
     intervention présente dans plusieurs fichiers du dossier ». Règle
     DÉTERMINISTE pour choisir la ligne retenue :
 
-    1. la plus COMPLÈTE (:func:`_record_completeness` : WorkOrder, adresse,
+    1. une ligne AVEC profondeur exploitable (:func:`has_measure` : un rapport
+       sans profondeur n'efface jamais une mesure) ;
+    2. le rapport le plus RÉCENT (``report_date``, date d'envoi du .msg ; une
+       ligne non datée passe après toute ligne datée) ;
+    3. la plus COMPLÈTE (:func:`_record_completeness` : WorkOrder, adresse,
        code postal, localité non vides + profondeur interprétable) ;
-    2. à complétude égale, la DERNIÈRE occurrence dans l'ordre de lecture —
-       fichiers triés par chemin (:func:`_collect_input_files`) puis ordre
-       des lignes : un rapport plus récent nommé par date l'emporte.
+    4. à égalité, la DERNIÈRE occurrence dans l'ordre de lecture — fichiers
+       triés par chemin (:func:`_collect_input_files`) puis ordre des lignes.
+
+    Les champs d'adresse VIDES de la ligne retenue sont complétés depuis les
+    autres occurrences (:func:`_fill_address_fields`) : un rapport récent à
+    l'adresse incomplète garde sa profondeur sans perdre le géocodage.
 
     L'ordre de sortie suit la PREMIÈRE apparition de chaque clé (stable).
     Les lignes sans identifiant d'intervention exploitable sont écartées
     (parasites). Fonction PURE.
     """
     best: dict[str, InterventionRecord] = {}
+    occurrences: dict[str, list] = defaultdict(list)
     order: list[str] = []
     for rec in records:
         key = (rec.intervention or "").strip()
         if not key:
             continue
+        occurrences[key].append(rec)
         if key not in best:
             order.append(key)
             best[key] = rec
-        elif _record_completeness(rec) >= _record_completeness(best[key]):
+        elif _record_rank(rec) >= _record_rank(best[key]):
             best[key] = rec
-    return [best[key] for key in order]
+    return [_fill_address_fields(best[key], occurrences[key]) for key in order]
 
 
 # --- Parsing HTML ----------------------------------------------------------
@@ -1181,6 +1285,8 @@ def _depth_style_qml_path(profile_dir: Optional[str] = None) -> Optional[str]:
 # Nom du fichier de style des segments d'axe de rue, frère de _DEPTH_STYLE_QML_NAME
 # sous ``style/`` — même statut de SOURCE DE VÉRITÉ UNIQUE, cf. _apply_segments_style.
 _DEPTH_SEGMENTS_STYLE_QML_NAME = "depth_segments.qml"
+# Échelle de la carte rendue (canevas ou page atlas), pas celle de la vue Desktop.
+_SEGMENTS_WIDTH_EXPRESSION = "clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"
 
 
 def _depth_segments_style_qml_path(profile_dir: Optional[str] = None) -> Optional[str]:
@@ -1298,6 +1404,9 @@ def _build_attribute_values(rec, query, status, hit):
         "geocode_query": query,
         "geocode_status": status,
         "source_message": rec.source_message,
+        # Date du rapport qui a fourni depth_cm (arbitre des mises à jour,
+        # cf. plan_depth_updates) ; colonne ignorée si absente de la table.
+        "measured_at": rec.report_date,
     }
 
 
@@ -2096,6 +2205,59 @@ def split_ungeocoded(entries, existing_point_ids):
     return to_push, kept
 
 
+def ungeocoded_rows_to_records(rows):
+    """Lignes de geofiber_asbuilt_ungeocoded -> ``InterventionRecord`` à re-géocoder.
+
+    ``rows`` : (intervention_id, work_order, address_raw, postal_code, place,
+    depth_raw, source_message[, measured_at_epoch]) — 8e colonne absente avant
+    la migration Farois 460. Les lignes sans intervention ou sans adresse
+    sont ignorées (rien à géocoder). Fonction PURE.
+    """
+    records = []
+    for row in rows:
+        inter, wo, addr, postal, place, depth, src = (
+            "" if v is None else str(v) for v in row[:7]
+        )
+        if not inter.strip() or not addr.strip():
+            continue
+        records.append(InterventionRecord(
+            work_order=wo, intervention=inter.strip(), address=addr,
+            postal_code=postal, place=place, depth_raw=depth, source_message=src,
+            report_date=_epoch_to_utc(row[7]) if len(row) > 7 else None,
+        ))
+    return records
+
+
+def input_folder_error(folder, retry_only):
+    """Message d'erreur si le dossier est requis mais absent, sinon ``None``.
+
+    Le dossier n'est facultatif qu'en mode seul « re-géocoder les non
+    géocodées » (``retry_only``), qui ne lit aucun fichier. Fonction PURE.
+    """
+    if retry_only or (folder or "").strip():
+        return None
+    return (
+        "Dossier des rapports requis (ou cochez « Mode seul : re-géocoder "
+        "uniquement les adresses de la table non géocodées »)."
+    )
+
+
+def merge_retry_records(records, retry):
+    """Ajoute à ``records`` les interventions à relancer absentes des fichiers lus.
+
+    Une intervention présente dans les fichiers du run garde la version fraîche
+    (adresse éventuellement corrigée). Retourne ``(fusion, nb_ajoutées)``.
+    Fonction PURE.
+    """
+    seen = {str(r.intervention) for r in records}
+    extra = []
+    for r in retry:
+        if str(r.intervention) not in seen:
+            seen.add(str(r.intervention))
+            extra.append(r)
+    return list(records) + extra, len(extra)
+
+
 @dataclass
 class Connector:
     """Ligne du point GÉOCODÉ vers l'extrémité de son segment (axe décalé).
@@ -2519,12 +2681,14 @@ def initial_dirty_ids(changed_ids, eligible_ids, locatable_ids, covered_ids,
     * ``covered_ids - eligible_ids`` — points cités par des segments mais
       désormais gris ou supprimés de la table : leurs routes sont à refaire.
 
-    ``recompute_existing=False`` (point déjà géocodé = rien à refaire) : seuls
-    les ``changed_ids`` de CE run sont sales, aucune relocalisation (donc ni
-    ``ref.osm_roads`` ni Overpass) n'est relancée pour les points existants.
+    ``recompute_existing=False`` (point déjà géocodé = rien à refaire) : les
+    ``changed_ids`` de CE run et les points cités par des segments mais devenus
+    gris ou supprimés (renumérotés) — segments laissés par un run dont la purge
+    a été suspendue ; aucune relocalisation des points existants inchangés
+    (donc ni ``ref.osm_roads`` ni Overpass pour eux).
     """
     if not recompute_existing:
-        return set(changed_ids)
+        return set(changed_ids) | (set(covered_ids) - set(eligible_ids))
     return (
         set(changed_ids)
         | (set(locatable_ids) - set(covered_ids))
@@ -4475,6 +4639,291 @@ def is_already_present(rec, interventions, work_order_addresses) -> bool:
     )
 
 
+# --- Mise à jour des profondeurs des points déjà en base ---------------------
+# Arbitre : la DATE DU RAPPORT (measured_at, date d'envoi du .msg qui a fourni
+# la profondeur en base). Une mesure n'est remplacée que par une mesure plus
+# récente ; le point n'est ni re-géocodé ni déplacé.
+SKIP_OLDER = "older"            # mesure en base plus récente
+SKIP_UP_TO_DATE = "up_to_date"  # même rapport que celui déjà en base
+SKIP_NO_DEPTH = "no_depth"      # rapport sans profondeur interprétable
+SKIP_UNDATED = "undated"        # rapport sans date (.xlsx/.csv, email illisible)
+SKIP_SUPERSEDED = "superseded"  # une autre ligne du lot est retenue pour ce point
+# Colonnes qui suivent la mesure : écrites par la mise à jour datée seule, jamais
+# par l'upsert de re-géocodage d'un point existant (cf. strip_depth_fields).
+DEPTH_FIELDS = ("depth_cm", "depth_category", "measured_at", "source_message")
+
+
+@dataclass
+class KnownPoint:
+    """Point déjà géocodé en base (cf. build_known_points)."""
+
+    intervention_id: str
+    work_order: str = ""
+    address_key: str = ""
+    depth_category: str = ""
+    measured_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    # Ligne sans géométrie (géocodage historique en échec) : jamais visée par
+    # une mise à jour ni une renumérotation, l'intervention est re-géocodée.
+    has_geom: bool = True
+
+
+@dataclass
+class DepthUpdate:
+    """Profondeur plus récente à écrire sur le point ``target_id``.
+
+    ``target_id`` différent de ``record.intervention`` : le point existant
+    (même work order, même adresse) PREND le nouveau numéro d'intervention.
+    """
+
+    record: InterventionRecord
+    target_id: str
+    old_category: str = ""
+
+    @property
+    def renamed(self) -> bool:
+        return self.target_id != self.record.intervention
+
+
+@dataclass
+class DepthPlan:
+    """Sort de chaque ligne du lot face aux points en base (cf. plan_depth_updates).
+
+    ``new`` : absentes de la base, à géocoder. ``updates`` : profondeur à mettre
+    à jour. ``skipped`` : ``(ligne, raison SKIP_*, target_id)``.
+    """
+
+    new: list
+    updates: list
+    skipped: list
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _epoch_to_utc(value) -> Optional[datetime]:
+    """Epoch (secondes) -> ``datetime`` UTC ; addition plutôt que
+    ``fromtimestamp`` (OSError sous Windows hors 1970-3000). PURE."""
+    if value in (None, ""):
+        return None
+    try:
+        return _EPOCH + timedelta(seconds=float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def build_known_points(rows) -> list:
+    """Lignes SQL -> ``KnownPoint``.
+
+    ``rows`` : ``(intervention_id, work_order, address_raw, postal_code,
+    depth_category, measured_at_epoch, updated_at_epoch[, has_geom])`` (epochs
+    en secondes, ``EXTRACT(EPOCH FROM …)`` ; ``has_geom`` absent = vrai).
+    Fonction PURE.
+    """
+    points = []
+    for row in rows:
+        inter, wo, addr, postal, category, measured, updated = row[:7]
+        if inter in (None, ""):
+            continue
+        points.append(KnownPoint(
+            intervention_id=str(inter),
+            work_order=str(wo or "").strip(),
+            address_key=address_key(addr, postal),
+            depth_category=category if isinstance(category, str) else "",
+            measured_at=_epoch_to_utc(measured),
+            updated_at=_epoch_to_utc(updated),
+            has_geom=bool(row[7]) if len(row) > 7 else True,
+        ))
+    return points
+
+
+def _point_recency(point: KnownPoint) -> tuple:
+    # Numéro en dernier critère : choix déterministe entre points ex aequo.
+    return (point.measured_at or _OLDEST_DATE, point.updated_at or _OLDEST_DATE,
+            point.intervention_id)
+
+
+def _street_key(key: str) -> str:
+    """Partie adresse d'une :func:`address_key`, sans le code postal : celui
+    des points vient de Nominatim, celui du rapport peut différer. PURE."""
+    return key.rsplit("|", 1)[0]
+
+
+def plan_depth_updates(records, known_points) -> DepthPlan:
+    """Répartit les lignes du lot : à géocoder / profondeur à mettre à jour / ignorées.
+
+    Point visé par une ligne : même intervention, sinon même work order + même
+    adresse (:func:`address_key` sans code postal, :func:`_street_key`) — le
+    point existant le plus récent si plusieurs correspondent ; un point sans
+    géométrie n'est jamais visé (sa ligne, même numéro, est à géocoder). Plusieurs lignes visant le même point : la plus
+    récente l'emporte (à date égale, celle du même numéro, sans
+    renumérotation), les autres sont ``SKIP_SUPERSEDED``. La ligne retenue met
+    à jour le point si elle a une profondeur interprétable, une date, et que
+    celle-ci est postérieure à ``measured_at`` (``None`` en base = plus ancien
+    que tout). Fonction PURE.
+    """
+    by_id = {p.intervention_id: p for p in known_points}
+    by_wo_addr = defaultdict(list)
+    for point in known_points:
+        street = _street_key(point.address_key)
+        if point.has_geom and point.work_order and street:
+            by_wo_addr[(point.work_order, street)].append(point)
+
+    new, targeted = [], []
+    for rec in records:
+        point = by_id.get(rec.intervention)
+        if point is None:
+            street = _street_key(address_key(rec.address, rec.postal_code))
+            matches = by_wo_addr.get(((rec.work_order or "").strip(), street)) if street else None
+            if matches:
+                point = max(matches, key=_point_recency)
+        if point is None or not point.has_geom:
+            new.append(rec)
+        else:
+            targeted.append((rec, point))
+
+    def _claim(item):
+        rec, point = item
+        return (
+            has_measure(rec),
+            rec.report_date or _OLDEST_DATE,
+            rec.intervention == point.intervention_id,
+        )
+
+    winners = {}
+    for item in targeted:
+        target = item[1].intervention_id
+        if target not in winners or _claim(item) > _claim(winners[target]):
+            winners[target] = item
+
+    updates, skipped = [], []
+    for rec, point in targeted:
+        target = point.intervention_id
+        if winners[target][0] is not rec:
+            skipped.append((rec, SKIP_SUPERSEDED, target))
+        elif not has_measure(rec):
+            skipped.append((rec, SKIP_NO_DEPTH, target))
+        elif rec.report_date is None:
+            skipped.append((rec, SKIP_UNDATED, target))
+        elif point.measured_at is not None and rec.report_date < point.measured_at:
+            skipped.append((rec, SKIP_OLDER, target))
+        elif point.measured_at is not None and rec.report_date == point.measured_at:
+            skipped.append((rec, SKIP_UP_TO_DATE, target))
+        else:
+            updates.append(DepthUpdate(rec, target, point.depth_category))
+    return DepthPlan(new=new, updates=updates, skipped=skipped)
+
+
+def retained_by_target(plan: DepthPlan) -> dict:
+    """Point visé -> intervention de la ligne retenue pour lui (journal). PURE.
+
+    La ligne retenue est celle qui n'est pas ``SKIP_SUPERSEDED`` : mise à jour,
+    ou ignorée pour une autre raison (déjà à jour, sans profondeur…).
+    """
+    retained = {u.target_id: u.record.intervention for u in plan.updates}
+    retained.update({
+        target: rec.intervention for rec, reason, target in plan.skipped
+        if reason != SKIP_SUPERSEDED
+    })
+    return retained
+
+
+def ids_to_geocode(plan: DepthPlan, recompute: bool) -> set:
+    """Interventions du lot à soumettre à Nominatim. Fonction PURE.
+
+    Par défaut : les seules absentes de la base. ``recompute`` (option
+    « Recalculer ») : aussi les points existants dont la ligne est la plus à
+    jour — mises à jour (après renumérotation éventuelle), ligne du même
+    rapport ou plus récente sans profondeur. Jamais une ligne plus ancienne
+    que la base (adresse périmée), non datée, supplantée (son point a pu être
+    renuméroté : elle serait insérée en doublon) ni visant le point d'un autre
+    numéro sans le renuméroter.
+    """
+    ids = {rec.intervention for rec in plan.new}
+    if recompute:
+        ids |= {u.record.intervention for u in plan.updates}
+        ids |= {rec.intervention for rec, reason, target in plan.skipped
+                if target == rec.intervention
+                and reason in (SKIP_UP_TO_DATE, SKIP_NO_DEPTH)}
+    return ids
+
+
+def strip_depth_fields(values: dict) -> dict:
+    """Valeurs d'upsert sans les colonnes de la mesure (:data:`DEPTH_FIELDS`). PURE."""
+    return {k: v for k, v in values.items() if k not in DEPTH_FIELDS}
+
+
+def point_values_for_upsert(values, existing, existing_measured_at, measured_column):
+    """Valeurs à écrire par l'upsert d'un point géocodé, ou ``None`` (ne rien créer).
+
+    * point absent : insertion seulement avec sa mesure — une ligne privée de
+      ses champs de mesure (:func:`strip_depth_fields`, point existant
+      re-géocodé) dont le point est introuvable (renumérotation non appliquée)
+      ne crée jamais de doublon ;
+    * point existant, colonne measured_at présente : les champs de mesure ne
+      sont écrits que pour une mesure datée plus récente que celle en base
+      (même règle que :func:`plan_depth_updates`, filet de sécurité) ;
+    * colonne absente (migration Farois 460 non appliquée) : ancien
+      comportement, tout est écrit. Fonction PURE.
+    """
+    if not existing:
+        return dict(values) if "depth_cm" in values else None
+    if measured_column and "depth_cm" in values:
+        new = values.get("measured_at")
+        if new is None or (existing_measured_at is not None and new <= existing_measured_at):
+            return strip_depth_fields(values)
+    return dict(values)
+
+
+def sql_text(value) -> str:
+    """Littéral SQL texte (``standard_conforming_strings`` : seule ``'`` est doublée). PURE."""
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("\x00", "").replace("'", "''") + "'"
+
+
+def build_depth_update_sql(update: DepthUpdate, table: str) -> str:
+    """``UPDATE`` d'une profondeur plus récente, GARDÉ par la date en base.
+
+    La garde ``measured_at IS NULL OR measured_at < date du rapport`` rejoue
+    en base la règle de :func:`plan_depth_updates` (aucune ligne modifiée si
+    une mesure plus récente a été écrite entre-temps). ``RETURNING`` : vide si
+    rien n'a été modifié. Renumérotation : ``intervention_id`` prend le
+    nouveau numéro. Fonction PURE.
+    """
+    rec = update.record
+    depth = parse_depth_cm(rec.depth_raw)
+    measured = f"to_timestamp({rec.report_date.timestamp()!r})"
+    sets = [
+        f"depth_cm = {float(depth)!r}",
+        f"depth_category = {sql_text(categorize_depth(depth))}",
+        f"measured_at = {measured}",
+        f"source_message = {sql_text(rec.source_message)}",
+    ]
+    if update.renamed:
+        sets.insert(0, f"intervention_id = {sql_text(rec.intervention)}")
+    return (
+        f"UPDATE {table} SET {', '.join(sets)} "
+        f"WHERE intervention_id = {sql_text(update.target_id)} "
+        f"AND (measured_at IS NULL OR measured_at < {measured}) "
+        "RETURNING intervention_id"
+    )
+
+
+def depth_update_dirty_ids(update: DepthUpdate) -> set:
+    """Points dont les segments sont à recalculer après ``update``. Fonction PURE.
+
+    Renumérotation : l'ancien numéro (segments à purger) et le nouveau. Sinon
+    le point seulement si sa catégorie (couleur) change.
+    """
+    if update.renamed:
+        return {update.target_id, update.record.intervention}
+    new_category = categorize_depth(parse_depth_cm(update.record.depth_raw))
+    if (update.old_category or "") != new_category:
+        return {update.target_id}
+    return set()
+
+
 # ===========================================================================
 # Wrapper QGIS Processing — fin, orchestration uniquement
 # ===========================================================================
@@ -4528,6 +4977,24 @@ if HAS_QGIS:
     def _str_or_empty(value) -> str:
         """Valeur d'attribut texte, NULL (QVariant) ou autre -> chaîne vide."""
         return value if isinstance(value, str) else ""
+
+    def _qgis_value(value):
+        """Valeur Python -> attribut QGIS (``datetime`` -> ``QDateTime`` UTC)."""
+        if isinstance(value, datetime):
+            return QDateTime.fromMSecsSinceEpoch(
+                int(round(value.timestamp() * 1000))
+            ).toUTC()
+        return value
+
+    def _attr_datetime(value) -> Optional[datetime]:
+        """Attribut horodaté QGIS (``QDateTime``, NULL) -> ``datetime`` UTC ou ``None``."""
+        if isinstance(value, QDateTime):
+            if not value.isValid():
+                return None
+            return _EPOCH + timedelta(milliseconds=value.toMSecsSinceEpoch())
+        if isinstance(value, datetime):
+            return normalize_report_date(value)
+        return None
 
     def _point_state(feat) -> dict:
         """État d'un point en base utile aux segments (cf. point_changed)."""
@@ -4660,6 +5127,13 @@ if HAS_QGIS:
             color = DEPTH_COLORS[value]
             symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.LineGeometry)
             symbol.setColor(QColor(color))
+            symbol.setWidth(0.6)
+            symbol.setWidthUnit(QgsUnitTypes.RenderMillimeters)
+            for symbol_layer in symbol.symbolLayers():
+                symbol_layer.setDataDefinedProperty(
+                    QgsSymbolLayer.PropertyStrokeWidth,
+                    QgsProperty.fromExpression(_SEGMENTS_WIDTH_EXPRESSION),
+                )
             categories.append(
                 QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS.get(value, value))
             )
@@ -4960,11 +5434,28 @@ if HAS_QGIS:
                 f"Installez-le manuellement : {sys.executable} -m pip install openpyxl"
             )
 
+    def _read_msg_date(message):
+        """Date d'envoi d'un .msg (UTC, cf. normalize_report_date) ou ``None``.
+
+        ``date`` (envoi) vaut ``None`` pour un message non marqué envoyé :
+        repli sur ``receivedTime`` (réception par le serveur).
+        """
+        for attr in ("date", "receivedTime"):
+            try:
+                value = normalize_report_date(getattr(message, attr, None))
+            except Exception:  # propriété extract-msg en échec
+                value = None
+            if value is not None:
+                return value
+        return None
+
     def _read_msg_bodies(path: str, extract_msg_module):
+        """(html, texte, date d'envoi) d'un .msg Outlook."""
         message = extract_msg_module.Message(path)
         try:
             html = message.htmlBody
             body = message.body
+            sent = _read_msg_date(message)
         finally:
             try:
                 message.close()
@@ -4974,7 +5465,7 @@ if HAS_QGIS:
             html = html.decode("utf-8", "replace")
         if isinstance(body, bytes):
             body = body.decode("utf-8", "replace")
-        return html or "", body or ""
+        return html or "", body or "", sent
 
     def _read_records_from_file(path, extract_msg_module, openpyxl_module):
         """Aiguille un fichier vers le bon lecteur -> list[InterventionRecord].
@@ -4985,8 +5476,11 @@ if HAS_QGIS:
         """
         ext = os.path.splitext(path)[1].lower()
         if ext == ".msg":
-            html, body = _read_msg_bodies(path, extract_msg_module)
-            return parse_report_content(html, body)
+            html, body, sent = _read_msg_bodies(path, extract_msg_module)
+            records = parse_report_content(html, body)
+            for rec in records:
+                rec.report_date = sent
+            return records
         if ext == ".csv":
             return parse_tabular_rows(read_csv_rows(path))
         if ext in (".xlsx", ".xls"):
@@ -5024,6 +5518,8 @@ if HAS_QGIS:
         CONTACT_EMAIL = "CONTACT_EMAIL"
         FULL_REBUILD = "FULL_REBUILD"
         RECOMPUTE_EXISTING = "RECOMPUTE_EXISTING"
+        RETRY_UNGEOCODED = "RETRY_UNGEOCODED"
+        RETRY_ONLY = "RETRY_ONLY"
 
         # -- métadonnées --------------------------------------------------
         def name(self):
@@ -5087,14 +5583,26 @@ if HAS_QGIS:
                 "un projet qui les contient déjà n'est pas modifié). Un échec "
                 "partiel en cours de route (une étape, Overpass, un style) est "
                 "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
+                "MODE SEUL « RE-GÉOCODER LES NON GÉOCODÉES » — case décochée par "
+                "défaut. Cochée : le dossier est ignoré (facultatif), aucun fichier "
+                "n'est lu ; seules les adresses de public.geofiber_asbuilt_ungeocoded "
+                "sont re-soumises à Nominatim. Celles trouvées suivent le flux "
+                "normal (point, retrait de la table, segments, styles), les autres "
+                "restent dans la table.\n\n"
                 "ADRESSES DÉJÀ EN BASE — par défaut (case avancée « Recalculer » décochée), "
                 "une intervention déjà présente avec un point géocodé dans "
                 "public.geofiber_asbuilt_depth_points (même intervention, ou même "
                 "WorkOrder avec la même adresse) n'est NI géocodée (Nominatim), NI "
-                "réécrite, NI relocalisée (ref.osm_roads, Overpass) : seules les "
-                "nouvelles adresses déclenchent des requêtes et des segments. "
-                "Cochez la case pour tout recalculer (géocodage, routes OSM, "
-                "segments) comme avant.\n\n"
+                "relocalisée (ref.osm_roads, Overpass) : le point garde sa position. "
+                "Sa PROFONDEUR est mise à jour si le rapport est PLUS RÉCENT que la "
+                "mesure en base (date d'envoi du .msg, colonne measured_at) ; même "
+                "WorkOrder et même adresse sous un NOUVEAU numéro d'intervention : "
+                "le point existant prend ce numéro. Un rapport plus ancien, sans "
+                "profondeur ou sans date (.xlsx/.csv) ne modifie jamais un point "
+                "existant. Seuls les points dont la couleur ou le numéro change "
+                "voient leurs segments recalculés. Cochez la case pour tout "
+                "recalculer (géocodage, routes OSM, segments) ; la profondeur suit "
+                "alors la même règle de date.\n\n"
                 "SEGMENTS D'AXE DE RUE — recalcul INCRÉMENTAL : seules les routes "
                 "impactées (points nouveaux ou modifiés par ce run, points jamais "
                 "localisés, points devenus gris ou supprimés, et les autres points "
@@ -5252,6 +5760,18 @@ if HAS_QGIS:
                     self.INPUT_FOLDER,
                     self.tr("Dossier des rapports (.msg / .xlsx / .xls / .csv)"),
                     behavior=QgsProcessingParameterFile.Folder,
+                    # Facultatif en mode seul RETRY_ONLY (cf. input_folder_error).
+                    optional=True,
+                )
+            )
+            self.addParameter(
+                QgsProcessingParameterBoolean(
+                    self.RETRY_ONLY,
+                    self.tr(
+                        "Mode seul : re-géocoder uniquement les adresses de la "
+                        "table « non géocodées » (dossier ignoré)"
+                    ),
+                    defaultValue=False,
                 )
             )
             self.addParameter(
@@ -5275,6 +5795,20 @@ if HAS_QGIS:
             )
             recompute.setFlags(recompute.flags() | _ADVANCED_PARAMETER_FLAG)
             self.addParameter(recompute)
+            # Parametre AVANCE (defaut : coche). Les adresses deja presentes dans
+            # public.geofiber_asbuilt_ungeocoded sont re-soumises au geocodage a
+            # chaque run ; en cas de succes elles suivent le flux normal (point,
+            # retrait des non geocodees, segments). Decoche : 1 req/s economisee
+            # par adresse toujours introuvable.
+            retry = QgsProcessingParameterBoolean(
+                self.RETRY_UNGEOCODED,
+                self.tr(
+                    "Relancer le géocodage des adresses déjà en table « non géocodées »"
+                ),
+                defaultValue=True,
+            )
+            retry.setFlags(retry.flags() | _ADVANCED_PARAMETER_FLAG)
+            self.addParameter(retry)
             # Parametre AVANCE : force la reconstruction de TOUS les segments
             # (ancien comportement) — a cocher apres un changement de regle
             # (seuils, decalages, cotes, ref.osm_roads) que le mode incremental,
@@ -5296,6 +5830,13 @@ if HAS_QGIS:
             recompute_existing = self.parameterAsBoolean(
                 parameters, self.RECOMPUTE_EXISTING, context
             )
+            retry_ungeocoded = self.parameterAsBoolean(
+                parameters, self.RETRY_UNGEOCODED, context
+            )
+            retry_only = self.parameterAsBoolean(parameters, self.RETRY_ONLY, context)
+            folder_error = input_folder_error(folder, retry_only)
+            if folder_error:
+                raise QgsProcessingException(folder_error)
             self._segments_multi = None  # sonde du type de colonne, une fois par run
             self._connectors_available = None  # sonde de la table connecteurs
             # Metadonnees Nominatim/OSM des points geocodes A CE RUN (en memoire
@@ -5314,8 +5855,15 @@ if HAS_QGIS:
             geocoded_for_db: list[tuple[dict, "QgsPointXY"]] = []
 
             # --- collecte des entrées (.msg / .xlsx / .xls / .csv) -------
-            input_paths = _collect_input_files(folder)
-            if not input_paths:
+            # Mode seul : aucun fichier lu, seules les non geocodees sont relancees.
+            input_paths = [] if retry_only else _collect_input_files(folder)
+            if retry_only:
+                feedback.pushInfo(
+                    "Mode seul : re-géocodage des adresses de "
+                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} "
+                    "(dossier ignoré)."
+                )
+            elif not input_paths:
                 feedback.pushWarning(
                     f"Aucun fichier .msg/.xlsx/.xls/.csv trouvé dans {folder}."
                 )
@@ -5352,6 +5900,24 @@ if HAS_QGIS:
                 f"{len(deduped)} interventions uniques après dédoublonnage "
                 f"(sur {len(all_records)} lignes lues)."
             )
+            # Adresses restees en table « non géocodées » aux runs précédents :
+            # re-soumises au même flux (géocodage -> point -> retrait de la table
+            # -> segments). Une intervention présente dans les fichiers garde la
+            # version fraîche.
+            if (retry_ungeocoded or retry_only) and not feedback.isCanceled():
+                retry_records = self._load_ungeocoded_records(feedback)
+                if retry_only and not retry_records:
+                    feedback.pushInfo(
+                        f"Aucune adresse dans {UNGEOCODED_TABLE_SCHEMA}."
+                        f"{UNGEOCODED_TABLE_NAME} : rien à re-géocoder."
+                    )
+                deduped, n_retry = merge_retry_records(deduped, retry_records)
+                if retry_records:
+                    feedback.pushInfo(
+                        f"{n_retry} adresse(s) de {UNGEOCODED_TABLE_SCHEMA}."
+                        f"{UNGEOCODED_TABLE_NAME} relancée(s) "
+                        f"({len(retry_records) - n_retry} déjà dans les fichiers lus)."
+                    )
 
             # --- géocodage ----------------------------------------------
             # WGS84 (Nominatim) -> Lambert belge 72, contexte de transformation
@@ -5359,20 +5925,40 @@ if HAS_QGIS:
             to_lambert, _ = lambert_transforms(context.transformContext())
             n_ok = n_nf = n_skip_be = 0
             # Points déjà en base 'be' (même intervention, ou même work order +
-            # même adresse) : ni géocodage Nominatim, ni upsert, donc aucun
-            # point « modifié » et aucun segment recalculé pour eux.
-            if deduped and not recompute_existing:
-                be_known_ids, be_known_wo_addr = self._load_known_from_be(feedback)
-                feedback.pushInfo(
-                    f"{len(be_known_ids)} interventions déjà géocodées en base 'be' "
-                    "(ignorées : option « Recalculer » décochée)."
-                )
+            # même adresse) : leur profondeur n'est remplacée que par un rapport
+            # PLUS RÉCENT (plan_depth_updates, écrit à l'étape 1), sans géocodage
+            # sauf option « Recalculer » ; le point garde sa position.
+            known_points = self._load_known_points(feedback) if deduped else None
+            depth_plan = None
+            if known_points is not None:
+                depth_plan = plan_depth_updates(deduped, known_points)
+                self._log_depth_plan(depth_plan, feedback)
+                geocode_ids = ids_to_geocode(depth_plan, recompute_existing)
+                new_ids = {rec.intervention for rec in depth_plan.new}
+
+                def _skip_geocoding(rec):
+                    return rec.intervention not in geocode_ids
             else:
-                be_known_ids, be_known_wo_addr = set(), set()
-                if recompute_existing:
+                # Sans date de mesure en base (migration Farois 460 absente) :
+                # ancien comportement, ni géocodage ni upsert des points connus.
+                new_ids = None
+                if deduped and not recompute_existing:
+                    be_known_ids, be_known_wo_addr = self._load_known_from_be(feedback)
                     feedback.pushInfo(
-                        "Option « Recalculer » cochée : tout est géocodé et recalculé."
+                        f"{len(be_known_ids)} interventions déjà géocodées en base 'be' "
+                        "(ignorées : option « Recalculer » décochée)."
                     )
+                else:
+                    be_known_ids, be_known_wo_addr = set(), set()
+
+                def _skip_geocoding(rec):
+                    return is_already_present(rec, be_known_ids, be_known_wo_addr)
+            if recompute_existing:
+                feedback.pushInfo(
+                    "Option « Recalculer » cochée : tout est géocodé et recalculé"
+                    + (" (la profondeur d'un point existant suit la règle de date)."
+                       if depth_plan is not None else ".")
+                )
             out_of_range: list[str] = []  # contrôle de vraisemblance Lambert 72
             divergent: list[str] = []     # contrôle croisé QGIS / Python pur
             total = max(len(deduped), 1)
@@ -5390,12 +5976,13 @@ if HAS_QGIS:
             for i, rec in enumerate(deduped):
                 if feedback.isCanceled():
                     break
-                if is_already_present(rec, be_known_ids, be_known_wo_addr):
+                if _skip_geocoding(rec):
                     n_skip_be += 1
-                    feedback.pushInfo(
-                        f"Déjà en base 'be' (work order {rec.work_order}, "
-                        f"intervention {rec.intervention}) : ni géocodage ni segment."
-                    )
+                    if depth_plan is None:  # sinon déjà journalisé (_log_depth_plan)
+                        feedback.pushInfo(
+                            f"Déjà en base 'be' (work order {rec.work_order}, "
+                            f"intervention {rec.intervention}) : ni géocodage ni segment."
+                        )
                     feedback.setProgress(int(100 * (i + 1) / total))
                     continue
                 try:
@@ -5444,6 +6031,10 @@ if HAS_QGIS:
                     if math.hypot(px - x, py - y) > LAMBERT_CROSSCHECK_TOLERANCE_M:
                         divergent.append(rec.intervention)
                     values = _build_attribute_values(rec, query, "ok", hit)
+                    if new_ids is not None and rec.intervention not in new_ids:
+                        # Point existant re-géocodé (« Recalculer ») : sa mesure
+                        # suit la mise à jour datée, jamais l'upsert.
+                        values = strip_depth_fields(values)
                     geocoded_for_db.append((values, point))
                     n_ok += 1
                     if used_fallback:
@@ -5457,7 +6048,7 @@ if HAS_QGIS:
 
             feedback.pushInfo(
                 f"{n_ok} interventions géocodées, {n_nf} échecs, "
-                f"{n_skip_be} déjà en base 'be' ignorées."
+                f"{n_skip_be} déjà en base 'be' non géocodées."
             )
             if postal_mismatches:
                 feedback.pushWarning(
@@ -5491,8 +6082,10 @@ if HAS_QGIS:
             # segments a partir des points deja en base. Annulation : rien
             # n'est ecrit.
             if not feedback.isCanceled():
+                depth_updates = depth_plan.updates if depth_plan is not None else []
                 feedback.pushInfo(
-                    f"Étape 1/4 — points : upsert de {len(geocoded_for_db)} "
+                    f"Étape 1/4 — points : {len(depth_updates)} profondeur(s) plus "
+                    f"récente(s) puis upsert de {len(geocoded_for_db)} "
                     f"intervention(s) géocodée(s) dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} "
                     f"et de {len(ungeocoded)} non géocodée(s) dans "
                     f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
@@ -5501,6 +6094,20 @@ if HAS_QGIS:
                 # presente dans les points ne reste dans les non geocodees
                 # (nettoie aussi l'historique, sans script separe).
                 self._purge_ungeocoded_already_geocoded(feedback)
+                # Profondeurs datees AVANT l'upsert : un point renumerote doit
+                # exister sous son nouveau numero quand « Recalculer » le
+                # re-geocode, et avant le controle _existing_point_ids.
+                updated_ids, update_dirty, updates_known = set(), set(), True
+                try:
+                    updated_ids, update_dirty = self._apply_depth_updates(
+                        depth_updates, feedback
+                    )
+                except Exception as exc:
+                    updates_known = False
+                    feedback.pushWarning(
+                        f"Profondeurs : erreur inattendue lors de la mise à jour ({exc}) "
+                        "— segments reconstruits entièrement par prudence."
+                    )
                 written_ids: set = set()
                 # None = points modifies INCONNUS (upsert interrompu) : les
                 # segments sont alors entierement reconstruits par prudence.
@@ -5514,6 +6121,11 @@ if HAS_QGIS:
                         f"Points : erreur inattendue lors de l'upsert ({exc}) — "
                         "segments reconstruits entièrement par prudence."
                     )
+                written_ids = set(written_ids) | updated_ids
+                if changed_ids is not None and updates_known:
+                    changed_ids = set(changed_ids) | update_dirty
+                else:
+                    changed_ids = None
                 try:
                     self._remove_resolved_ungeocoded(written_ids, feedback)
                 except Exception as exc:
@@ -5765,7 +6377,8 @@ if HAS_QGIS:
 
             fields = layer.fields()
             id_field = QgsExpression.quotedColumnRef("intervention_id")
-            inserted = updated = failed = 0
+            measured_column = fields.indexOf("measured_at") >= 0
+            inserted = updated = failed = not_created = 0
             for values, point in records:
                 intervention_id = values["intervention_id"]
                 id_value = QgsExpression.quotedValue(intervention_id)
@@ -5773,16 +6386,33 @@ if HAS_QGIS:
                 request.setFilterExpression(f"{id_field} = {id_value}")
                 existing = list(layer.getFeatures(request))
                 old_state = _point_state(existing[0]) if existing else None
+                # Regle de date (cf. point_values_for_upsert) : jamais de
+                # doublon sans mesure, jamais une mesure plus ancienne ecrite.
+                values = point_values_for_upsert(
+                    values, bool(existing),
+                    _attr_datetime(existing[0]["measured_at"])
+                    if existing and measured_column else None,
+                    measured_column,
+                )
+                if values is None:
+                    not_created += 1
+                    feedback.pushWarning(
+                        f"Intervention {intervention_id} : point existant introuvable "
+                        "sous ce numéro (renumérotation non appliquée ?) — non créé."
+                    )
+                    continue
 
                 layer.startEditing()
                 ok = False
                 try:
+                    # Colonne absente de la table (ex. measured_at avant la
+                    # migration Farois 460) : valeur ignorée, pas d'échec.
                     if existing:
                         fid = existing[0].id()
                         attr_map = {
-                            fields.indexOf(name): value
+                            fields.indexOf(name): _qgis_value(value)
                             for name, value in values.items()
-                            if name != "intervention_id"
+                            if name != "intervention_id" and fields.indexOf(name) >= 0
                         }
                         staged = layer.changeAttributeValues(fid, attr_map)
                         staged = (
@@ -5792,7 +6422,8 @@ if HAS_QGIS:
                     else:
                         feat = QgsFeature(fields)
                         for name, value in values.items():
-                            feat.setAttribute(name, value)
+                            if fields.indexOf(name) >= 0:
+                                feat.setAttribute(name, _qgis_value(value))
                         now = QDateTime.currentDateTimeUtc()
                         for ts_col in ("created_at", "updated_at"):
                             idx = fields.indexOf(ts_col)
@@ -5811,7 +6442,11 @@ if HAS_QGIS:
                 if ok:
                     written_ids.add(intervention_id)
                     new_state = {
-                        "depth_category": values.get("depth_category"),
+                        # Point existant re-géocodé sans sa mesure (cf.
+                        # strip_depth_fields) : catégorie inchangée par l'upsert.
+                        "depth_category": values.get(
+                            "depth_category", (old_state or {}).get("depth_category")
+                        ),
                         "address_raw": values.get("address_raw"),
                         "x": point.x(), "y": point.y(),
                     }
@@ -5832,8 +6467,8 @@ if HAS_QGIS:
 
             feedback.pushInfo(
                 f"Points : {inserted + updated} upsertee(s) ({inserted} creee(s), "
-                f"{updated} mise(s) a jour), {failed} echec(s) sur {len(records)} "
-                "intervention(s) geocodee(s)."
+                f"{updated} mise(s) a jour), {failed} echec(s), {not_created} "
+                f"non creee(s) sur {len(records)} intervention(s) geocodee(s)."
             )
             return written_ids, changed_ids
 
@@ -5873,6 +6508,38 @@ if HAS_QGIS:
                     f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
                 )
 
+        def _load_ungeocoded_records(self, feedback):
+            """Lit public.geofiber_asbuilt_ungeocoded -> ``InterventionRecord`` à relancer.
+
+            Best-effort : lecture impossible -> liste vide (avertissement), le
+            run continue avec les seuls fichiers lus.
+            """
+            be_connection = self._be_connection()
+            if be_connection is None:
+                return []
+            columns = (
+                "intervention_id, work_order, address_raw, postal_code, "
+                "place, depth_raw, source_message"
+            )
+            table = f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}"
+            try:
+                rows = be_connection.executeSql(
+                    f"SELECT {columns}, EXTRACT(EPOCH FROM measured_at)::float8 "
+                    f"FROM {table} ORDER BY created_at"
+                ) or []
+            except Exception:
+                # Colonne measured_at absente (migration Farois 460) : sans date.
+                try:
+                    rows = be_connection.executeSql(
+                        f"SELECT {columns} FROM {table} ORDER BY created_at"
+                    ) or []
+                except Exception as exc:
+                    feedback.pushWarning(
+                        f"Non géocodées : lecture de la table pour relance impossible ({exc})."
+                    )
+                    return []
+            return ungeocoded_rows_to_records(rows)
+
         def _load_known_from_be(self, feedback):
             """Lit en base 'be' les points déjà géocodés (intervention + work order/adresse).
 
@@ -5895,6 +6562,126 @@ if HAS_QGIS:
                 )
                 return set(), set()
             return build_known_keys(rows)
+
+        def _load_known_points(self, feedback):
+            """Points déjà géocodés avec la date de leur mesure (cf. build_known_points).
+
+            ``None`` si la connexion 'be' manque ou si la date de mesure est
+            illisible (colonne measured_at absente : migration Farois 460 non
+            appliquée) — l'appelant garde alors l'ancien comportement (points
+            déjà en base ignorés, cf. _load_known_from_be).
+            """
+            be_connection = self._be_connection()
+            if be_connection is None:
+                return None
+            try:
+                rows = be_connection.executeSql(
+                    "SELECT intervention_id, work_order, address_raw, postal_code, "
+                    "depth_category, EXTRACT(EPOCH FROM measured_at)::float8, "
+                    "EXTRACT(EPOCH FROM updated_at)::float8, geom IS NOT NULL "
+                    f"FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME}"
+                ) or []
+            except Exception as exc:
+                feedback.pushWarning(
+                    "Profondeurs : date de mesure illisible en base 'be' "
+                    f"({exc}) — mise à jour des points existants désactivée "
+                    "(migration Farois 460 appliquée ?), points déjà en base "
+                    "ignorés comme avant."
+                )
+                return None
+            return build_known_points(rows)
+
+        _SKIP_LABELS = {
+            SKIP_OLDER: "mesure en base plus récente, conservée",
+            SKIP_UP_TO_DATE: "déjà à jour (même rapport)",
+            SKIP_NO_DEPTH: "rapport sans profondeur, mesure en base conservée",
+            SKIP_UNDATED: "rapport sans date, mesure en base conservée",
+            SKIP_SUPERSEDED: "ligne écartée, une autre ligne du lot est retenue pour ce point",
+        }
+
+        def _log_depth_plan(self, plan, feedback):
+            """Journal du plan de mise à jour des profondeurs (avant géocodage)."""
+            for update in plan.updates:
+                rec = update.record
+                if update.renamed:
+                    feedback.pushInfo(
+                        f"Intervention {rec.intervention} (work order {rec.work_order}) : "
+                        f"le point de l'intervention {update.target_id} (même adresse) "
+                        f"prend ce numéro et la profondeur « {rec.depth_raw} » de "
+                        f"{rec.source_message}."
+                    )
+                else:
+                    feedback.pushInfo(
+                        f"Intervention {rec.intervention} : profondeur plus récente "
+                        f"« {rec.depth_raw} » ({rec.source_message})."
+                    )
+            retained = retained_by_target(plan)
+            for rec, reason, target in plan.skipped:
+                where = "" if target == rec.intervention else f" (point {target})"
+                label = self._SKIP_LABELS[reason]
+                if reason == SKIP_SUPERSEDED and target in retained:
+                    # Plus récente, ou première de l'email à date égale.
+                    label = (f"ligne écartée, l'intervention {retained[target]} "
+                             "est retenue pour ce point")
+                feedback.pushInfo(f"Intervention {rec.intervention}{where} : {label}.")
+            n_renamed = sum(1 for u in plan.updates if u.renamed)
+            feedback.pushInfo(
+                f"Points déjà en base 'be' : {len(plan.updates)} profondeur(s) à "
+                f"mettre à jour (dont {n_renamed} renumérotation(s)), "
+                f"{len(plan.skipped)} inchangé(s) ; {len(plan.new)} intervention(s) "
+                "nouvelle(s) à géocoder."
+            )
+
+        def _apply_depth_updates(self, updates, feedback):
+            """Écrit via 'be' les profondeurs plus récentes, sans géocodage.
+
+            Un UPDATE gardé par la date par point (build_depth_update_sql),
+            best-effort : un échec est signalé sans interrompre les autres.
+            Retourne ``(ids écrits, ids dont les segments sont à recalculer)``.
+            """
+            written, dirty = set(), set()
+            if not updates:
+                return written, dirty
+            be_connection = self._be_connection()
+            if be_connection is None:
+                feedback.pushWarning(
+                    f"Profondeurs : connexion QGIS '{BE_CONNECTION_NAME}' introuvable "
+                    "— aucune mise à jour écrite."
+                )
+                return written, dirty
+            table = f"{BE_TABLE_SCHEMA}.{BE_TABLE_NAME}"
+            n_renamed = n_unchanged = n_failed = 0
+            for update in updates:
+                if feedback.isCanceled():
+                    break
+                rec = update.record
+                try:
+                    rows = be_connection.executeSql(build_depth_update_sql(update, table)) or []
+                except Exception as exc:
+                    n_failed += 1
+                    feedback.reportError(
+                        f"Profondeur : échec de la mise à jour de l'intervention "
+                        f"{rec.intervention} ({exc}).",
+                        fatalError=False,
+                    )
+                    continue
+                if not rows:
+                    n_unchanged += 1
+                    feedback.pushInfo(
+                        f"Profondeur de l'intervention {rec.intervention} non modifiée : "
+                        f"mesure plus récente écrite entre-temps ou point {update.target_id} "
+                        "disparu."
+                    )
+                    continue
+                written.add(rec.intervention)
+                dirty |= depth_update_dirty_ids(update)
+                n_renamed += update.renamed
+            feedback.pushInfo(
+                f"Profondeurs : {len(written)} point(s) mis à jour (dont {n_renamed} "
+                f"renuméroté(s)), {n_unchanged} inchangé(s), {n_failed} échec(s) sur "
+                f"{len(updates)}."
+            )
+            return written, dirty
 
         def _existing_point_ids(self, intervention_ids, feedback):
             """intervention_id parmi ``intervention_ids`` ayant deja un point en base.
@@ -6004,6 +6791,9 @@ if HAS_QGIS:
                     "depth_raw": rec.depth_raw,
                     "geocode_query": query,
                     "source_message": rec.source_message,
+                    # Date du rapport, reprise à la relance (colonne de la
+                    # migration Farois 460, ignorée si absente).
+                    "measured_at": rec.report_date,
                 }
                 id_value = QgsExpression.quotedValue(values["intervention_id"])
                 request = QgsFeatureRequest()
@@ -6016,15 +6806,16 @@ if HAS_QGIS:
                     if existing:
                         fid = existing[0].id()
                         attr_map = {
-                            fields.indexOf(name): value
+                            fields.indexOf(name): _qgis_value(value)
                             for name, value in values.items()
-                            if name != "intervention_id"
+                            if name != "intervention_id" and fields.indexOf(name) >= 0
                         }
                         ok = layer.changeAttributeValues(fid, attr_map)
                     else:
                         feat = QgsFeature(fields)
                         for name, value in values.items():
-                            feat.setAttribute(name, value)
+                            if fields.indexOf(name) >= 0:
+                                feat.setAttribute(name, _qgis_value(value))
                         now = QDateTime.currentDateTimeUtc()
                         for ts_col in ("created_at", "updated_at"):
                             idx = fields.indexOf(ts_col)
