@@ -1078,7 +1078,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             try:
                 doc = QDomDocument()
                 doc.setContent(row[0])
-                msg, ok = layer.importNamedStyle(doc)
+                ok, _error = layer.importNamedStyle(doc)  # (succes, message)
                 if ok:
                     layer.triggerRepaint()
                     styled_keys.add(key)

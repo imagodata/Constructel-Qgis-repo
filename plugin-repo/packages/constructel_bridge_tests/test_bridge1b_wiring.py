@@ -181,6 +181,18 @@ def test_store_pki_authcfg_fails_when_manager_not_ready(bp, monkeypatch):
     assert QgsSettings().value(MTLS_SETTINGS_KEYS["authcfg_id"], "") == ""
 
 
+def test_store_pki_authcfg_failed_store_returns_empty(bp, monkeypatch):
+    # storeAuthenticationConfig returns (False, config) on a refused write:
+    # the tuple itself is truthy, the failure must still be seen.
+    from qgis.core import QgsApplication, QgsSettings
+
+    QgsSettings().setValue(MTLS_SETTINGS_KEYS["cert_path"], "/certs/u.crt")
+    QgsSettings().setValue(MTLS_SETTINGS_KEYS["key_path"], "/certs/u.key")
+    monkeypatch.setattr(type(QgsApplication.authManager()), "_store_fails", True)
+    assert bp._store_pki_authcfg() == ""
+    assert QgsSettings().value(MTLS_SETTINGS_KEYS["authcfg_id"], "") == ""
+
+
 def test_remove_pki_authcfg_clears_manager_and_settings(bp):
     from qgis.core import QgsApplication, QgsSettings
 
@@ -193,6 +205,30 @@ def test_remove_pki_authcfg_clears_manager_and_settings(bp):
 
     assert QgsApplication.authManager().configIds() == []
     assert QgsSettings().value(MTLS_SETTINGS_KEYS["authcfg_id"], "") == ""
+
+
+# --- Basic authcfg (wyre/be) store result ---------------------------------
+
+
+def test_store_password_encrypted_success_drops_legacy_plaintext(bp):
+    from qgis.core import QgsSettings
+
+    QgsSettings().setValue("constructel_bridge/password", "legacy")
+    assert bp._store_password_encrypted("new", "wyre") is True
+    assert QgsSettings().value(bp._AUTH_CFG_ID_KEYS["wyre"], "") != ""
+    assert QgsSettings().value("constructel_bridge/password", "ABSENT") == "ABSENT"
+
+
+def test_store_password_encrypted_failed_store_keeps_legacy_plaintext(bp, monkeypatch):
+    # A refused write must not be taken for a success: the legacy plaintext
+    # password is the only copy left and must survive.
+    from qgis.core import QgsApplication, QgsSettings
+
+    QgsSettings().setValue("constructel_bridge/password", "legacy")
+    monkeypatch.setattr(type(QgsApplication.authManager()), "_store_fails", True)
+    assert bp._store_password_encrypted("new", "wyre") is False
+    assert QgsSettings().value(bp._AUTH_CFG_ID_KEYS["wyre"], "") == ""
+    assert QgsSettings().value("constructel_bridge/password", "") == "legacy"
 
 
 # --- _mtls_active truth table -----------------------------------------------

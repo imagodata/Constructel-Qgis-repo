@@ -39,6 +39,9 @@ class _StubAuthManager:
     # the not-ready path.
     _configs = {}
     _next_id = 1
+    # Tests flip this to simulate a refused write (auth DB error, invalid
+    # config). Like QGIS, an id already in use is refused too.
+    _store_fails = False
 
     def isDisabled(self):
         return False
@@ -76,11 +79,17 @@ class _StubAuthManager:
         }
 
     def storeAuthenticationConfig(self, config):
+        # Real API (QGIS 3.28 -> 4.x, SIP_INOUT): returns (ok, config), never
+        # a bare bool -- the tuple is always truthy, callers must read [0].
+        # Like QGIS: a refused write leaves an automatic id empty, while a
+        # caller-set (fixed) id stays on the config.
+        if _StubAuthManager._store_fails or config.id() in _StubAuthManager._configs:
+            return False, config
         if not config.id():
             config.setId(f"stub-authcfg-{_StubAuthManager._next_id}")
             _StubAuthManager._next_id += 1
         _StubAuthManager._configs[config.id()] = self._snapshot(config)
-        return True
+        return True, config
 
     def updateAuthenticationConfig(self, config):
         if config.id() not in _StubAuthManager._configs:

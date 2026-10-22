@@ -417,6 +417,15 @@ def _ensure_auth_manager_ready() -> bool:
     return False
 
 
+def _stored(answer) -> bool:
+    """Result of QgsAuthManager.storeAuthenticationConfig().
+
+    QGIS (3.28 -> 4.x, SIP_INOUT) returns (ok, config): the tuple itself is
+    always truthy, only its first item tells whether the write succeeded.
+    """
+    return bool(answer[0]) if isinstance(answer, tuple) else bool(answer)
+
+
 def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
     """Store the password in QGIS Auth Manager (encrypted SQLite DB).
 
@@ -459,7 +468,7 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
         config.setName(_AUTH_CFG_NAMES[conn])
         config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
         config.setConfig("password", password)
-        ok = auth_mgr.storeAuthenticationConfig(config)
+        ok = _stored(auth_mgr.storeAuthenticationConfig(config))
         if ok:
             QgsSettings().setValue(settings_key, config.id())
     # Remove legacy plaintext password if present -- ONLY for `wyre` and
@@ -554,7 +563,7 @@ def _store_pki_authcfg() -> str:
     config.setName(MTLS_AUTH_CFG_NAME)
     config.setConfig("certpath", cert_path)
     config.setConfig("keypath", key_path)
-    if auth_mgr.storeAuthenticationConfig(config):
+    if _stored(auth_mgr.storeAuthenticationConfig(config)):
         QgsSettings().setValue(settings_key, config.id())
         return config.id()
     return ""
