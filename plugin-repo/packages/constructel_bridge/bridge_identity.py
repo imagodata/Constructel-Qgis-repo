@@ -59,55 +59,6 @@ def decode_password(b64_password: str) -> str:
     return base64.b64decode(b64_password).decode()
 
 
-def resolve_credentials_for_realm(
-    realm: str,
-    username: str,
-    *,
-    be_enabled: bool,
-    be_host: str,
-    be_user: str,
-    be_password: str,
-    default_host: str,
-    default_user: str,
-    default_password: str,
-) -> tuple[str, str] | None:
-    """Reproduces _BridgeCredentials._credentials_for() exactly.
-
-    `be` is tested FIRST (more specific): only recognized if the BE user
-    appears explicitly in the realm string (QGIS embeds `user='...'` when
-    the connection remembers its username) or as the `username` argument.
-    Anchored on be_host (not default_host): a request toward a
-    THIRD-PARTY PG server where username happens to equal be_user must
-    NOT receive the be password — anchoring on be_host prevents that
-    credential leak. Falls back to (default_user, default_password) if
-    default_host is in realm. Returns None if the realm doesn't concern
-    us at all.
-    """
-    if be_enabled and be_host in realm and (f"user='{be_user}'" in realm or username == be_user):
-        return be_user, be_password
-    if default_host in realm:
-        return default_user, default_password
-    return None
-
-
-def build_set_config_sql(username: str) -> tuple[str, str]:
-    """Reproduces the manual-escaping fallback branch of
-    _on_before_commit() used when provider.executeSql() (no parameterized
-    API) is the only option. Returns (set_config_sql, application_name_sql).
-
-    KNOWN LIMITATION, characterized not fixed by PR Bridge 0: this is a
-    naive doubled-quote escape (`.replace("'", "''")`), not a real SQL
-    literal encoder. It does not handle backslashes specially and assumes
-    standard_conforming_strings=on (PostgreSQL default since 9.1). Do not
-    extend this pattern to new call sites; the parameterized cursor path
-    (used whenever self._conn is available) remains the safe default.
-    """
-    safe_user = username.replace("'", "''")
-    set_config_sql = f"SELECT set_config('app.current_user', '{safe_user}', true)"
-    application_name_sql = f"SET application_name = 'constructel_bridge:{safe_user}'"
-    return set_config_sql, application_name_sql
-
-
 def fixed_authcfg_id_for_user(
     user: str,
     *,

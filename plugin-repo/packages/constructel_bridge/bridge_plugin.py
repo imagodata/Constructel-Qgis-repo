@@ -135,7 +135,7 @@ BE_SSLMODE = _BE_CREDS.get("sslmode", "require")
 
 # `wyre` et `be` pointent sur le MEME host et la MEME base : dans un realm
 # QgsCredentials, seul l'utilisateur les distingue (cf.
-# _BridgeCredentials._credentials_for). Un bloc `be` qui reutiliserait
+# _precache_pg_credentials). Un bloc `be` qui reutiliserait
 # l'utilisateur de `wyre` rendrait la resolution ambigue et casserait
 # l'authentification de `wyre` — on refuse alors d'activer la connexion.
 BE_ENABLED = (
@@ -187,98 +187,6 @@ _PG_CONNECTIONS = {
 _LEGACY_PG_CONNECTION = "PostgreSQL/connections/constructel_bridge"
 
 LANG_LABELS = {"fr": "Francais", "en": "English", "pt": "Portugues"}
-
-
-# ---------------------------------------------------------------------------
-# Intercepteur de credentials — evite le dialogue de saisie pour notre base
-# ---------------------------------------------------------------------------
-
-class _BridgeCredentials(QgsCredentials):
-    """Fournit automatiquement les credentials pour nos connexions PG.
-
-    Quand un projet contient des couches avec un authcfg d'un autre
-    utilisateur, QGIS affiche un dialogue de saisie pour chaque couche.
-    Ce handler intercepte ces demandes et fournit le mot de passe
-    automatiquement si le realm correspond a notre serveur PG.
-    Pour les autres realms, il delegue au handler original (dialogue).
-
-    `wyre` et `be` pointent sur le MEME host et la MEME base : le realm
-    seul ne les distingue pas, la discrimination se fait sur le nom
-    d'utilisateur (cf. _credentials_for).
-    """
-
-    def __init__(self, fallback):
-        self._fallback = fallback
-        self._username = DEFAULT_USER
-        self._password = _DEFAULT_PW
-        super().__init__()  # appelle setInstance(self) en interne
-
-    def update_password(self, password: str):
-        self._password = password
-
-    def _credentials_for(self, realm, username):
-        """Resout le couple (utilisateur, mot de passe) pour un realm.
-
-        `be` est teste EN PREMIER car c'est le cas le plus specifique : il
-        n'est reconnu que si l'utilisateur du bureau d'etudes apparait
-        explicitement, soit dans le realm (`user='...'` que QGIS y insere
-        quand la connexion memorise son nom d'utilisateur), soit dans
-        l'argument *username*. Tout autre realm de notre serveur retombe
-        sur `wyre` — comportement historique preserve a l'identique.
-
-        Le repli sur simple correspondance de *username* est ANCRE sur
-        BE_HOST (pas DEFAULT_HOST) : `_BridgeCredentials` est installe
-        comme le singleton QgsCredentials actif pour toute la session
-        QGIS, donc sans cet ancrage une demande d'authentification vers
-        un serveur PG TIERS ou le username serait egalement
-        `bureau_etudes` recevrait par erreur le mot de passe `be` —
-        fuite de credentials vers un serveur externe. On ancre sur
-        BE_HOST (pas DEFAULT_HOST) car credentials.json expose des
-        overrides BE_DB_HOST/BE_DB_NAME independants de wyre : si `be`
-        est un jour reconfigure sur un autre serveur, l'ancrage doit
-        suivre SA propre configuration, pas celle de `wyre`. Aujourd'hui
-        BE_HOST == DEFAULT_HOST donc le comportement est identique.
-
-        Retourne None si le realm ne nous concerne pas.
-        """
-        from .bridge_identity import resolve_credentials_for_realm
-
-        return resolve_credentials_for_realm(
-            realm,
-            username,
-            be_enabled=BE_ENABLED,
-            be_host=BE_HOST,
-            be_user=BE_USER,
-            be_password=_BE_PW,
-            default_host=DEFAULT_HOST,
-            default_user=self._username,
-            default_password=self._password,
-        )
-
-    def request(self, realm, username, password, message=""):
-        QgsMessageLog.logMessage(
-            f"Credentials request intercepted — realm={realm!r}",
-            TAG, level=Qgis.MessageLevel.Info,
-        )
-        creds = self._credentials_for(realm, username)
-        if creds is not None:
-            user, pwd = creds
-            QgsMessageLog.logMessage(
-                f"Auto-providing credentials for {user}",
-                TAG, level=Qgis.MessageLevel.Info,
-            )
-            # Also cache via put() so subsequent get() calls skip request()
-            self.put(realm, user, pwd)
-            return True, user, pwd
-        # Realm inconnu → deleguer au handler QGIS par defaut (dialogue)
-        if self._fallback:
-            return self._fallback.request(realm, username, password, message)
-        return False, username, password
-
-    def requestMasterPassword(self, password, stored=False):
-        if self._fallback:
-            return self._fallback.requestMasterPassword(password, stored)
-        return False, password
 
 
 class _BridgeBadLayerHandler(QgsProjectBadLayerHandler):
@@ -850,13 +758,6 @@ class ConstructelBridgePlugin:
                 f"extract-msg pre-provisioning failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
             )
 
-        # Intercepter les demandes de credentials QGIS pour fournir
-        # automatiquement le mot de passe de notre base PG.
-        # Cela evite le dialogue "Saisir les identifiants" quand un
-        # projet contient des authcfg d'un autre utilisateur.
-        self._orig_credentials = QgsCredentials.instance()
-        self._bridge_credentials = _BridgeCredentials(self._orig_credentials)
-
         # Pre-cacher les credentials PG pour que QgsCredentials.get()
         # les trouve dans le cache AVANT d'appeler request().
         # Cela couvre le cas ou un projet avec authcfg inconnu est charge
@@ -867,7 +768,7 @@ class ConstructelBridgePlugin:
         # AVEC authcfg : sans reference authcfg stockee, le bouton "Tester
         # la connexion" et le parcours du navigateur QGIS pour `be`
         # n'utilisent PAS le meme chemin que le chargement de couche et ne
-        # beneficient donc pas de l'interception _BridgeCredentials —
+        # beneficient donc pas du cache pre-rempli ci-dessus —
         # l'utilisateur se retrouve avec une invite de mot de passe
         # bloquante (constate en test reel).
         #
@@ -1174,9 +1075,6 @@ class ConstructelBridgePlugin:
         invalid, aborts loudly before attempting any connection.
         """
         self._password = password
-        # Mettre a jour le handler de credentials avec le mot de passe courant
-        if hasattr(self, "_bridge_credentials"):
-            self._bridge_credentials.update_password(password)
         qgis_user = self._get_qgis_username()
 
         mtls_active, mtls_reason = _mtls_active()
