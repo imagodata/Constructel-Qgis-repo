@@ -611,7 +611,7 @@ if HAS_QGIS:
             legend.setAutoUpdateModel(False)
             # Le calcul des entrées visibles doit être terminé avant la garde de taille.
             # Les versions récentes utilisent sinon un hit-test asynchrone.
-            if hasattr(QgsLayerTreeModel, "UseThreadedHitTest"):
+            if hasattr(QgsLayerTreeModel.Flag, "UseThreadedHitTest"):
                 legend.model().setFlag(QgsLayerTreeModel.Flag.UseThreadedHitTest, False)
             tree = QgsLayerTree()
             for layer in layers:

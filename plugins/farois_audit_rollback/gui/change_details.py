@@ -157,30 +157,17 @@ def summary_text(entry, full=False):
 
 def build_dialog(entry, parent=None):
     """Construit le dialogue Champ | Avant | Après (Qt importé à l'appel)."""
-    try:
-        from qgis.PyQt.QtWidgets import (
-            QCheckBox,
-            QDialog,
-            QHBoxLayout,
-            QLabel,
-            QPushButton,
-            QTableWidget,
-            QTableWidgetItem,
-            QVBoxLayout,
-        )
-        from qgis.PyQt.QtCore import Qt
-    except ImportError:  # pragma: no cover - hors QGIS
-        from qgis.PyQt.QtWidgets import (
-            QCheckBox,
-            QDialog,
-            QHBoxLayout,
-            QLabel,
-            QPushButton,
-            QTableWidget,
-            QTableWidgetItem,
-            QVBoxLayout,
-        )
-        from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtWidgets import (
+        QCheckBox,
+        QDialog,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QTableWidget,
+        QTableWidgetItem,
+        QVBoxLayout,
+    )
 
     dialog = QDialog(parent)
     dialog.setWindowTitle("Farois — Détail du changement")
@@ -225,10 +212,7 @@ def build_dialog(entry, parent=None):
 
 
 def show_change_details(entry, parent=None):
-    try:
-        from qgis.PyQt import sip
-    except ImportError:  # pragma: no cover - hors QGIS
-        from qgis.PyQt import sip
+    from qgis.PyQt import sip
 
     dialog = build_dialog(entry, parent)
     try:
