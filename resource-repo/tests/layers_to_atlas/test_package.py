@@ -30,9 +30,9 @@ def test_package_allowlist_excludes_caches_and_secrets(tmp_path, monkeypatch):
             "svg/constructel.svg",
             "README.txt",
         }
-        assert b'SCRIPT_VERSION = "1.1.0"' in archive.read(
+        assert b'SCRIPT_VERSION = "1.2.0"' in archive.read(
             "processing/layers_to_atlas.py"
         )
     metadata = configparser.ConfigParser(interpolation=None)
     metadata.read(tmp_path / "metadata.ini", encoding="utf-8")
-    assert metadata["layers_to_atlas"]["version"] == "1.1.0"
+    assert metadata["layers_to_atlas"]["version"] == "1.2.0"

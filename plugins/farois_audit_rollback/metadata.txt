@@ -1,9 +1,10 @@
 [general]
 name=Farois — Historique et rollback
 qgisMinimumVersion=3.28
-qgisMaximumVersion=3.99
+qgisMaximumVersion=4.99
+supportsQt6=True
 description=Historique et rollback sécurisé des changements Farois FTTH
-version=0.2.5
+version=0.3.0
 icon=farois-logo.png
 author=Farois
 experimental=True

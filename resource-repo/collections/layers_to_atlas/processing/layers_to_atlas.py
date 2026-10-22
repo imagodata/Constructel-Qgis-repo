@@ -76,7 +76,7 @@ except ImportError:
 
 MAX_CELLS = 10000
 MAX_VISITS = 200000
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.2.0"
 LEGEND_WIDTH_MM = 54
 DEFAULT_LOGO = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "svg", "constructel.svg"))
 

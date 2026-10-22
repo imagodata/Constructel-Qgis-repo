@@ -1,5 +1,7 @@
 # Farois — Historique et rollback
 
+Version 0.3.0 : compatible QGIS 4 (Qt6/PyQt6), toujours compatible QGIS 3.28+. Aucun changement fonctionnel.
+
 Version 0.2.5 : une modification liée à d'autres changements (cascade, transaction à plusieurs
 lignes) indique désormais clairement d'utiliser « Annuler la transaction ».
 

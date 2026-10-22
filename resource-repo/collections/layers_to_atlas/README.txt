@@ -1,10 +1,10 @@
 Layers to Atlas — Atlas PDF
-Collection QGIS Resource Sharing, version 1.1.0, cible QGIS 3.44.
+Collection QGIS Resource Sharing, version 1.2.0, cible QGIS 3.44 à 4.x.
 
 Installer/mettre à jour cette collection dans QGIS Resource Sharing, puis ouvrir
 la boîte à outils Processing : Scripts > Constructel > Layers to Atlas.
 Après mise à jour, redémarrer QGIS si Processing conserve l'ancien script.
-Le journal doit afficher « Layers to Atlas — version 1.1.0 ».
+Le journal doit afficher « Layers to Atlas — version 1.2.0 ».
 
 Utilisation par défaut
 - Préparer la carte dans le projet QGIS : visibilité des couches et groupes,

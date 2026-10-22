@@ -27,8 +27,8 @@ def test_zip_name_lets_qgis_derive_the_plugin_id():
     spec = importlib.util.spec_from_file_location("_package_script_name", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.VERSION == "0.2.5"
-    assert module.OUTPUT.name == "farois_audit_rollback.0.2.5.zip"
+    assert module.VERSION == "0.3.0"
+    assert module.OUTPUT.name == "farois_audit_rollback.0.3.0.zip"
     assert module.OUTPUT.name.partition(".")[0] == "farois_audit_rollback"
 
 
