@@ -82,9 +82,12 @@ def _guarded_nodes(tree):
             continue
         caught = set()
         for handler in node.handlers:
+            if handler.type is None:
+                caught.add("")  # except nu
+                continue
             types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-            caught.update(getattr(t, "id", None) for t in types)
-        if caught & {"AttributeError", "Exception", None}:
+            caught.update(t.id if isinstance(t, ast.Name) else getattr(t, "attr", "?") for t in types)
+        if "AttributeError" in caught:  # repli de version, pas une gestion d'erreur
             for statement in node.body:
                 guarded.update(id(child) for child in ast.walk(statement))
     return guarded
@@ -171,7 +174,18 @@ def make_iface():
 
 def exercise_ui(name, plugin):
     """Construit chaque fenêtre, sans boucle modale, pour exécuter les enums Qt."""
+    if not hasattr(QDialog, "exec"):
+        raise AssertionError("QDialog.exec() absent de cette liaison Qt")
+    real_exec = QDialog.exec
     QDialog.exec = lambda self: QDialog.DialogCode.Rejected
+    try:
+        widgets = _build_windows(name, plugin)
+    finally:
+        QDialog.exec = real_exec
+    print(f"  ok fenêtres {name} ({len(widgets)})")
+
+
+def _build_windows(name, plugin):
     if name == "constructel_bridge":
         from constructel_bridge.bridge_dialog import ConstructelConnectDialog
         from constructel_bridge.bridge_onboarding import OnboardingWizard
@@ -209,7 +223,7 @@ def exercise_ui(name, plugin):
         widget.show()
         app.processEvents()
         widget.close()
-    print(f"  ok fenêtres {name} ({len(widgets)})")
+    return widgets
 
 
 print("== plugins")
@@ -223,7 +237,10 @@ fake = {
     "user": "smoke",
     "password": base64.b64encode(b"smoke").decode(),
 }
-(work / "bridge/constructel_bridge/credentials.json").write_text(json.dumps({"wyre": fake, "be": fake}))
+# Utilisateur « be » distinct : sinon Bridge désactive la connexion be.
+(work / "bridge/constructel_bridge/credentials.json").write_text(
+    json.dumps({"wyre": fake, "be": {**fake, "user": "smoke_be"}})
+)
 iface = make_iface()
 for name, parent in (("constructel_bridge", work / "bridge"), ("farois_audit_rollback", work / "audit")):
     sys.path.insert(0, str(parent))
@@ -261,9 +278,21 @@ for script in SCRIPTS:
     except Exception:
         fail(script.name, traceback.format_exc())
 
+# Bruit attendu du banc : pas de pip inscriptible, base injoignable, pas de
+# mot de passe maître ni d'installateur de plugins dans un QGIS sans interface.
+EXPECTED_LOG = (
+    "'extract-msg'",
+    "Connection failed to 127.0.0.1:1/smoke",
+    "pyplugin_installer unavailable",
+    "Auth Manager not available, cannot store encrypted password",
+    "Auth Manager unavailable, PG connection 'be' uses saved password",
+)
 print("== journal QGIS (avertissements et erreurs)")
 for level, tag, message in log:
-    if level >= 1 and tag != "Python warning":
-        print(f"  [{level}] {tag} : {message}")
+    if level < 1 or tag == "Python warning":
+        continue
+    print(f"  [{level}] {tag} : {message}")
+    if not any(expected in message for expected in EXPECTED_LOG):
+        fail("journal", f"[{level}] {tag} : {message}")
 print(f"== {len(failures)} échec(s)")
 sys.exit(1 if failures else 0)

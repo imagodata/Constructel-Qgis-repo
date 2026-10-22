@@ -42,7 +42,7 @@ def atlas_module(monkeypatch):
                 setattr(target, alias.name, type(alias.name, (), {}))
     sys.modules["qgis.core"].QgsProcessingException = RuntimeError
     module = load_script()
-    module.Qt = SimpleNamespace(DisplayRole=0)
+    module.Qt = SimpleNamespace(ItemDataRole=SimpleNamespace(DisplayRole=0))
     return module
 
 
@@ -292,11 +292,14 @@ def test_wrapping_changes_only_private_tree(atlas_module, monkeypatch):
 
 def test_native_qt_text_metrics(monkeypatch, atlas_module):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    try:  # QGIS 4 (Qt6) puis QGIS 3 (Qt5)
-        from PyQt6 import QtGui as gui, QtWidgets as widgets
-    except ImportError:
-        widgets = pytest.importorskip("PyQt5.QtWidgets")
-        gui = pytest.importorskip("PyQt5.QtGui")
+    # Liaison déjà chargée dans le processus (jamais deux Qt), sinon PyQt6
+    # (QGIS 4) puis PyQt5 (QGIS 3).
+    loaded = [name for name in ("PyQt6", "PyQt5") if name in sys.modules]
+    names = [n for n in loaded or ("PyQt6", "PyQt5") if importlib.util.find_spec(n)]
+    if not names:
+        pytest.skip("ni PyQt6 ni PyQt5 installé")
+    widgets = importlib.import_module(f"{names[0]}.QtWidgets")
+    gui = importlib.import_module(f"{names[0]}.QtGui")
     app = widgets.QApplication.instance() or widgets.QApplication([])
     font = gui.QFont("Sans Serif")
     font.setPixelSize(25)

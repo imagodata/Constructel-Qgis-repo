@@ -94,10 +94,14 @@ def test_validate_client_certificate_expired(tmp_path):
          "-subj", "/CN=test-ca", "-keyout", str(ca_key), "-out", str(ca_crt))
     _run("openssl", "req", "-new", "-nodes", "-subj", "/CN=expired_person",
          "-keyout", str(client_key), "-out", str(client_csr))
-    # -days -1: already expired at issuance.
-    _run("openssl", "x509", "-req", "-in", str(client_csr), "-CA", str(ca_crt),
-         "-CAkey", str(ca_key), "-CAcreateserial", "-days", "-1",
-         "-out", str(client_crt))
+    # Already expired at issuance: -days -1 (OpenSSL 3.0), refused by recent
+    # OpenSSL ("end date before start date") which has -not_before/-not_after.
+    sign = ("openssl", "x509", "-req", "-in", str(client_csr), "-CA", str(ca_crt),
+            "-CAkey", str(ca_key), "-CAcreateserial", "-out", str(client_crt))
+    try:
+        _run(*sign, "-days", "-1")
+    except subprocess.CalledProcessError:
+        _run(*sign, "-not_before", "20200101000000Z", "-not_after", "20200102000000Z")
     result = validate_client_certificate(str(client_crt), str(client_key), str(ca_crt))
     assert result.ok is False
     assert result.reason == "expired"

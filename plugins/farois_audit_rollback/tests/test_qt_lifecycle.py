@@ -11,8 +11,10 @@ import pytest
 
 
 def _qt_binding():
-    """PyQt6 (QGIS 4) when installed, otherwise PyQt5 (QGIS 3)."""
-    for name in ("PyQt6", "PyQt5"):
+    """Binding already loaded in this process (never two Qt in one process),
+    else PyQt6 (QGIS 4) when installed, else PyQt5 (QGIS 3)."""
+    loaded = [name for name in ("PyQt6", "PyQt5") if name in sys.modules]
+    for name in loaded or ("PyQt6", "PyQt5"):
         if importlib.util.find_spec(name) is not None:
             return importlib.import_module(name)
     pytest.skip("neither PyQt6 nor PyQt5 is installed")
