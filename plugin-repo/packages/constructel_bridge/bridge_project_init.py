@@ -911,6 +911,13 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 # =====================================================================
 
 def _build_uri(conn_params, password, schema, table, geom_col, pk):
+    # Mode SSL passe a setConnection() : setSslMode() n'existe qu'a partir de
+    # QGIS 3.42 environ (AttributeError -> init projet en echec avant).
+    sslmode = (
+        QgsDataSourceUri.SslMode.SslRequire
+        if conn_params.get("sslmode", "require") == "require"
+        else QgsDataSourceUri.SslMode.SslPrefer
+    )
     uri = QgsDataSourceUri()
     uri.setConnection(
         conn_params.get("host", "localhost"),
@@ -918,14 +925,8 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
         conn_params.get("dbname", "farois_ftth"),
         conn_params.get("user", "ftth_editor"),
         password,
+        sslmode,
     )
-    sslmode_val = conn_params.get("sslmode", "require")
-    if sslmode_val:
-        uri.setSslMode(
-            QgsDataSourceUri.SslMode.SslRequire
-            if sslmode_val == "require"
-            else QgsDataSourceUri.SslMode.SslPrefer
-        )
     uri.setDataSource(schema, table, geom_col, "", pk)
     uri.setParam("estimatedmetadata", "true")
     uri.setParam("checkPrimaryKeyUnicity", "0")

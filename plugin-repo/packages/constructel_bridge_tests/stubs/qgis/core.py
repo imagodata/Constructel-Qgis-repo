@@ -12,6 +12,8 @@ _URI_BARE_RE = re.compile(r"^[\w.\-]+$")
 
 
 class Qgis:
+    QGIS_VERSION_INT = 34400
+
     class MessageLevel:
         Info = 0
         Warning = 1
@@ -306,6 +308,9 @@ class QgsSettings:
 
     def remove(self, key):
         QgsSettings._store.pop(key, None)
+
+    def sync(self):
+        pass
 
 
 class QgsVectorLayer:

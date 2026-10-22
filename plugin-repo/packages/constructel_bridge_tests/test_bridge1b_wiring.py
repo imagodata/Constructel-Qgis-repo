@@ -335,6 +335,9 @@ class _FakeIface:
     def messageBar(self):
         return self._bar
 
+    def reloadConnections(self):
+        self.reloaded = True
+
 
 class _FakePgError(Exception):
     pass
@@ -1070,3 +1073,90 @@ def test_stub_uri_round_trip_preserves_params(bp):
     assert reparsed.host() == "db.example.com"
     assert reparsed.username() == "u1"
     assert reparsed.password() == "p@ss w:d"
+
+
+# --- Auth Manager refusal: connection settings and log ----------------------
+
+
+def test_setup_pg_connection_store_refused_says_password_will_be_asked(bp, monkeypatch):
+    # savePassword=False and /password removed: nothing is saved, QGIS asks.
+    from qgis.core import Qgis, QgsApplication, QgsSettings
+
+    monkeypatch.setattr(type(QgsApplication.authManager()), "_store_fails", True)
+    plugin = bp.ConstructelBridgePlugin(_FakeIface())
+    plugin._setup_qgis_pg_connection("s3cret", use_authcfg=True)
+
+    base = _pg_base(bp)
+    assert QgsSettings().value(f"{base}/authcfg", "") == ""
+    assert QgsSettings().value(f"{base}/password", "") == ""
+    warnings = _log_messages(level=Qgis.MessageLevel.Warning)
+    assert not any("saved password" in m for m in warnings)
+    assert any("prompt for the password" in m for m in warnings)
+
+
+# --- beforeCommitChanges hook -------------------------------------------------
+
+
+def test_before_commit_with_closed_bridge_connection_logs_no_error(bp):
+    # QgsVectorDataProvider has no executeSql (QGIS 3.28 -> 4.x): with the
+    # Bridge connection closed, nothing must be attempted on the provider.
+    from qgis.core import Qgis, QgsVectorLayer
+
+    class _Layer(QgsVectorLayer):
+        def dataProvider(self):
+            return types.SimpleNamespace(name=lambda: "postgres")
+
+        def name(self):
+            return "cables"
+
+    layer = _Layer()
+    plugin = bp.ConstructelBridgePlugin(_FakeIface())
+    plugin.iface.activeLayer = lambda: layer
+    plugin._bridge_user = "someone"
+    plugin._conn = None
+
+    plugin._on_before_commit()
+
+    assert _log_messages(level=Qgis.MessageLevel.Warning) == []
+
+
+# --- External services (WMS / WFS / XYZ) ----------------------------------------
+
+_OWS = "connections/ows/items/{}/connections/items/{}/{}"
+
+
+def test_external_services_use_current_qgis_connection_keys(bp):
+    # QGIS >= 3.30 only reads connections/ows|xyz/items/...; the legacy
+    # qgis/connections-* keys are copied there at the NEXT Desktop start.
+    from qgis.core import QgsSettings
+
+    plugin = bp.ConstructelBridgePlugin(_FakeIface())
+    plugin._setup_external_services()
+
+    s = QgsSettings()
+    wms = "WMTS UrbIS Bruxelles"
+    assert s.value(_OWS.format("wms", wms, "url")) == (
+        "https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
+    )
+    assert s.value(_OWS.format("wms", wms, "dpi-mode")) == 7
+    wfs = "WFS Cadastre UrbIS Bruxelles"
+    assert s.value(_OWS.format("wfs", wfs, "version")) == "2.0.0"
+    assert s.value(_OWS.format("wfs", wfs, "paging-enabled")) is True
+    xyz = "connections/xyz/items/Google Streetview Coverage/{}"
+    assert s.value(xyz.format("zmax")) == 21
+    assert s.value(xyz.format("url")).startswith("https://mts2.google.com/")
+    # Legacy keys are still written (QGIS 3.28, and Desktop migration).
+    assert s.value(f"qgis/connections-wms/{wms}/url") == s.value(_OWS.format("wms", wms, "url"))
+    assert plugin.iface.reloaded is True
+
+
+def test_external_services_qgis_328_writes_legacy_keys_only(bp, monkeypatch):
+    from qgis.core import QgsSettings
+
+    monkeypatch.setattr(bp.Qgis, "QGIS_VERSION_INT", 32815)
+    plugin = bp.ConstructelBridgePlugin(_FakeIface())
+    plugin._setup_external_services()
+
+    keys = list(QgsSettings._store)
+    assert any(k.startswith("qgis/connections-wms/") for k in keys)
+    assert not any(k.startswith("connections/") for k in keys)

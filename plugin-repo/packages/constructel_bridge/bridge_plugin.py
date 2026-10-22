@@ -1827,7 +1827,7 @@ class ConstructelBridgePlugin:
                 settings.remove(f"{base}/authcfg")
                 self._log(
                     f"Auth Manager unavailable, PG connection '{params['name']}' "
-                    "uses saved password.",
+                    "will prompt for the password.",
                     Qgis.MessageLevel.Warning,
                 )
         else:
@@ -1910,6 +1910,24 @@ class ConstructelBridgePlugin:
         ),
     ]
 
+    # QGIS >= 3.30 ne lit plus que connections/ows|xyz/items/... ; les cles
+    # qgis/connections-* n'y sont recopiees qu'au demarrage SUIVANT de QGIS
+    # Desktop. Memes cles que cette migration (releve QGIS 3.44 / 4.2) ; les
+    # parametres absents gardent la valeur par defaut de QGIS.
+    _CURRENT_CONNECTION_ROOTS = {
+        "qgis/connections-xyz": "connections/xyz/items",
+        "qgis/connections-wms": "connections/ows/items/wms/connections/items",
+        "qgis/connections-wfs": "connections/ows/items/wfs/connections/items",
+    }
+    _CURRENT_CONNECTION_KEYS = {
+        "url": "url",
+        "version": "version",
+        "zmin": "zmin",
+        "zmax": "zmax",
+        "dpiMode": "dpi-mode",
+        "pagingenabled": "paging-enabled",
+    }
+
     def _setup_external_services(self):
         """Enregistre les connexions WMTS / XYZ / WFS dans les settings QGIS.
 
@@ -1919,17 +1937,31 @@ class ConstructelBridgePlugin:
         settings = QgsSettings()
         added = []
         for base, name, params in self._EXTERNAL_SERVICES:
-            key_prefix = f"{base}/{name}"
-            existing_url = settings.value(f"{key_prefix}/url", "")
-            if existing_url == params.get("url", ""):
+            prefixes = [(f"{base}/{name}", dict(params))]
+            if Qgis.QGIS_VERSION_INT >= 33000:
+                prefixes.append((
+                    f"{self._CURRENT_CONNECTION_ROOTS[base]}/{name}",
+                    {
+                        self._CURRENT_CONNECTION_KEYS[k]: v
+                        for k, v in params.items()
+                        if k in self._CURRENT_CONNECTION_KEYS
+                    },
+                ))
+            written = False
+            for key_prefix, values in prefixes:
+                if settings.value(f"{key_prefix}/url", "") == params.get("url", ""):
+                    continue
+                for k, v in values.items():
+                    settings.setValue(f"{key_prefix}/{k}", v)
+                written = True
+            if not written:
                 self._log(f"Service '{name}' already configured — skipped")
                 continue
-            for k, v in params.items():
-                settings.setValue(f"{key_prefix}/{k}", v)
             added.append(name)
-            self._log(f"Service '{name}' registered ({key_prefix})")
+            self._log(f"Service '{name}' registered ({prefixes[-1][0]})")
         if added:
             settings.sync()
+            self.iface.reloadConnections()
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
                 tr("services.registered", count=len(added)),
@@ -2100,26 +2132,21 @@ class ConstructelBridgePlugin:
         if not provider or provider.name() != "postgres":
             return
 
+        # QgsVectorDataProvider n'a pas d'executeSql (QGIS 3.28 -> 4.x) : sans
+        # connexion Bridge ouverte, rien a tenter. L'auteur des modifications
+        # est porte par PGOPTIONS (app.current_user, cf. _apply_audit_identity).
+        if not self._conn or self._conn.closed:
+            return
         try:
-            # Use the plugin's own psycopg2 connection for parameterized queries
-            # to avoid SQL injection via provider.executeSql() f-strings.
-            if self._conn and not self._conn.closed:
-                cur = self._conn.cursor()
-                try:
-                    cur.execute(
-                        "SELECT set_config('app.current_user', %s, true)",
-                        (self._bridge_user_email or self._bridge_user,),
-                    )
-                    cur.execute("SET application_name = %s", (f"constructel_bridge:{self._bridge_user}",))
-                finally:
-                    cur.close()
-            else:
-                # Fallback: escape value for provider.executeSql() (no parameterized API)
-                from .bridge_identity import build_set_config_sql
-
-                set_config_sql, app_name_sql = build_set_config_sql(self._bridge_user_email or self._bridge_user)
-                provider.executeSql(set_config_sql)
-                provider.executeSql(app_name_sql)
+            cur = self._conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT set_config('app.current_user', %s, true)",
+                    (self._bridge_user_email or self._bridge_user,),
+                )
+                cur.execute("SET application_name = %s", (f"constructel_bridge:{self._bridge_user}",))
+            finally:
+                cur.close()
             self._log(tr("hook.commit_tagged", user=self._bridge_user, layer=layer.name()))
         except (Exception, ) as exc:
             self._log(tr("hook.exec_error", error=exc), Qgis.MessageLevel.Warning)  # noqa: broad-except — provider API may raise various types

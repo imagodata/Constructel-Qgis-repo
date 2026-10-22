@@ -1,4 +1,4 @@
-"""_apply_styles_from_db : lecture du résultat (ok, message) de importNamedStyle.
+"""bridge_project_init : styles base (importNamedStyle) et URI des couches.
 
 bridge_project_init est chargé avec les stubs partagés, complétés par des
 classes nommées pour ses imports qgis.* que les stubs ne couvrent pas.
@@ -77,3 +77,36 @@ def test_db_style_refused_falls_back_to_embedded_qml(project_init):
     layer = _layer((False, "Root <qgis> element could not be found"))
     assert project_init._apply_styles_from_db({}, "pw", {"cables": layer}) == set()
     layer.triggerRepaint.assert_not_called()
+
+
+class _UriWithoutSetSslMode:
+    """QgsDataSourceUri de QGIS < 3.42 : setSslMode n'existe pas, le mode SSL
+    passe par le 6e argument de setConnection."""
+
+    class SslMode:
+        SslPrefer = "prefer"
+        SslRequire = "require"
+
+    def __init__(self):
+        self.connection = None
+
+    def setConnection(self, *args):
+        self.connection = args
+
+    def setDataSource(self, *_args):
+        pass
+
+    def setParam(self, *_args):
+        pass
+
+
+@pytest.mark.parametrize(
+    "sslmode, expected", [("require", "require"), ("prefer", "prefer"), ("", "prefer")]
+)
+def test_build_uri_sets_sslmode_without_setSslMode(project_init, monkeypatch, sslmode, expected):
+    monkeypatch.setattr(project_init, "QgsDataSourceUri", _UriWithoutSetSslMode)
+    uri = project_init._build_uri(
+        {"host": "h", "port": 5432, "dbname": "db", "user": "u", "sslmode": sslmode},
+        "pw", "wyre", "cables", "geom", "id",
+    )
+    assert uri.connection == ("h", "5432", "db", "u", "pw", expected)

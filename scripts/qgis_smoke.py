@@ -285,7 +285,7 @@ EXPECTED_LOG = (
     "Connection failed to 127.0.0.1:1/smoke",
     "pyplugin_installer unavailable",
     "Auth Manager not available, cannot store encrypted password",
-    "Auth Manager unavailable, PG connection 'be' uses saved password",
+    "Auth Manager unavailable, PG connection 'be' will prompt for the password",
 )
 print("== journal QGIS (avertissements et erreurs)")
 for level, tag, message in log:
