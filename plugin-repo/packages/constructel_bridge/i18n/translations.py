@@ -57,7 +57,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "hook.installed": "Hook installed: {layer}",
         "hook.all_installed": "Edit hooks installed on layers",
         "hook.commit_tagged": "app.current_user={user} for commit on {layer}",
-        "hook.exec_error": "executeSql unavailable ({error})",
+        "hook.exec_error": "Commit tagging failed ({error})",
 
         # -- QGIS PG connection --
         "pg.configured": "QGIS connection '{name}' configured",
@@ -325,7 +325,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "hook.installed": "Hook installe: {layer}",
         "hook.all_installed": "Hooks d'edition installes sur les couches",
         "hook.commit_tagged": "app.current_user={user} pour commit sur {layer}",
-        "hook.exec_error": "executeSql indisponible ({error})",
+        "hook.exec_error": "Marquage du commit impossible ({error})",
 
         # -- QGIS PG connection --
         "pg.configured": "Connexion QGIS '{name}' configuree",
@@ -595,7 +595,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "hook.installed": "Hook instalado: {layer}",
         "hook.all_installed": "Hooks de edicao instalados nas camadas",
         "hook.commit_tagged": "app.current_user={user} para commit em {layer}",
-        "hook.exec_error": "executeSql indisponivel ({error})",
+        "hook.exec_error": "Marcacao do commit impossivel ({error})",
 
         # -- QGIS PG connection --
         "pg.configured": "Ligacao QGIS '{name}' configurada",

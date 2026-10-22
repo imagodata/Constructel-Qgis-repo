@@ -1725,7 +1725,7 @@ class ConstructelBridgePlugin:
                 settings.remove(f"{base}/authcfg")
                 self._log(
                     f"Auth Manager unavailable, PG connection '{params['name']}' "
-                    "will prompt for the password.",
+                    "has no saved password.",
                     Qgis.MessageLevel.Warning,
                 )
         else:
@@ -1808,10 +1808,12 @@ class ConstructelBridgePlugin:
         ),
     ]
 
-    # QGIS >= 3.30 ne lit plus que connections/ows|xyz/items/... ; les cles
-    # qgis/connections-* n'y sont recopiees qu'au demarrage SUIVANT de QGIS
-    # Desktop. Memes cles que cette migration (releve QGIS 3.44 / 4.2) ; les
-    # parametres absents gardent la valeur par defaut de QGIS.
+    # QGIS >= 3.30 ne lit plus que connections/ows|xyz/items/... : au
+    # demarrage, QGIS Desktop y recopie les cles qgis/connections-* puis
+    # (3.36+) les supprime. On ecrit donc directement, et seulement, les cles
+    # actuelles (memes noms que cette migration) : ecrire les anciennes ferait
+    # re-enregistrer les services a chaque demarrage. Les parametres absents
+    # gardent la valeur par defaut de QGIS.
     _CURRENT_CONNECTION_ROOTS = {
         "qgis/connections-xyz": "connections/xyz/items",
         "qgis/connections-wms": "connections/ows/items/wms/connections/items",
@@ -1826,6 +1828,21 @@ class ConstructelBridgePlugin:
         "pagingenabled": "paging-enabled",
     }
 
+    def _service_settings(self, base, name, params):
+        """(prefixe, valeurs) du service sous les cles lues par le QGIS courant."""
+        root = self._CURRENT_CONNECTION_ROOTS.get(base)
+        if Qgis.QGIS_VERSION_INT < 33000 or root is None:
+            return f"{base}/{name}", dict(params)
+        values = {
+            self._CURRENT_CONNECTION_KEYS[k]: v
+            for k, v in params.items()
+            if k in self._CURRENT_CONNECTION_KEYS
+        }
+        if "paging-enabled" in values and Qgis.QGIS_VERSION_INT >= 33600:
+            # Depuis QGIS 3.36 : chaine default|enabled|disabled (booleen avant).
+            values["paging-enabled"] = "enabled" if values["paging-enabled"] else "disabled"
+        return f"{root}/{name}", values
+
     def _setup_external_services(self):
         """Enregistre les connexions WMTS / XYZ / WFS dans les settings QGIS.
 
@@ -1835,28 +1852,14 @@ class ConstructelBridgePlugin:
         settings = QgsSettings()
         added = []
         for base, name, params in self._EXTERNAL_SERVICES:
-            prefixes = [(f"{base}/{name}", dict(params))]
-            if Qgis.QGIS_VERSION_INT >= 33000:
-                prefixes.append((
-                    f"{self._CURRENT_CONNECTION_ROOTS[base]}/{name}",
-                    {
-                        self._CURRENT_CONNECTION_KEYS[k]: v
-                        for k, v in params.items()
-                        if k in self._CURRENT_CONNECTION_KEYS
-                    },
-                ))
-            written = False
-            for key_prefix, values in prefixes:
-                if settings.value(f"{key_prefix}/url", "") == params.get("url", ""):
-                    continue
-                for k, v in values.items():
-                    settings.setValue(f"{key_prefix}/{k}", v)
-                written = True
-            if not written:
+            key_prefix, values = self._service_settings(base, name, params)
+            if settings.value(f"{key_prefix}/url", "") == params.get("url", ""):
                 self._log(f"Service '{name}' already configured — skipped")
                 continue
+            for k, v in values.items():
+                settings.setValue(f"{key_prefix}/{k}", v)
             added.append(name)
-            self._log(f"Service '{name}' registered ({prefixes[-1][0]})")
+            self._log(f"Service '{name}' registered ({key_prefix})")
         if added:
             settings.sync()
             self.iface.reloadConnections()

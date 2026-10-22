@@ -101,7 +101,9 @@ class _UriWithoutSetSslMode:
 
 
 @pytest.mark.parametrize(
-    "sslmode, expected", [("require", "require"), ("prefer", "prefer"), ("", "prefer")]
+    "sslmode, expected",
+    [("require", "require"), ("prefer", "prefer"), ("", "prefer"), (None, "prefer"),
+     ("verify-full", "prefer")],
 )
 def test_build_uri_sets_sslmode_without_setSslMode(project_init, monkeypatch, sslmode, expected):
     monkeypatch.setattr(project_init, "QgsDataSourceUri", _UriWithoutSetSslMode)

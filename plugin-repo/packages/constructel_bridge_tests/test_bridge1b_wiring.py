@@ -1078,8 +1078,8 @@ def test_stub_uri_round_trip_preserves_params(bp):
 # --- Auth Manager refusal: connection settings and log ----------------------
 
 
-def test_setup_pg_connection_store_refused_says_password_will_be_asked(bp, monkeypatch):
-    # savePassword=False and /password removed: nothing is saved, QGIS asks.
+def test_setup_pg_connection_store_refused_says_no_password_is_saved(bp, monkeypatch):
+    # savePassword=False and /password removed: nothing is saved.
     from qgis.core import Qgis, QgsApplication, QgsSettings
 
     monkeypatch.setattr(type(QgsApplication.authManager()), "_store_fails", True)
@@ -1090,8 +1090,8 @@ def test_setup_pg_connection_store_refused_says_password_will_be_asked(bp, monke
     assert QgsSettings().value(f"{base}/authcfg", "") == ""
     assert QgsSettings().value(f"{base}/password", "") == ""
     warnings = _log_messages(level=Qgis.MessageLevel.Warning)
-    assert not any("saved password" in m for m in warnings)
-    assert any("prompt for the password" in m for m in warnings)
+    assert not any("uses saved password" in m for m in warnings)
+    assert any("has no saved password" in m for m in warnings)
 
 
 # --- beforeCommitChanges hook -------------------------------------------------
@@ -1126,8 +1126,9 @@ _OWS = "connections/ows/items/{}/connections/items/{}/{}"
 
 
 def test_external_services_use_current_qgis_connection_keys(bp):
-    # QGIS >= 3.30 only reads connections/ows|xyz/items/...; the legacy
-    # qgis/connections-* keys are copied there at the NEXT Desktop start.
+    # QGIS >= 3.30 only reads connections/ows|xyz/items/...; the Desktop
+    # migration copies qgis/connections-* there at the NEXT start, then
+    # (3.36+) deletes them -- writing them would re-register every start.
     from qgis.core import QgsSettings
 
     plugin = bp.ConstructelBridgePlugin(_FakeIface())
@@ -1141,19 +1142,58 @@ def test_external_services_use_current_qgis_connection_keys(bp):
     assert s.value(_OWS.format("wms", wms, "dpi-mode")) == 7
     wfs = "WFS Cadastre UrbIS Bruxelles"
     assert s.value(_OWS.format("wfs", wfs, "version")) == "2.0.0"
-    assert s.value(_OWS.format("wfs", wfs, "paging-enabled")) is True
+    assert s.value(_OWS.format("wfs", wfs, "paging-enabled")) == "enabled"
     xyz = "connections/xyz/items/Google Streetview Coverage/{}"
     assert s.value(xyz.format("zmax")) == 21
     assert s.value(xyz.format("url")).startswith("https://mts2.google.com/")
-    # Legacy keys are still written (QGIS 3.28, and Desktop migration).
-    assert s.value(f"qgis/connections-wms/{wms}/url") == s.value(_OWS.format("wms", wms, "url"))
+    assert not any(k.startswith("qgis/connections-") for k in QgsSettings._store)
     assert plugin.iface.reloaded is True
+
+
+def test_external_services_second_start_writes_nothing(bp):
+    from qgis.core import QgsSettings
+
+    bp.ConstructelBridgePlugin(_FakeIface())._setup_external_services()
+    before = dict(QgsSettings._store)
+    plugin = bp.ConstructelBridgePlugin(_FakeIface())
+    plugin._setup_external_services()
+
+    assert QgsSettings._store == before
+    assert not hasattr(plugin.iface, "reloaded")
+    assert plugin.iface.messageBar().messages == []
+
+
+def test_external_services_migrated_by_qgis_are_recognized(bp):
+    # Desktop start-up migration: legacy keys gone, current keys present.
+    from qgis.core import QgsSettings
+
+    for base, name, params in bp.ConstructelBridgePlugin._EXTERNAL_SERVICES:
+        root = bp.ConstructelBridgePlugin._CURRENT_CONNECTION_ROOTS[base]
+        QgsSettings().setValue(f"{root}/{name}/url", params["url"])
+    plugin = bp.ConstructelBridgePlugin(_FakeIface())
+    plugin._setup_external_services()
+
+    assert not any(k.startswith("qgis/connections-") for k in QgsSettings._store)
+    assert plugin.iface.messageBar().messages == []
+
+
+@pytest.mark.parametrize(
+    "version, paging", [(33000, True), (33599, True), (33600, "enabled"), (40200, "enabled")]
+)
+def test_external_services_wfs_paging_value_follows_qgis_version(bp, monkeypatch, version, paging):
+    # 3.30-3.35: bool entry ; 3.36+: string default|enabled|disabled.
+    from qgis.core import QgsSettings
+
+    monkeypatch.setattr(bp.Qgis, "QGIS_VERSION_INT", version)
+    bp.ConstructelBridgePlugin(_FakeIface())._setup_external_services()
+    key = _OWS.format("wfs", "WFS Cadastre UrbIS Bruxelles", "paging-enabled")
+    assert QgsSettings().value(key) == paging
 
 
 def test_external_services_qgis_328_writes_legacy_keys_only(bp, monkeypatch):
     from qgis.core import QgsSettings
 
-    monkeypatch.setattr(bp.Qgis, "QGIS_VERSION_INT", 32815)
+    monkeypatch.setattr(bp.Qgis, "QGIS_VERSION_INT", 32999)
     plugin = bp.ConstructelBridgePlugin(_FakeIface())
     plugin._setup_external_services()
 
