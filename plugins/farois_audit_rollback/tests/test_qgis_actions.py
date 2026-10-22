@@ -79,6 +79,7 @@ def qt(monkeypatch):
     widgets.QMessageBox = SimpleNamespace(
         Yes=1,
         No=2,
+        StandardButton=SimpleNamespace(Yes=1, No=2),
         question=Mock(return_value=1),
         warning=Mock(),
         critical=Mock(),
@@ -86,7 +87,14 @@ def qt(monkeypatch):
     )
     widgets.QInputDialog = SimpleNamespace(getText=Mock(return_value=("x", True)))
     core = ModuleType("qgis.PyQt.QtCore")
-    core.Qt = SimpleNamespace(ToolButtonTextOnly=0, RightDockWidgetArea=2, gray=3)
+    core.Qt = SimpleNamespace(
+        ToolButtonTextOnly=0,
+        RightDockWidgetArea=2,
+        gray=3,
+        ToolButtonStyle=SimpleNamespace(ToolButtonTextOnly=0),
+        DockWidgetArea=SimpleNamespace(RightDockWidgetArea=2),
+        GlobalColor=SimpleNamespace(gray=3),
+    )
     core.QTimer = object
     core.QItemSelectionModel = object
     core.pyqtSignal = Signal
@@ -320,8 +328,12 @@ def test_modify_current_object_uses_qgis_form_and_respects_editability(
     )
 
     class Context:
-        IdentifyMode = 1
-        SingleEditMode = 2
+        class Mode:
+            IdentifyMode = 1
+            SingleEditMode = 2
+
+        IdentifyMode = Mode.IdentifyMode
+        SingleEditMode = Mode.SingleEditMode
         setAttributeFormMode = Mock()
         setAllowCustomUi = Mock()
 
@@ -335,7 +347,7 @@ def test_modify_current_object_uses_qgis_form_and_respects_editability(
     if editable:
         gui.QgsAttributeDialog.assert_called_once()
         dialog.setMode.assert_called_once_with(Context.SingleEditMode)
-        dialog.exec_.assert_called_once()
+        dialog.exec.assert_called_once()
         layer.reload.assert_not_called()  # The QGIS edit buffer is not saved by the plugin.
     else:
         gui.QgsAttributeDialog.assert_not_called()

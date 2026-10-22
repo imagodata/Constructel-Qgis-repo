@@ -258,14 +258,14 @@ class _BridgeCredentials(QgsCredentials):
     def request(self, realm, username, password, message=""):
         QgsMessageLog.logMessage(
             f"Credentials request intercepted — realm={realm!r}",
-            TAG, level=Qgis.Info,
+            TAG, level=Qgis.MessageLevel.Info,
         )
         creds = self._credentials_for(realm, username)
         if creds is not None:
             user, pwd = creds
             QgsMessageLog.logMessage(
                 f"Auto-providing credentials for {user}",
-                TAG, level=Qgis.Info,
+                TAG, level=Qgis.MessageLevel.Info,
             )
             # Also cache via put() so subsequent get() calls skip request()
             self.put(realm, user, pwd)
@@ -429,7 +429,7 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
     if not _ensure_auth_manager_ready():
         QgsMessageLog.logMessage(
             "Auth Manager not available, cannot store encrypted password.",
-            TAG, level=Qgis.Warning,
+            TAG, level=Qgis.MessageLevel.Warning,
         )
         return False
     auth_mgr = QgsApplication.authManager()
@@ -532,7 +532,7 @@ def _store_pki_authcfg() -> str:
     if not _ensure_auth_manager_ready():
         QgsMessageLog.logMessage(
             "Auth Manager not available, cannot store PKI-Paths config.",
-            TAG, level=Qgis.Warning,
+            TAG, level=Qgis.MessageLevel.Warning,
         )
         return ""
     auth_mgr = QgsApplication.authManager()
@@ -683,18 +683,18 @@ def _apply_audit_identity(email, log) -> bool:
     """
     try:
         if not QgsSettings().value(AUDIT_EMAIL_SWITCH_KEY, True, type=bool):
-            log("Adresse d'audit desactivee (constructel_bridge/audit_email_pgoptions = false)", Qgis.Info)
+            log("Adresse d'audit desactivee (constructel_bridge/audit_email_pgoptions = false)", Qgis.MessageLevel.Info)
             return False
         if not is_valid_audit_email(email):
             _clear_audit_identity()
-            log(f"Adresse d'audit absente ou invalide ({email!r}) : editions QGIS non attribuees", Qgis.Warning)
+            log(f"Adresse d'audit absente ou invalide ({email!r}) : editions QGIS non attribuees", Qgis.MessageLevel.Warning)
             return False
         os.environ["PGOPTIONS"] = build_pgoptions(os.environ.get("PGOPTIONS"), email)
         QgsSettings().setValue(AUDIT_EMAIL_KEY, email)
-        log(f"Adresse d'audit posee pour les nouvelles connexions PostgreSQL : {email}", Qgis.Info)
+        log(f"Adresse d'audit posee pour les nouvelles connexions PostgreSQL : {email}", Qgis.MessageLevel.Info)
         return True
     except Exception as exc:  # noqa: BLE001 -- ne jamais empecher initGui/_connect
-        log(f"Adresse d'audit non posee (erreur inattendue) : {exc}", Qgis.Warning)
+        log(f"Adresse d'audit non posee (erreur inattendue) : {exc}", Qgis.MessageLevel.Warning)
         return False
 
 
@@ -704,7 +704,7 @@ def _apply_cached_audit_identity(log) -> bool:
     try:
         cached = QgsSettings().value(AUDIT_EMAIL_KEY, "")
     except Exception as exc:  # noqa: BLE001 -- ne jamais empecher initGui
-        log(f"Adresse d'audit en cache illisible : {exc}", Qgis.Warning)
+        log(f"Adresse d'audit en cache illisible : {exc}", Qgis.MessageLevel.Warning)
         return False
     if not cached:
         return False
@@ -807,7 +807,7 @@ class ConstructelBridgePlugin:
         self._tool_button.setIcon(plugin_icon)
         self._tool_button.setToolTip("Constructel Bridge")
         self._tool_button.setMenu(self._toolbar_menu)
-        self._tool_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self._tool_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._tool_button.clicked.connect(self._on_init_project)
 
         self._toolbar_action = self.iface.addToolBarWidget(self._tool_button)
@@ -828,7 +828,7 @@ class ConstructelBridgePlugin:
             self._setup_external_services()
         except Exception as exc:
             QgsMessageLog.logMessage(
-                f"External services setup failed: {exc}", TAG, level=Qgis.Warning,
+                f"External services setup failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
             )
 
         # Pre-provisionner la dependance pip `extract-msg` utilisee par le
@@ -838,7 +838,7 @@ class ConstructelBridgePlugin:
             self._ensure_extract_msg_available()
         except Exception as exc:
             QgsMessageLog.logMessage(
-                f"extract-msg pre-provisioning failed: {exc}", TAG, level=Qgis.Warning,
+                f"extract-msg pre-provisioning failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
             )
 
         # Intercepter les demandes de credentials QGIS pour fournir
@@ -888,13 +888,13 @@ class ConstructelBridgePlugin:
                 self._setup_qgis_pg_connection(_BE_PW, use_authcfg=True, conn="be")
             except Exception as exc:
                 QgsMessageLog.logMessage(
-                    f"BE connection setup failed: {exc}", TAG, level=Qgis.Warning,
+                    f"BE connection setup failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
                 )
         else:
             QgsMessageLog.logMessage(
                 "Connexion 'be' non configuree "
                 "(bloc absent ou invalide dans credentials.json)",
-                TAG, level=Qgis.Info,
+                TAG, level=Qgis.MessageLevel.Info,
             )
 
         # Supprimer le dialogue "Traiter les couches inutilisables" —
@@ -955,7 +955,7 @@ class ConstructelBridgePlugin:
         try:
             self._fix_layer_credentials()
         except Exception as exc:
-            self._log(f"Fix layer credentials failed: {exc}", Qgis.Warning)
+            self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
 
         if not self._connected:
             return
@@ -977,18 +977,18 @@ class ConstructelBridgePlugin:
         try:
             self._hook_layers()
         except Exception as exc:
-            self._log(f"Hook install failed: {exc}", Qgis.Warning)
+            self._log(f"Hook install failed: {exc}", Qgis.MessageLevel.Warning)
 
         try:
             from .bridge_project_init import ensure_relations
             ensure_relations()
         except Exception as exc:
-            self._log(f"Relations recreate failed: {exc}", Qgis.Warning)
+            self._log(f"Relations recreate failed: {exc}", Qgis.MessageLevel.Warning)
 
         try:
             bridge_sketcher.apply_all_translations()
         except Exception as exc:
-            self._log(f"i18n apply failed: {exc}", Qgis.Warning)
+            self._log(f"i18n apply failed: {exc}", Qgis.MessageLevel.Warning)
 
     # =====================================================================
     # Nettoyage avant sauvegarde du projet
@@ -1005,7 +1005,7 @@ class ConstructelBridgePlugin:
         try:
             self._strip_authcfg_from_dom(doc)
         except Exception as exc:
-            self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.Warning)
+            self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.MessageLevel.Warning)
 
     def _strip_authcfg_from_dom(self, doc):
         """Parcourt le DOM du projet et retire les authcfg des datasources PG.
@@ -1148,7 +1148,7 @@ class ConstructelBridgePlugin:
             dbname=DEFAULT_DBNAME,
             default_password=_DEFAULT_PW,
         )
-        if dlg.exec_() == QDialog.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             password = dlg.password() or _DEFAULT_PW
             if dlg.save_password():
                 _store_password_encrypted(password)
@@ -1176,7 +1176,7 @@ class ConstructelBridgePlugin:
             # closed BEFORE attempting any connection. A doomed legacy
             # attempt would only produce a misleading "wrong password"
             # trail once the server enforces client certs.
-            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.Critical)
+            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.MessageLevel.Critical)
             if not silent:
                 QMessageBox.critical(
                     self.iface.mainWindow(),
@@ -1222,7 +1222,7 @@ class ConstructelBridgePlugin:
                     self._setup_qgis_pg_connection(password, use_authcfg=False)
                 except Exception:
                     pass
-                self._log(_mtls_message("mtls.cert_required_by_server"), Qgis.Critical)
+                self._log(_mtls_message("mtls.cert_required_by_server"), Qgis.MessageLevel.Critical)
                 if not silent:
                     QMessageBox.critical(
                         self.iface.mainWindow(),
@@ -1232,7 +1232,7 @@ class ConstructelBridgePlugin:
                 return False
             self._log(
                 f"Connection failed to {DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DBNAME}: {exc}",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             # Even on connection failure, configure the QGIS PG browser
             # entry with password so that the explorer can still open
@@ -1255,13 +1255,13 @@ class ConstructelBridgePlugin:
         try:
             is_new_user = self._register_bridge_user()
         except Exception as exc:
-            self._log(f"User registration failed: {exc}", Qgis.Warning)
+            self._log(f"User registration failed: {exc}", Qgis.MessageLevel.Warning)
             is_new_user = False
 
         try:
             self._setup_qgis_pg_connection(password, use_authcfg=True)
         except Exception as exc:
-            self._log(f"QGIS PG config failed: {exc}", Qgis.Warning)
+            self._log(f"QGIS PG config failed: {exc}", Qgis.MessageLevel.Warning)
 
         # En mode silent (auto-connect au demarrage), ne pas toucher au
         # projet pour eviter de le rendre "dirty" et declencher le
@@ -1279,7 +1279,7 @@ class ConstructelBridgePlugin:
             if not onboarding_done or is_new_user:
                 self._run_onboarding(is_new_user)
         except Exception as exc:
-            self._log(f"Onboarding failed: {exc}", Qgis.Warning)
+            self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
 
         return True
 
@@ -1288,22 +1288,22 @@ class ConstructelBridgePlugin:
         try:
             self._fix_layer_credentials()
         except Exception as exc:
-            self._log(f"Fix layer credentials failed: {exc}", Qgis.Warning)
+            self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
 
         try:
             self._check_layer_datasources()
         except Exception as exc:
-            self._log(f"Layer datasource check failed: {exc}", Qgis.Warning)
+            self._log(f"Layer datasource check failed: {exc}", Qgis.MessageLevel.Warning)
 
         try:
             self._hook_layers()
         except Exception as exc:
-            self._log(f"Hook install failed: {exc}", Qgis.Warning)
+            self._log(f"Hook install failed: {exc}", Qgis.MessageLevel.Warning)
 
         try:
             bridge_sketcher.apply_all_translations()
         except Exception as exc:
-            self._log(f"i18n apply failed: {exc}", Qgis.Warning)
+            self._log(f"i18n apply failed: {exc}", Qgis.MessageLevel.Warning)
 
     # =====================================================================
     # Identification et enregistrement utilisateur
@@ -1382,7 +1382,7 @@ class ConstructelBridgePlugin:
             self._set_app_user(self._bridge_user_email or username)
 
         except Exception as exc:
-            self._log(tr("user.error", error=exc), Qgis.Warning)
+            self._log(tr("user.error", error=exc), Qgis.MessageLevel.Warning)
         finally:
             cur.close()
 
@@ -1396,7 +1396,7 @@ class ConstructelBridgePlugin:
         try:
             cur.execute("SELECT set_config('app.current_user', %s, false)", (username,))
         except Exception as exc:
-            self._log(f"set_config error: {exc}", Qgis.Warning)
+            self._log(f"set_config error: {exc}", Qgis.MessageLevel.Warning)
         finally:
             cur.close()
 
@@ -1410,7 +1410,7 @@ class ConstructelBridgePlugin:
             cur.execute("SELECT email FROM ref.users WHERE id = %s::uuid", (self._bridge_user_id,))
             row = cur.fetchone()
         except Exception as exc:
-            self._log(f"Relecture de l'adresse d'audit impossible : {exc}", Qgis.Warning)
+            self._log(f"Relecture de l'adresse d'audit impossible : {exc}", Qgis.MessageLevel.Warning)
             return
         finally:
             cur.close()
@@ -1469,9 +1469,9 @@ class ConstructelBridgePlugin:
         if mtls_active:
             pki_cfg_id = _store_pki_authcfg()
             if not pki_cfg_id:
-                self._log(_mtls_message("mtls.activation_failed"), Qgis.Warning)
+                self._log(_mtls_message("mtls.activation_failed"), Qgis.MessageLevel.Warning)
         if mtls_invalid:
-            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.Critical)
+            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.MessageLevel.Critical)
 
         project = QgsProject.instance()
         fixed = 0
@@ -1557,7 +1557,7 @@ class ConstructelBridgePlugin:
         if fixed:
             self._log(f"{fixed} couche(s) PG: credentials corrigees")
         if still_bad:
-            self._log(f"{still_bad} couche(s) PG toujours invalides apres correction", Qgis.Warning)
+            self._log(f"{still_bad} couche(s) PG toujours invalides apres correction", Qgis.MessageLevel.Warning)
 
         # Appliquer les styles par defaut depuis public.layer_styles
         self._apply_db_default_styles()
@@ -1601,7 +1601,7 @@ class ConstructelBridgePlugin:
                     if not row or not row[0]:
                         continue
                 except (Exception, ) as _style_err:
-                    self._log(f"Style query error for {schema}.{table}: {_style_err}", Qgis.Warning)
+                    self._log(f"Style query error for {schema}.{table}: {_style_err}", Qgis.MessageLevel.Warning)
                     continue
                 # Ecrire le QML dans un fichier temporaire et l'appliquer
                 import tempfile
@@ -1626,7 +1626,7 @@ class ConstructelBridgePlugin:
                     applied += 1
             cur.close()
         except Exception as exc:
-            self._log(f"Style loading error: {exc}", Qgis.Warning)
+            self._log(f"Style loading error: {exc}", Qgis.MessageLevel.Warning)
         if applied:
             self._log(f"{applied} couche(s): styles par defaut appliques")
 
@@ -1687,7 +1687,7 @@ class ConstructelBridgePlugin:
                 names += f" (+{len(bad_layers) - 5})"
             self._log(
                 f"{len(bad_layers)} layer(s) pointing to localhost: {names}",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             self.iface.messageBar().pushWarning(
                 "Constructel Bridge",
@@ -1720,12 +1720,12 @@ class ConstructelBridgePlugin:
         ):
             self._log(
                 _mtls_message("mtls.pgpass_unwritable", path=str(pgpass_file_path())),
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return
         cfg_id = _store_pki_authcfg()
         if not cfg_id:
-            self._log(_mtls_message("mtls.activation_failed"), Qgis.Critical)
+            self._log(_mtls_message("mtls.activation_failed"), Qgis.MessageLevel.Critical)
             return
 
         settings.setValue(f"{base}/host", params["host"])
@@ -1784,7 +1784,7 @@ class ConstructelBridgePlugin:
             # Configured but invalid: fail closed, LOUDLY. Never fall back
             # to legacy silently (R4) — an expired cert + silent Basic
             # fallback would leave the operator unprotected post-enforcement.
-            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.Critical)
+            self._log(_mtls_message(f"mtls.{mtls_reason}"), Qgis.MessageLevel.Critical)
             return
         settings = QgsSettings()
         base = f"PostgreSQL/connections/{params['name']}"
@@ -1819,7 +1819,7 @@ class ConstructelBridgePlugin:
                 self._log(
                     f"Auth Manager unavailable, PG connection '{params['name']}' "
                     "uses saved password.",
-                    Qgis.Warning,
+                    Qgis.MessageLevel.Warning,
                 )
         else:
             settings.remove(f"{base}/authcfg")
@@ -2003,7 +2003,7 @@ class ConstructelBridgePlugin:
                     "Interpreteur Python introuvable: installation automatique de "
                     "'extract-msg' ignoree. Installation manuelle requise: "
                     "python -m pip install extract-msg",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
                 return
 
@@ -2016,7 +2016,7 @@ class ConstructelBridgePlugin:
                 self._log(
                     "Echec de l'installation pip de 'extract-msg' "
                     f"(code {result.returncode}): {(result.stderr or '').strip()[:500]}",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
                 return
 
@@ -2029,12 +2029,12 @@ class ConstructelBridgePlugin:
                 self._log(
                     "pip a reussi mais 'extract-msg' reste introuvable — "
                     "un redemarrage de QGIS peut etre necessaire",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
         except Exception as exc:
             self._log(
                 f"Pre-provisionnement de 'extract-msg' ignore ({exc})",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
 
     # =====================================================================
@@ -2079,7 +2079,7 @@ class ConstructelBridgePlugin:
         except TypeError:
             pass
         layer.beforeCommitChanges.connect(self._on_before_commit)
-        self._log(tr("hook.installed", layer=layer.name()), Qgis.Info)
+        self._log(tr("hook.installed", layer=layer.name()), Qgis.MessageLevel.Info)
 
     def _on_before_commit(self):
         layer = self.iface.activeLayer()
@@ -2113,7 +2113,7 @@ class ConstructelBridgePlugin:
                 provider.executeSql(app_name_sql)
             self._log(tr("hook.commit_tagged", user=self._bridge_user, layer=layer.name()))
         except (Exception, ) as exc:
-            self._log(tr("hook.exec_error", error=exc), Qgis.Warning)  # noqa: broad-except — provider API may raise various types
+            self._log(tr("hook.exec_error", error=exc), Qgis.MessageLevel.Warning)  # noqa: broad-except — provider API may raise various types
 
     # =====================================================================
     # Masquage des couches sans geometrie (listes / ref)
@@ -2143,8 +2143,8 @@ class ConstructelBridgePlugin:
         if uri.geometryColumn():
             return False
         return (
-            layer.wkbType() == QgsWkbTypes.NoGeometry
-            or layer.geometryType() == QgsWkbTypes.NullGeometry
+            layer.wkbType() == QgsWkbTypes.Type.NoGeometry
+            or layer.geometryType() == QgsWkbTypes.GeometryType.NullGeometry
             or not layer.isSpatial()
         )
 
@@ -2242,7 +2242,7 @@ class ConstructelBridgePlugin:
         from .bridge_project_init import InitProjectDialog, init_project
 
         dlg = InitProjectDialog(self.iface.mainWindow())
-        if dlg.exec_() != dlg.Accepted:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
         selected = dlg.selected_layers()
@@ -2276,7 +2276,7 @@ class ConstructelBridgePlugin:
             self.iface.messageBar().pushMessage(
                 "Constructel Bridge",
                 tr("init.success", count=count),
-                level=Qgis.Success,
+                level=Qgis.MessageLevel.Success,
                 duration=5,
             )
         except Exception as exc:
@@ -2286,7 +2286,7 @@ class ConstructelBridgePlugin:
                 tr("init.error", error=str(exc)),
             )
             import traceback
-            self._log(traceback.format_exc(), Qgis.Critical)
+            self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL
@@ -2352,7 +2352,7 @@ class ConstructelBridgePlugin:
                 error = raw_error.summary()
             else:
                 error = str(raw_error) if raw_error else "Unknown error"
-            self._log(tr("project.load_error", name=proj_name, error=error), Qgis.Critical)
+            self._log(tr("project.load_error", name=proj_name, error=error), Qgis.MessageLevel.Critical)
             QMessageBox.critical(
                 self.iface.mainWindow(),
                 tr("project.title"),
@@ -2380,7 +2380,7 @@ class ConstructelBridgePlugin:
         password = getattr(self, "_password", None) or _DEFAULT_PW
         # Validate schema against whitelist to prevent SQL injection
         if schema not in self._PROJECT_SCHEMAS:
-            self._log(f"Rejected invalid schema: {schema!r}", Qgis.Warning)
+            self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
         cur = self._conn.cursor()
         try:
@@ -2390,10 +2390,10 @@ class ConstructelBridgePlugin:
             )
             row = cur.fetchone()
         except Exception as exc:
-            self._log(f"Failed to read project XML from PG: {exc}", Qgis.Warning)
+            self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
             return False
         if not row:
-            self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.Warning)
+            self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
             return False
 
         raw = row[0]
@@ -2423,7 +2423,7 @@ class ConstructelBridgePlugin:
                     except UnicodeDecodeError:
                         continue
                 else:
-                    self._log("Cannot decode project content from PG", Qgis.Warning)
+                    self._log("Cannot decode project content from PG", Qgis.MessageLevel.Warning)
                     return False
 
         # Nettoyer les authcfg des datasources et injecter user/password.
@@ -2537,7 +2537,7 @@ class ConstructelBridgePlugin:
             return results
 
         except Exception as exc:
-            self._log(f"list_db_projects error: {exc}", Qgis.Warning)
+            self._log(f"list_db_projects error: {exc}", Qgis.MessageLevel.Warning)
             QMessageBox.warning(
                 self.iface.mainWindow(),
                 tr("project.title"),
@@ -2562,7 +2562,7 @@ class ConstructelBridgePlugin:
             db_conn=self._conn,
             email_domain=EMAIL_DOMAIN,
         )
-        wizard.exec_()
+        wizard.exec()
         self._refresh_audit_identity()
 
     def _on_onboarding(self):
@@ -2599,5 +2599,5 @@ class ConstructelBridgePlugin:
     # Logging
     # =====================================================================
 
-    def _log(self, message: str, level=Qgis.Info):
+    def _log(self, message: str, level=Qgis.MessageLevel.Info):
         QgsMessageLog.logMessage(message, TAG, level=level)

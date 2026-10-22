@@ -223,7 +223,7 @@ def test_missing_legend_does_nothing(atlas_module):
 @pytest.mark.parametrize("mode, name", [(0, "Sélection"), (1, "Couche entière")])
 def test_missing_input_has_mode_specific_message(atlas_module, mode, name):
     module = atlas_module
-    module.QgsUnitTypes.DistanceMeters = 1
+    module.QgsUnitTypes.DistanceUnit = SimpleNamespace(DistanceMeters=1)
     algorithm = Mock()
     crs = Mock()
     crs.isValid.return_value = True
@@ -265,9 +265,11 @@ def test_height_reserves_other_sidebar_items(
 
 def test_wrapping_changes_only_private_tree(atlas_module, monkeypatch):
     module = atlas_module
-    module.QgsLegendStyle = SimpleNamespace(Title=0, Group=1, Subgroup=2, SymbolLabel=3)
+    module.QgsLegendStyle = SimpleNamespace(
+        Style=SimpleNamespace(Title=0, Group=1, Subgroup=2, SymbolLabel=3)
+    )
     font = Mock()
-    font.Bold = 1
+    font.Weight.Bold = 1
     font.return_value = SimpleNamespace(size=7)
     monkeypatch.setattr(module, "QFont", font)
     module.QgsLayoutUtils.textWidthMM = lambda font, text: len(text)
@@ -290,8 +292,11 @@ def test_wrapping_changes_only_private_tree(atlas_module, monkeypatch):
 
 def test_native_qt_text_metrics(monkeypatch, atlas_module):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    widgets = pytest.importorskip("PyQt5.QtWidgets")
-    gui = pytest.importorskip("PyQt5.QtGui")
+    try:  # QGIS 4 (Qt6) puis QGIS 3 (Qt5)
+        from PyQt6 import QtGui as gui, QtWidgets as widgets
+    except ImportError:
+        widgets = pytest.importorskip("PyQt5.QtWidgets")
+        gui = pytest.importorskip("PyQt5.QtGui")
     app = widgets.QApplication.instance() or widgets.QApplication([])
     font = gui.QFont("Sans Serif")
     font.setPixelSize(25)

@@ -207,7 +207,7 @@ class PluginBundlePage(QWizardPage):
         # Scrollable container for the plugin list
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setSpacing(4)
@@ -226,7 +226,7 @@ class PluginBundlePage(QWizardPage):
             group_layout.setSpacing(2)
 
             cb = QCheckBox(plugin["name"])
-            cb.setFont(QFont(cb.font().family(), cb.font().pointSize(), QFont.Bold))
+            cb.setFont(QFont(cb.font().family(), cb.font().pointSize(), QFont.Weight.Bold))
             if already and active:
                 cb.setChecked(False)
                 cb.setEnabled(False)
@@ -411,7 +411,7 @@ class ExternalServicesPage(QWizardPage):
                 "border-radius: 3px; font-size: 11px;"
             )
             badge.setFixedWidth(50)
-            badge.setAlignment(Qt.AlignCenter)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             name_label = QLabel(f"<b>{svc['name']}</b>")
             header.addWidget(badge)
             header.addWidget(name_label)
@@ -476,7 +476,7 @@ class OnboardingWizard(QWizard):
         self.setWindowTitle(tr("wizard.title"))
         self.setMinimumWidth(600)
         self.setMinimumHeight(500)
-        self.setWizardStyle(QWizard.ModernStyle)
+        self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
         self._username = username
         self._user_id = user_id
@@ -555,7 +555,7 @@ class OnboardingWizard(QWizard):
             self._log(f"Profile updated: {self._username}")
         except Exception as exc:
             self._actions_done.append(tr("onboard.action.profile_error", error=exc))
-            self._log(f"Profile update error: {exc}", Qgis.Warning)
+            self._log(f"Profile update error: {exc}", Qgis.MessageLevel.Warning)
         finally:
             cur.close()
 
@@ -573,7 +573,7 @@ class OnboardingWizard(QWizard):
             self._actions_done.append(
                 tr("onboard.action.installer_unavailable", error=exc)
             )
-            self._log(f"pyplugin_installer unavailable: {exc}", Qgis.Warning)
+            self._log(f"pyplugin_installer unavailable: {exc}", Qgis.MessageLevel.Warning)
             return
 
         for pid in selected:
@@ -592,7 +592,7 @@ class OnboardingWizard(QWizard):
                     self._log(f"Plugin installed: {pid}")
             except Exception as exc:
                 self._actions_done.append(tr("onboard.action.plugin_error", pid=pid, error=exc))
-                self._log(f"Plugin error {pid}: {exc}", Qgis.Warning)
+                self._log(f"Plugin error {pid}: {exc}", Qgis.MessageLevel.Warning)
 
     def _configure_resource_sharing(self):
         rs_available = (
@@ -672,14 +672,14 @@ class OnboardingWizard(QWizard):
             )
         except Exception as exc:
             self._actions_done.append(tr("onboard.action.fm_git_installer_missing", error=exc))
-            self._log(f"FilterMate portable_git_installer import error: {exc}", Qgis.Warning)
+            self._log(f"FilterMate portable_git_installer import error: {exc}", Qgis.MessageLevel.Warning)
             return ""
 
         if not is_supported_platform():
             self._actions_done.append(tr("onboard.action.fm_git_unsupported"))
             return ""
 
-        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         try:
             os.makedirs(profile_tools, exist_ok=True)
             self._page_summary.set_summary(tr("onboard.action.fm_git_downloading"))
@@ -701,7 +701,7 @@ class OnboardingWizard(QWizard):
             return result.git_executable
         except Exception as exc:
             self._actions_done.append(tr("onboard.action.fm_git_install_failed", error=exc))
-            self._log(f"Portable git install failed: {exc}", Qgis.Warning)
+            self._log(f"Portable git install failed: {exc}", Qgis.MessageLevel.Warning)
             return ""
         finally:
             QApplication.restoreOverrideCursor()
@@ -736,7 +736,7 @@ class OnboardingWizard(QWizard):
                 RemoteRepoManager,
             )
         except Exception as exc:
-            self._log(f"FilterMate API import failed, falling back to JSON: {exc}", Qgis.Info)
+            self._log(f"FilterMate API import failed, falling back to JSON: {exc}", Qgis.MessageLevel.Info)
             return False
 
         try:
@@ -745,7 +745,7 @@ class OnboardingWizard(QWizard):
             if ext is None:
                 self._log(
                     "FilterMate registry returned no 'favorites_sharing' extension; falling back to JSON",
-                    Qgis.Info,
+                    Qgis.MessageLevel.Info,
                 )
                 return False
 
@@ -767,19 +767,19 @@ class OnboardingWizard(QWizard):
 
             new_repo = RemoteRepo.from_config_entry(entry)
             if new_repo is None:
-                self._log("RemoteRepo.from_config_entry returned None; falling back to JSON", Qgis.Warning)
+                self._log("RemoteRepo.from_config_entry returned None; falling back to JSON", Qgis.MessageLevel.Warning)
                 return False
             repos.append(new_repo)
 
             if not manager.save_repos(repos):
-                self._log("RemoteRepoManager.save_repos returned False; falling back to JSON", Qgis.Warning)
+                self._log("RemoteRepoManager.save_repos returned False; falling back to JSON", Qgis.MessageLevel.Warning)
                 return False
 
             self._actions_done.append(action_msg)
             self._log(f"FilterMate sharing configured via API: {FILTERMATE_REPO_GIT_URL}")
             return True
         except Exception as exc:
-            self._log(f"FilterMate API configure failed, falling back to JSON: {exc}", Qgis.Warning)
+            self._log(f"FilterMate API configure failed, falling back to JSON: {exc}", Qgis.MessageLevel.Warning)
             return False
 
     @staticmethod
@@ -808,7 +808,7 @@ class OnboardingWizard(QWizard):
                     config = json.load(f) or {}
             except Exception as exc:
                 self._actions_done.append(tr("onboard.action.fm_read_error", error=exc))
-                self._log(f"FilterMate config read error: {exc}", Qgis.Warning)
+                self._log(f"FilterMate config read error: {exc}", Qgis.MessageLevel.Warning)
                 return
 
         extensions = config.setdefault("EXTENSIONS", {})
@@ -857,12 +857,12 @@ class OnboardingWizard(QWizard):
             os.replace(tmp_path, config_path)
         except Exception as exc:
             self._actions_done.append(tr("onboard.action.fm_write_error", error=exc))
-            self._log(f"FilterMate config write error: {exc}", Qgis.Warning)
+            self._log(f"FilterMate config write error: {exc}", Qgis.MessageLevel.Warning)
             return
 
         self._actions_done.append(action_msg)
         self._actions_done.append(tr("onboard.action.fm_restart_needed"))
         self._log(f"FilterMate sharing configured via JSON (restart needed): {FILTERMATE_REPO_GIT_URL}")
 
-    def _log(self, message: str, level=Qgis.Info):
+    def _log(self, message: str, level=Qgis.MessageLevel.Info):
         QgsMessageLog.logMessage(message, TAG, level=level)

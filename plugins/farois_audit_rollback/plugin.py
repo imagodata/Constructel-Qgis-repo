@@ -85,7 +85,7 @@ class FaroisAuditRollback:
         if self.dock is None:
             self.dock = FaroisAuditDock(self.iface, api=self.api, store=self.store)
             self.dock.actionsChanged.connect(self.sync_actions)
-            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock)
+            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
         self.dock.show()
         self.dock.raise_()
         self.dock.refresh_context()

@@ -28,7 +28,7 @@ def ask_credentials(parent, email="", remember=True):
     form = QFormLayout(dialog)
     email_edit = QLineEdit(email)
     password_edit = QLineEdit()
-    password_edit.setEchoMode(QLineEdit.Password)
+    password_edit.setEchoMode(QLineEdit.EchoMode.Password)
     remember_box = QCheckBox("Se souvenir de moi (30 jours)")
     remember_box.setChecked(bool(remember))
     remember_box.setToolTip(
@@ -39,14 +39,14 @@ def ask_credentials(parent, email="", remember=True):
     form.addRow("Adresse mail", email_edit)
     form.addRow("Mot de passe", password_edit)
     form.addRow(remember_box)
-    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     form.addRow(buttons)
     if email:
         password_edit.setFocus()
     try:
-        if dialog.exec_() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         address, secret = email_edit.text().strip(), password_edit.text()
         if not (address and secret):

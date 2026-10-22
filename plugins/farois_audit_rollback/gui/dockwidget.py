@@ -106,9 +106,9 @@ if QGIS_AVAILABLE:
             self.layer_combo.setMinimumWidth(0)
             self.layer_combo.setMinimumContentsLength(12)
             self.layer_combo.setSizeAdjustPolicy(
-                QComboBox.AdjustToMinimumContentsLengthWithIcon
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
             )
-            self.layer_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.layer_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.layer_combo.currentIndexChanged.connect(self._on_layer_choice)
             source_row.addWidget(self.layer_combo, 1)
             self.context_label = QLabel("Aucune sélection")
@@ -120,7 +120,7 @@ if QGIS_AVAILABLE:
             self.history_scope.addItem("Tous les changements visibles", "visible")
             self.history_scope.setMinimumContentsLength(12)
             self.history_scope.setSizeAdjustPolicy(
-                QComboBox.AdjustToMinimumContentsLengthWithIcon
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
             )
             source_layout.addWidget(self.history_scope)
             source_layout.addWidget(self.context_label)
@@ -144,14 +144,14 @@ if QGIS_AVAILABLE:
             main.addWidget(filter_box)
             self.table = QTableWidget(0, len(self.HEADERS))
             self.table.setHorizontalHeaderLabels(self.HEADERS)
-            self.table.setSelectionBehavior(QTableWidget.SelectRows)
+            self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
             self.table.setAlternatingRowColors(True)
             self.table.setMinimumWidth(0)
-            self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.table.setSelectionMode(QTableWidget.ExtendedSelection)
-            self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+            self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self.table.customContextMenuRequested.connect(self._history_context_menu)
-            self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+            self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
             self.table.itemSelectionChanged.connect(self._update_actions)
             self.table.cellDoubleClicked.connect(self.identify_history_object)
             main.addWidget(self.table, 1)
@@ -467,7 +467,7 @@ if QGIS_AVAILABLE:
                 for c, value in enumerate(values):
                     item = QTableWidgetItem(str(value or ""))
                     if not e.can_undo:
-                        item.setForeground(Qt.gray)
+                        item.setForeground(Qt.GlobalColor.gray)
                     item.setToolTip(
                         json.dumps(
                             {
@@ -492,10 +492,10 @@ if QGIS_AVAILABLE:
                 if str(e.change_id) in selected_ids:
                     index = self.table.model().index(r, 0)
                     self.table.selectionModel().select(
-                        index, QItemSelectionModel.Select | QItemSelectionModel.Rows
+                        index, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
                     )
                     self.table.selectionModel().setCurrentIndex(
-                        index, QItemSelectionModel.NoUpdate
+                        index, QItemSelectionModel.SelectionFlag.NoUpdate
                     )
             self.table.blockSignals(False)
             self.table.resizeColumnsToContents()
@@ -637,7 +637,7 @@ if QGIS_AVAILABLE:
             farois.setEnabled(idle and api is not None)
             self._context_menu_open = True
             try:
-                chosen = menu.exec_(self.table.viewport().mapToGlobal(position))
+                chosen = menu.exec(self.table.viewport().mapToGlobal(position))
             finally:
                 self._context_menu_open = False
                 if not sip.isdeleted(menu):
@@ -748,9 +748,9 @@ if QGIS_AVAILABLE:
                             )
                         context = QgsAttributeEditorContext()
                         form_mode = (
-                            QgsAttributeEditorContext.SingleEditMode
+                            QgsAttributeEditorContext.Mode.SingleEditMode
                             if edit
-                            else QgsAttributeEditorContext.IdentifyMode
+                            else QgsAttributeEditorContext.Mode.IdentifyMode
                         )
                         context.setAttributeFormMode(form_mode)
                         context.setAllowCustomUi(False)
@@ -764,7 +764,7 @@ if QGIS_AVAILABLE:
                                 if edit
                                 else f"Farois — Identifier {number}/{len(targets)} (lecture seule)"
                             )
-                            dialog.exec_()
+                            dialog.exec()
                         finally:
                             if not sip.isdeleted(dialog):
                                 dialog.deleteLater()
@@ -848,10 +848,10 @@ if QGIS_AVAILABLE:
                         self,
                         title,
                         message,
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
                     )
-                    != QMessageBox.Yes
+                    != QMessageBox.StandardButton.Yes
                 ):
                     return
                 reason = AUTO_REASON
@@ -1168,10 +1168,10 @@ if QGIS_AVAILABLE:
                     self,
                     "Farois — Conflit",
                     f"{text}\n\nForcer l'annulation (FORCE) ? {consequence}",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
-                == QMessageBox.Yes
+                == QMessageBox.StandardButton.Yes
             )
 
         def dispose(self):

@@ -131,7 +131,7 @@ def test_apply_invalid_email_sets_nothing_and_warns(bp, bad):
     assert bp._apply_audit_identity(bad, log) is False
     assert "PGOPTIONS" not in os.environ
     assert QgsSettings().value(bp.AUDIT_EMAIL_KEY) is None
-    assert any(level == Qgis.Warning for _, level in log.records)
+    assert any(level == Qgis.MessageLevel.Warning for _, level in log.records)
 
 
 @pytest.mark.parametrize("off", [False, "false"])
@@ -201,7 +201,7 @@ def test_refresh_after_onboarding_applies_new_email(bp):
 
 def test_run_onboarding_refreshes_identity_after_wizard(bp):
     src = inspect.getsource(bp.ConstructelBridgePlugin._run_onboarding)
-    assert src.index("wizard.exec_()") < src.index("self._refresh_audit_identity()")
+    assert src.index("wizard.exec()") < src.index("self._refresh_audit_identity()")
 
 
 # --- _on_before_commit --------------------------------------------------
@@ -252,4 +252,4 @@ def test_apply_never_raises(bp, monkeypatch):
     log = _Log()
     assert bp._apply_audit_identity(EMAIL, log) is False
     assert bp._apply_cached_audit_identity(log) is False
-    assert any(level == Qgis.Warning for _, level in log.records)
+    assert any(level == Qgis.MessageLevel.Warning for _, level in log.records)

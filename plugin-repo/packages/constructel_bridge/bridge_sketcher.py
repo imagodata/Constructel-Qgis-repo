@@ -38,7 +38,7 @@ from .i18n.layer_translations import (
 TAG = "Constructel Bridge"
 
 
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, TAG, level=level)
 
 

@@ -12,9 +12,14 @@ _URI_BARE_RE = re.compile(r"^[\w.\-]+$")
 
 
 class Qgis:
-    Info = 0
-    Warning = 1
-    Critical = 2
+    class MessageLevel:
+        Info = 0
+        Warning = 1
+        Critical = 2
+
+    Info = MessageLevel.Info
+    Warning = MessageLevel.Warning
+    Critical = MessageLevel.Critical
 
 
 class _StubUserProfile:
@@ -234,7 +239,7 @@ class QgsMessageLog:
     @staticmethod
     def logMessage(message, tag="", level=None):
         if level is None:
-            level = Qgis.Info
+            level = Qgis.MessageLevel.Info
         QgsMessageLog._messages.append((message, tag, level))
 
 

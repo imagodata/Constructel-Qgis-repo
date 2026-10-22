@@ -231,14 +231,14 @@ def write_features_to_gpkg(features, out_fields, geom_type, crs, path,
     opts.layerName = layer_name
     opts.fileEncoding = "UTF-8"
     if append and os.path.exists(path):
-        opts.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        opts.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
 
     writer = QgsVectorFileWriter.create(
         path, out_fields, geom_type, crs,
         QgsCoordinateTransformContext(), opts,
     )
 
-    if writer.hasError() != QgsVectorFileWriter.NoError:
+    if writer.hasError() != QgsVectorFileWriter.WriterError.NoError:
         return False
 
     for feat in features:
@@ -252,7 +252,7 @@ def collect_features(gpkg_files, layer_name):
     out_fields = None
     field_mapping = None
     ref_crs = QgsCoordinateReferenceSystem()
-    ref_geom_type = QgsWkbTypes.NoGeometry
+    ref_geom_type = QgsWkbTypes.Type.NoGeometry
     skipped = []
 
     for gpkg_path in gpkg_files:
@@ -274,7 +274,7 @@ def collect_features(gpkg_files, layer_name):
 
         for feat in vlayer.getFeatures():
             new_feat = QgsFeature(out_fields)
-            if ref_geom_type != QgsWkbTypes.NoGeometry:
+            if ref_geom_type != QgsWkbTypes.Type.NoGeometry:
                 new_feat.setGeometry(feat.geometry())
             for new_idx, old_name in field_mapping.items():
                 src_idx = feat.fields().indexOf(old_name)
@@ -329,7 +329,7 @@ def create_merged_from_sources(groups, all_layers, output_path, feedback=None):
         merged_fields = None
         user_field_names = None
         ref_crs = QgsCoordinateReferenceSystem()
-        ref_geom_type = QgsWkbTypes.NoGeometry
+        ref_geom_type = QgsWkbTypes.Type.NoGeometry
 
         for jms, files in sorted(groups.items()):
             if feedback and feedback.isCanceled():
@@ -346,7 +346,7 @@ def create_merged_from_sources(groups, all_layers, output_path, feedback=None):
                         ref_crs = vlayer.crs()
                 for feat in vlayer.getFeatures():
                     new_feat = QgsFeature(merged_fields)
-                    if ref_geom_type != QgsWkbTypes.NoGeometry:
+                    if ref_geom_type != QgsWkbTypes.Type.NoGeometry:
                         new_feat.setGeometry(feat.geometry())
                     new_feat.setAttribute(
                         merged_fields.indexOf('jms_number'), jms
@@ -448,7 +448,7 @@ class MergeGpkgByJms(QgsProcessingAlgorithm):
         )
 
     def flags(self):
-        return super().flags() | QgsProcessingAlgorithm.FlagNoThreading
+        return super().flags() | QgsProcessingAlgorithm.Flag.FlagNoThreading
 
     def createInstance(self):
         return MergeGpkgByJms()
@@ -457,7 +457,7 @@ class MergeGpkgByJms(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFile(
             self.INPUT_DIR,
             'Dossier source (contenant les GPKG)',
-            behavior=QgsProcessingParameterFile.Folder,
+            behavior=QgsProcessingParameterFile.Behavior.Folder,
         ))
         self.addParameter(QgsProcessingParameterFolderDestination(
             self.OUTPUT_DIR,
@@ -615,7 +615,7 @@ class MergeGpkgByJms(QgsProcessingAlgorithm):
                     merged_fields = None
                     user_field_names = None
                     ref_crs = QgsCoordinateReferenceSystem()
-                    ref_geom_type = QgsWkbTypes.NoGeometry
+                    ref_geom_type = QgsWkbTypes.Type.NoGeometry
 
                     for jms_number, gpkg_path in sorted(jms_layers.items()):
                         if feedback.isCanceled():
@@ -631,7 +631,7 @@ class MergeGpkgByJms(QgsProcessingAlgorithm):
                                 ref_crs = vlayer.crs()
                         for feat in vlayer.getFeatures():
                             new_feat = QgsFeature(merged_fields)
-                            if ref_geom_type != QgsWkbTypes.NoGeometry:
+                            if ref_geom_type != QgsWkbTypes.Type.NoGeometry:
                                 new_feat.setGeometry(feat.geometry())
                             new_feat.setAttribute(
                                 merged_fields.indexOf('jms_number'), jms_number

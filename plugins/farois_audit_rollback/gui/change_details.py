@@ -170,7 +170,7 @@ def build_dialog(entry, parent=None):
         )
         from qgis.PyQt.QtCore import Qt
     except ImportError:  # pragma: no cover - hors QGIS
-        from PyQt5.QtWidgets import (
+        from qgis.PyQt.QtWidgets import (
             QCheckBox,
             QDialog,
             QHBoxLayout,
@@ -180,7 +180,7 @@ def build_dialog(entry, parent=None):
             QTableWidgetItem,
             QVBoxLayout,
         )
-        from PyQt5.QtCore import Qt
+        from qgis.PyQt.QtCore import Qt
 
     dialog = QDialog(parent)
     dialog.setWindowTitle("Farois — Détail du changement")
@@ -193,7 +193,7 @@ def build_dialog(entry, parent=None):
     )
     table = QTableWidget(0, 3)
     table.setHorizontalHeaderLabels(["Champ", "Avant", "Après"])
-    table.setEditTriggers(QTableWidget.NoEditTriggers)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     table.setAlternatingRowColors(True)
     table.horizontalHeader().setStretchLastSection(True)
     layout.addWidget(table)
@@ -212,7 +212,7 @@ def build_dialog(entry, parent=None):
         for r, values in enumerate(rows):
             for c, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 item.setToolTip(value)
                 table.setItem(r, c, item)
         table.resizeColumnsToContents()
@@ -228,11 +228,11 @@ def show_change_details(entry, parent=None):
     try:
         from qgis.PyQt import sip
     except ImportError:  # pragma: no cover - hors QGIS
-        from PyQt5 import sip
+        from qgis.PyQt import sip
 
     dialog = build_dialog(entry, parent)
     try:
-        dialog.exec_()
+        dialog.exec()
     finally:
         if not sip.isdeleted(dialog):
             dialog.deleteLater()

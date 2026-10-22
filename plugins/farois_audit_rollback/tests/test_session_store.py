@@ -133,7 +133,7 @@ def qgis_auth(monkeypatch):
     core.QgsMessageLog = type("QgsMessageLog", (), {
         "logMessage": staticmethod(lambda message, tag="", level=0: logged.append((message, tag, level)))
     })
-    core.Qgis = type("Qgis", (), {"Warning": 1})
+    core.Qgis = type("Qgis", (), {"Warning": 1, "MessageLevel": type("MessageLevel", (), {"Warning": 1})})
     monkeypatch.setitem(sys.modules, "qgis", ModuleType("qgis"))
     monkeypatch.setitem(sys.modules, "qgis.core", core)
 

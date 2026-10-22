@@ -10,11 +10,28 @@ from unittest.mock import Mock
 import pytest
 
 
+def _qt_binding():
+    """PyQt6 (QGIS 4) when installed, otherwise PyQt5 (QGIS 3)."""
+    for name in ("PyQt6", "PyQt5"):
+        if importlib.util.find_spec(name) is not None:
+            return importlib.import_module(name)
+    pytest.skip("neither PyQt6 nor PyQt5 is installed")
+
+
 @pytest.fixture
 def native_qt(monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    qt = pytest.importorskip("PyQt5")
-    from PyQt5 import QtCore, QtGui, QtWidgets, sip
+    qt = _qt_binding()
+    QtCore, QtGui, QtWidgets, sip = (
+        importlib.import_module(f"{qt.__name__}.{name}")
+        for name in ("QtCore", "QtGui", "QtWidgets", "sip")
+    )
+    if not hasattr(QtWidgets, "QAction"):
+        # Qt6 moved QAction to QtGui; QGIS 4's qgis.PyQt.QtWidgets re-exports it.
+        widgets = ModuleType("qgis.PyQt.QtWidgets")
+        widgets.__dict__.update(vars(QtWidgets))
+        widgets.QAction = QtGui.QAction
+        QtWidgets = widgets
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -128,7 +145,7 @@ def native_qt(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     panel = module.FaroisAuditDock(iface)
-    iface.window.addDockWidget(QtCore.Qt.RightDockWidgetArea, panel)
+    iface.window.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, panel)
     yield SimpleNamespace(
         app=app,
         panel=panel,
@@ -188,7 +205,7 @@ def test_native_dock_can_shrink_below_old_920px_limit(native_qt):
     q.app.processEvents()
     assert q.panel.minimumWidth() == 320
     assert q.panel.minimumSizeHint().width() <= 380
-    q.iface.window.resizeDocks([q.panel], [360], q.Qt.Horizontal)
+    q.iface.window.resizeDocks([q.panel], [360], q.Qt.Orientation.Horizontal)
     q.app.processEvents()
     assert q.panel.width() <= 380
 
@@ -278,8 +295,8 @@ def test_native_before_after_column_follows_columns_with_tooltip(native_qt):
 
 
 def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch):
-    from PyQt5.QtCore import QEvent
-    from PyQt5.QtWidgets import QDialog, QMenu
+    from qgis.PyQt.QtCore import QEvent
+    from qgis.PyQt.QtWidgets import QDialog, QMenu
 
     q = native_qt
     setup_history_panel(q, [_update_row()])
@@ -292,16 +309,16 @@ def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch)
             table.horizontalHeaderItem(i).text() for i in range(table.columnCount())
         ]
         seen["default"] = [table.item(r, 0).text() for r in range(table.rowCount())]
-        seen["editable"] = bool(table.item(0, 1).flags() & q.Qt.ItemIsEditable)
+        seen["editable"] = bool(table.item(0, 1).flags() & q.Qt.ItemFlag.ItemIsEditable)
         dialog.show_all.setChecked(True)
         seen["all"] = [table.item(r, 0).text() for r in range(table.rowCount())]
         seen["dialog"] = dialog
         return 0
 
-    monkeypatch.setattr(QDialog, "exec_", run_dialog)
+    monkeypatch.setattr(QDialog, "exec", run_dialog)
     monkeypatch.setattr(
         QMenu,
-        "exec_",
+        "exec",
         lambda menu, pos: next(
             a for a in menu.actions() if a.text() == "Voir les valeurs avant/après"
         ),
@@ -309,7 +326,7 @@ def test_native_context_details_opens_field_table_dialog(native_qt, monkeypatch)
     position = q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     q.panel._history_context_menu(position)
     assert seen["headers"] == ["Champ", "Avant", "Après"]
-    q.app.sendPostedEvents(None, QEvent.DeferredDelete)
+    q.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert q.sip.isdeleted(seen["dialog"])
     assert seen["default"] == ["label"]
     assert seen["all"] == ["label", "status"]
@@ -388,16 +405,16 @@ def test_native_select_object_keeps_row_and_ignores_reentrant_refresh(
 
 
 def test_native_identify_is_read_only_and_never_starts_editing(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QDialog
+    from qgis.PyQt.QtWidgets import QDialog
 
     q = native_qt
     setup_navigation_panel(q, monkeypatch)
     context, dialog = Mock(), QDialog(q.panel)
     dialog.setMode = Mock()
-    dialog.exec_ = Mock()
+    dialog.exec = Mock()
     dialog.deleteLater = Mock()
     context_class = Mock(return_value=context)
-    context_class.IdentifyMode = "fixture-identify-mode"
+    context_class.Mode.IdentifyMode = "fixture-identify-mode"
     gui = ModuleType("qgis.gui")
     gui.QgsAttributeEditorContext = context_class
     gui.QgsAttributeDialog = Mock(return_value=dialog)
@@ -407,13 +424,13 @@ def test_native_identify_is_read_only_and_never_starts_editing(native_qt, monkey
     context.setAttributeFormMode.assert_called_once_with("fixture-identify-mode")
     context.setAllowCustomUi.assert_called_once_with(False)
     dialog.setMode.assert_called_once_with("fixture-identify-mode")
-    dialog.exec_.assert_called_once()
+    dialog.exec.assert_called_once()
     dialog.deleteLater.assert_called_once()
     assert not q.panel._navigation_in_progress
 
 
 def test_native_missing_object_does_not_change_selection(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMessageBox
+    from qgis.PyQt.QtWidgets import QMessageBox
 
     q = native_qt
     finder = setup_navigation_panel(q, monkeypatch)
@@ -428,7 +445,7 @@ def test_native_missing_object_does_not_change_selection(native_qt, monkeypatch)
 
 
 def setup_batch_navigation(q, monkeypatch):
-    from PyQt5.QtCore import QItemSelectionModel
+    from qgis.PyQt.QtCore import QItemSelectionModel
 
     finder = setup_navigation_panel(q, monkeypatch)
     first = dict(q.panel.repository.layer_history.return_value[0])
@@ -442,7 +459,7 @@ def setup_batch_navigation(q, monkeypatch):
     for row in (0, 1):
         q.panel.table.selectionModel().select(
             q.panel.table.model().index(row, 0),
-            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
         )
     features = [
         SimpleNamespace(
@@ -460,7 +477,7 @@ def setup_batch_navigation(q, monkeypatch):
 def test_native_context_menu_preserves_multiple_rows_and_dispatches_selection(
     native_qt, monkeypatch
 ):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     finder = setup_batch_navigation(q, monkeypatch)
@@ -479,7 +496,7 @@ def test_native_context_menu_preserves_multiple_rows_and_dispatches_selection(
         assert q.panel.repository.layer_history.call_count == previous_calls
         return menu.actions()[2]
 
-    monkeypatch.setattr(QMenu, "exec_", choose)
+    monkeypatch.setattr(QMenu, "exec", choose)
     position = q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     q.panel._history_context_menu(position)
     assert finder.call_count == 2
@@ -491,7 +508,7 @@ def test_native_context_menu_preserves_multiple_rows_and_dispatches_selection(
 def test_native_right_click_unselected_row_replaces_context_selection(
     native_qt, monkeypatch
 ):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     finder = setup_batch_navigation(q, monkeypatch)
@@ -503,7 +520,7 @@ def test_native_right_click_unselected_row_replaces_context_selection(
         selected.extend(e.change_id for e in q.panel._selected_history_entries())
         return None
 
-    monkeypatch.setattr(QMenu, "exec_", cancel)
+    monkeypatch.setattr(QMenu, "exec", cancel)
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(1, 0)).center()
     )
@@ -512,11 +529,11 @@ def test_native_right_click_unselected_row_replaces_context_selection(
 
 
 def test_native_context_zoom_frames_selected_features(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     setup_batch_navigation(q, monkeypatch)
-    monkeypatch.setattr(QMenu, "exec_", lambda menu, position: menu.actions()[1])
+    monkeypatch.setattr(QMenu, "exec", lambda menu, position: menu.actions()[1])
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     )
@@ -526,7 +543,7 @@ def test_native_context_zoom_frames_selected_features(native_qt, monkeypatch):
 
 
 def test_native_dock_has_no_push_buttons(native_qt):
-    from PyQt5.QtWidgets import QPushButton
+    from qgis.PyQt.QtWidgets import QPushButton
 
     assert native_qt.panel.findChildren(QPushButton) == []
 
@@ -537,8 +554,8 @@ def test_native_dock_has_no_push_buttons(native_qt):
 def test_native_empty_table_context_has_refresh_and_reset(
     native_qt, monkeypatch, choice
 ):
-    from PyQt5.QtCore import QPoint
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtCore import QPoint
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     refresh, reset = Mock(), Mock()
@@ -553,7 +570,7 @@ def test_native_empty_table_context_has_refresh_and_reset(
         ]
         return next(a for a in menu.actions() if a.text() == choice)
 
-    monkeypatch.setattr(QMenu, "exec_", choose)
+    monkeypatch.setattr(QMenu, "exec", choose)
     q.panel._history_context_menu(QPoint(5, 5))
     assert refresh.call_count == int(choice == "Actualiser l’historique")
     assert reset.call_count == int(choice == "Réinitialiser les filtres")
@@ -562,7 +579,7 @@ def test_native_empty_table_context_has_refresh_and_reset(
 def test_native_identify_multiple_objects_shows_read_only_forms_in_sequence(
     native_qt, monkeypatch
 ):
-    from PyQt5.QtWidgets import QDialog
+    from qgis.PyQt.QtWidgets import QDialog
 
     q = native_qt
     setup_batch_navigation(q, monkeypatch)
@@ -571,7 +588,7 @@ def test_native_identify_multiple_objects_shows_read_only_forms_in_sequence(
     def make_dialog(*args):
         dialog = QDialog(q.panel)
         dialog.setMode = Mock()
-        dialog.exec_ = Mock()
+        dialog.exec = Mock()
         dialog.deleteLater = Mock()
         dialogs.append(dialog)
         return dialog
@@ -583,7 +600,7 @@ def test_native_identify_multiple_objects_shows_read_only_forms_in_sequence(
 
     gui = ModuleType("qgis.gui")
     gui.QgsAttributeEditorContext = Mock(side_effect=make_context)
-    gui.QgsAttributeEditorContext.IdentifyMode = "fixture-identify-mode"
+    gui.QgsAttributeEditorContext.Mode.IdentifyMode = "fixture-identify-mode"
     gui.QgsAttributeDialog = Mock(side_effect=make_dialog)
     monkeypatch.setitem(sys.modules, "qgis.gui", gui)
     q.panel.identify_history_object()
@@ -592,7 +609,7 @@ def test_native_identify_multiple_objects_shows_read_only_forms_in_sequence(
     for dialog, context in zip(dialogs, contexts):
         context.setAttributeFormMode.assert_called_once_with("fixture-identify-mode")
         dialog.setMode.assert_called_once_with("fixture-identify-mode")
-        dialog.exec_.assert_called_once()
+        dialog.exec.assert_called_once()
 
 
 def test_native_zoom_multiple_layers_passes_only_target_layers(native_qt, monkeypatch):
@@ -615,7 +632,7 @@ def test_native_zoom_multiple_layers_passes_only_target_layers(native_qt, monkey
 
 
 def test_native_zoom_without_geometry_does_not_change_selection(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMessageBox
+    from qgis.PyQt.QtWidgets import QMessageBox
 
     q = native_qt
     finder = setup_navigation_panel(q, monkeypatch)
@@ -631,7 +648,7 @@ def test_native_zoom_without_geometry_does_not_change_selection(native_qt, monke
 def test_native_batch_missing_object_leaves_layer_selection_unchanged(
     native_qt, monkeypatch
 ):
-    from PyQt5.QtWidgets import QMessageBox
+    from qgis.PyQt.QtWidgets import QMessageBox
 
     q = native_qt
     finder = setup_batch_navigation(q, monkeypatch)
@@ -653,13 +670,13 @@ def test_native_refresh_preserves_all_selected_history_rows(native_qt, monkeypat
 
 
 def test_native_context_identify_is_dispatched(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     setup_navigation_panel(q, monkeypatch)
     identify = Mock()
     monkeypatch.setattr(q.panel, "identify_history_object", identify)
-    monkeypatch.setattr(QMenu, "exec_", lambda menu, position: menu.actions()[0])
+    monkeypatch.setattr(QMenu, "exec", lambda menu, position: menu.actions()[0])
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     )
@@ -667,7 +684,7 @@ def test_native_context_identify_is_dispatched(native_qt, monkeypatch):
 
 
 def test_native_context_menu_invalid_uuid_actions_disabled(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     setup_history_panel(
@@ -683,7 +700,7 @@ def test_native_context_menu_invalid_uuid_actions_disabled(native_qt, monkeypatc
         )
         return None
 
-    monkeypatch.setattr(QMenu, "exec_", cancel)
+    monkeypatch.setattr(QMenu, "exec", cancel)
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     )
@@ -691,8 +708,8 @@ def test_native_context_menu_invalid_uuid_actions_disabled(native_qt, monkeypatc
 
 def test_native_context_menu_offers_farois_login(native_qt, monkeypatch):
     q = native_qt
-    from PyQt5.QtCore import QPoint
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtCore import QPoint
+    from qgis.PyQt.QtWidgets import QMenu
 
     seen = []
 
@@ -700,13 +717,13 @@ def test_native_context_menu_offers_farois_login(native_qt, monkeypatch):
         seen.extend(action.text() for action in menu.actions() if action.text())
         return None
 
-    monkeypatch.setattr(QMenu, "exec_", fake_exec)
+    monkeypatch.setattr(QMenu, "exec", fake_exec)
     q.panel._history_context_menu(QPoint(0, 0))
     assert "Se connecter à Farois…" in seen
 
 
 def test_native_admin_undo_actions_are_enabled_in_layer_scope(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     row = dict(
@@ -734,7 +751,7 @@ def test_native_admin_undo_actions_are_enabled_in_layer_scope(native_qt, monkeyp
         seen.update({a.text(): (a.isEnabled(), a.toolTip()) for a in menu.actions()})
         return None
 
-    monkeypatch.setattr(QMenu, "exec_", capture)
+    monkeypatch.setattr(QMenu, "exec", capture)
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     )
@@ -746,22 +763,22 @@ def test_native_admin_undo_actions_are_enabled_in_layer_scope(native_qt, monkeyp
 
 
 def drive_login_dialog(monkeypatch, fill):
-    """Remplace exec_ : relève l'état initial du dialogue puis le remplit."""
-    from PyQt5.QtWidgets import QCheckBox, QDialog, QLineEdit
+    """Remplace exec : relève l'état initial du dialogue puis le remplit."""
+    from qgis.PyQt.QtWidgets import QCheckBox, QDialog, QLineEdit
 
     seen = {}
 
     def fake_exec(dialog):
         edits = dialog.findChildren(QLineEdit)
-        password = next(e for e in edits if e.echoMode() == QLineEdit.Password)
+        password = next(e for e in edits if e.echoMode() == QLineEdit.EchoMode.Password)
         email = next(e for e in edits if e is not password)
         boxes = dialog.findChildren(QCheckBox)
         seen.update(email=email.text(), boxes=[(b.text(), b.isChecked()) for b in boxes],
                     tips=[b.toolTip() for b in boxes], password=password)
         fill(email, password, boxes)
-        return QDialog.Accepted
+        return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(QDialog, "exec_", fake_exec)
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
     return seen
 
 
@@ -793,7 +810,7 @@ def test_native_login_dialog_remember_me_can_be_declined(native_qt, monkeypatch)
 
 
 def test_native_auto_connect_reports_in_the_banner_without_any_dialog(native_qt, monkeypatch):
-    from PyQt5.QtWidgets import QMessageBox
+    from qgis.PyQt.QtWidgets import QMessageBox
     from plugins.farois_audit_rollback.api.farois_client import FaroisNotAuthenticated
     from plugins.farois_audit_rollback.api.session_store import MemorySessionStore
 
@@ -815,7 +832,7 @@ def test_native_auto_connect_reports_in_the_banner_without_any_dialog(native_qt,
 def test_native_context_menu_shows_the_refusal_reason_in_the_disabled_undo_texts(
     native_qt, monkeypatch
 ):
-    from PyQt5.QtWidgets import QMenu
+    from qgis.PyQt.QtWidgets import QMenu
 
     q = native_qt
     setup_history_panel(
@@ -832,7 +849,7 @@ def test_native_context_menu_shows_the_refusal_reason_in_the_disabled_undo_texts
         seen["actions"] = [(a.text(), a.isEnabled(), a.toolTip()) for a in menu.actions()]
         return None
 
-    monkeypatch.setattr(QMenu, "exec_", capture)
+    monkeypatch.setattr(QMenu, "exec", capture)
     q.panel._history_context_menu(
         q.panel.table.visualItemRect(q.panel.table.item(0, 0)).center()
     )

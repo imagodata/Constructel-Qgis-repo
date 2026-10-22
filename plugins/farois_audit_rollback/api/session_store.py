@@ -33,7 +33,7 @@ def _log(message):
     try:
         from qgis.core import Qgis, QgsMessageLog
 
-        QgsMessageLog.logMessage(message, LOG_TAG, Qgis.Warning)
+        QgsMessageLog.logMessage(message, LOG_TAG, Qgis.MessageLevel.Warning)
     except Exception:
         pass
 

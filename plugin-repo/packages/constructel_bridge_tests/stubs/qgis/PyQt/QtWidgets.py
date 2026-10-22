@@ -4,8 +4,12 @@ class QAction:
 
 
 class QDialog:
-    Accepted = 1
-    Rejected = 0
+    class DialogCode:
+        Accepted = 1
+        Rejected = 0
+
+    Accepted = DialogCode.Accepted
+    Rejected = DialogCode.Rejected
 
 
 class QInputDialog:

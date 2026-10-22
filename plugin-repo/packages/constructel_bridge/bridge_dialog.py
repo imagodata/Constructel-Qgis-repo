@@ -31,7 +31,7 @@ class ConstructelConnectDialog(QDialog):
         layout = QVBoxLayout(self)
 
         header = QLabel(tr("dialog.header"))
-        header.setAlignment(Qt.AlignCenter)
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
         form = QFormLayout()
@@ -57,7 +57,7 @@ class ConstructelConnectDialog(QDialog):
         # Password field with show/hide toggle
         pw_layout = QHBoxLayout()
         self._password_edit = QLineEdit()
-        self._password_edit.setEchoMode(QLineEdit.Password)
+        self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._password_edit.setPlaceholderText(tr("dialog.password_placeholder"))
         if default_password:
             self._password_edit.setText(default_password)
@@ -78,8 +78,8 @@ class ConstructelConnectDialog(QDialog):
 
         layout.addLayout(form)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self._ok_button = buttons.button(QDialogButtonBox.Ok)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -97,10 +97,10 @@ class ConstructelConnectDialog(QDialog):
     def _toggle_password_visibility(self, visible: bool):
         """Toggle between masked and clear-text password display."""
         if visible:
-            self._password_edit.setEchoMode(QLineEdit.Normal)
+            self._password_edit.setEchoMode(QLineEdit.EchoMode.Normal)
             self._toggle_pw_btn.setToolTip(tr("dialog.hide_password"))
         else:
-            self._password_edit.setEchoMode(QLineEdit.Password)
+            self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self._toggle_pw_btn.setToolTip(tr("dialog.show_password"))
 
     def password(self) -> str:

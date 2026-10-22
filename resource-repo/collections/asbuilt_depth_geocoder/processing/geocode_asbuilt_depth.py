@@ -4934,7 +4934,7 @@ if HAS_QGIS:
     try:
         _ADVANCED_PARAMETER_FLAG = Qgis.ProcessingParameterFlag.Advanced
     except AttributeError:  # QGIS < 3.36
-        _ADVANCED_PARAMETER_FLAG = QgsProcessingParameterDefinition.FlagAdvanced
+        _ADVANCED_PARAMETER_FLAG = QgsProcessingParameterDefinition.Flag.FlagAdvanced
 
     BE_CONNECTION_NAME = "be"
     BE_TABLE_SCHEMA = "public"
@@ -5033,7 +5033,7 @@ if HAS_QGIS:
         """
         categories = []
         for value in ("manquante", "rouge", "orange", "vert"):
-            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.PointGeometry)
+            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.GeometryType.PointGeometry)
             symbol.setColor(QColor(DEPTH_COLORS[value]))
             categories.append(
                 QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS[value])
@@ -5125,13 +5125,13 @@ if HAS_QGIS:
         categories = []
         for value in ("vert", "orange", "rouge"):
             color = DEPTH_COLORS[value]
-            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.LineGeometry)
+            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.GeometryType.LineGeometry)
             symbol.setColor(QColor(color))
             symbol.setWidth(0.6)
-            symbol.setWidthUnit(QgsUnitTypes.RenderMillimeters)
+            symbol.setWidthUnit(QgsUnitTypes.RenderUnit.RenderMillimeters)
             for symbol_layer in symbol.symbolLayers():
                 symbol_layer.setDataDefinedProperty(
-                    QgsSymbolLayer.PropertyStrokeWidth,
+                    QgsSymbolLayer.Property.PropertyStrokeWidth,
                     QgsProperty.fromExpression(_SEGMENTS_WIDTH_EXPRESSION),
                 )
             categories.append(
@@ -5262,7 +5262,7 @@ if HAS_QGIS:
             feedback.pushInfo("Style connecteurs non appliqué — repli sur un rendu minimal.")
         categories = []
         for value in ("vert", "orange", "rouge"):
-            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.LineGeometry)
+            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.GeometryType.LineGeometry)
             symbol.setColor(QColor(DEPTH_COLORS[value]))
             symbol.setWidth(0.35)
             categories.append(QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS[value]))
@@ -5759,7 +5759,7 @@ if HAS_QGIS:
                 QgsProcessingParameterFile(
                     self.INPUT_FOLDER,
                     self.tr("Dossier des rapports (.msg / .xlsx / .xls / .csv)"),
-                    behavior=QgsProcessingParameterFile.Folder,
+                    behavior=QgsProcessingParameterFile.Behavior.Folder,
                     # Facultatif en mode seul RETRY_ONLY (cf. input_folder_error).
                     optional=True,
                 )
@@ -6246,8 +6246,8 @@ if HAS_QGIS:
             segments_layer = self._open_be_layer(
                 SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
                 BE_GEOM_COLUMN,
-                QgsWkbTypes.MultiLineString if self._segments_is_multi(feedback)
-                else QgsWkbTypes.LineString,
+                QgsWkbTypes.Type.MultiLineString if self._segments_is_multi(feedback)
+                else QgsWkbTypes.Type.LineString,
                 feedback,
             )
             if segments_layer is not None:
@@ -6315,7 +6315,7 @@ if HAS_QGIS:
 
         def _open_be_points_layer(self, feedback):
             return self._open_be_layer(
-                BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Point, feedback
+                BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Type.Point, feedback
             )
 
         def _open_be_nonspatial_layer(self, schema: str, table: str, feedback):
@@ -6364,7 +6364,7 @@ if HAS_QGIS:
                 feedback.pushInfo("Points : aucune intervention geocodee a pousser.")
                 return written_ids, changed_ids
             layer = self._open_be_layer(
-                BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Point, feedback
+                BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Type.Point, feedback
             )
             if layer is None:
                 return written_ids, changed_ids
@@ -6737,7 +6737,7 @@ if HAS_QGIS:
                 request = QgsFeatureRequest()
                 request.setFilterExpression(f"{id_field} IN ({chunk})")
                 request.setNoAttributes()
-                request.setFlags(QgsFeatureRequest.NoGeometry)
+                request.setFlags(QgsFeatureRequest.Flag.NoGeometry)
                 fids.extend(feat.id() for feat in layer.getFeatures(request))
             if not fids:
                 return
@@ -7720,7 +7720,7 @@ if HAS_QGIS:
                 return None
             layer = self._open_be_layer(
                 CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, BE_GEOM_COLUMN,
-                QgsWkbTypes.LineString, feedback,
+                QgsWkbTypes.Type.LineString, feedback,
             )
             if layer is None or not layer.primaryKeyAttributes():
                 return None
@@ -8025,7 +8025,7 @@ if HAS_QGIS:
             multi_column = self._segments_is_multi(feedback)
             segments_layer = self._open_be_layer(
                 SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME, BE_GEOM_COLUMN,
-                QgsWkbTypes.MultiLineString if multi_column else QgsWkbTypes.LineString,
+                QgsWkbTypes.Type.MultiLineString if multi_column else QgsWkbTypes.Type.LineString,
                 feedback,
             )
             if segments_layer is None:
@@ -8556,16 +8556,16 @@ if HAS_QGIS:
             # Ordre d'empilement : connecteurs SOUS les segments, SOUS les points
             # (cle de tri : plus grande = au-dessus).
             specs = [
-                (BE_TABLE_SCHEMA, BE_TABLE_NAME, QgsWkbTypes.Point,
+                (BE_TABLE_SCHEMA, BE_TABLE_NAME, QgsWkbTypes.Type.Point,
                  BE_POINTS_LAYER_NAME, _apply_depth_style, _DepthLayerStyler, 3),
                 (SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
-                 QgsWkbTypes.MultiLineString if self._segments_is_multi(feedback)
-                 else QgsWkbTypes.LineString,
+                 QgsWkbTypes.Type.MultiLineString if self._segments_is_multi(feedback)
+                 else QgsWkbTypes.Type.LineString,
                  BE_SEGMENTS_LAYER_NAME, _apply_segments_style, _SegmentsLayerStyler, 2),
             ]
             if self._read_connectors(feedback) is not None:
                 specs.append(
-                    (CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, QgsWkbTypes.LineString,
+                    (CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, QgsWkbTypes.Type.LineString,
                      BE_CONNECTORS_LAYER_NAME, _apply_connectors_style,
                      _ConnectorsLayerStyler, 1)
                 )

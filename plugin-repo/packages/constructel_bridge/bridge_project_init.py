@@ -459,7 +459,7 @@ WFS_SOURCES = {
 }
 
 
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, TAG, level=level)
 
 
@@ -548,8 +548,8 @@ class InitProjectDialog(QDialog):
 
             if group not in self._group_items:
                 gi = QTreeWidgetItem(self._tree, [group])
-                gi.setFlags(gi.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
-                gi.setCheckState(0, Qt.Unchecked)
+                gi.setFlags(gi.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate)
+                gi.setCheckState(0, Qt.CheckState.Unchecked)
                 gi.setExpanded(True)
                 self._group_items[group] = gi
 
@@ -561,14 +561,14 @@ class InitProjectDialog(QDialog):
             )
             if already:
                 # Deja charge — cocher et desactiver (non modifiable)
-                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.Checked)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.CheckState.Checked)
                 item.setToolTip(0, tr("init.already_loaded"))
                 item.setDisabled(True)
             else:
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.Unchecked)
-            item.setData(0, Qt.UserRole, key)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
+            item.setData(0, Qt.ItemDataRole.UserRole, key)
             self._items[key] = item
 
         layers_layout.addWidget(self._tree)
@@ -602,15 +602,15 @@ class InitProjectDialog(QDialog):
             grp_name = bm.get("group", "Autres")
             if grp_name not in basemap_groups:
                 gi = QTreeWidgetItem(self._basemap_tree, [grp_name])
-                gi.setFlags(gi.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
-                gi.setCheckState(0, Qt.Unchecked)
+                gi.setFlags(gi.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate)
+                gi.setCheckState(0, Qt.CheckState.Unchecked)
                 gi.setExpanded(True)
                 basemap_groups[grp_name] = gi
 
             item = QTreeWidgetItem(basemap_groups[grp_name], [bm["name"]])
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.Checked if bm.get("default") else Qt.Unchecked)
-            item.setData(0, Qt.UserRole, bm["key"])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.CheckState.Checked if bm.get("default") else Qt.CheckState.Unchecked)
+            item.setData(0, Qt.ItemDataRole.UserRole, bm["key"])
             self._basemap_items[bm["key"]] = item
 
         basemap_layout.addWidget(self._basemap_tree)
@@ -623,11 +623,11 @@ class InitProjectDialog(QDialog):
         layout.addWidget(self._chk_styles)
 
         # -- Buttons ----------------------------------------------------------
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         has_layers = bool(self._existing - {"v_form_lists", "docs_elements"})
-        buttons.button(QDialogButtonBox.Ok).setText(
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
             tr("init.btn_add") if has_layers else tr("init.btn_init")
         )
         layout.addWidget(buttons)
@@ -648,11 +648,11 @@ class InitProjectDialog(QDialog):
         for layer_key, item in self._items.items():
             item.setCheckState(
                 0,
-                Qt.Checked if layer_key in tmpl.get("layers", set()) else Qt.Unchecked,
+                Qt.CheckState.Checked if layer_key in tmpl.get("layers", set()) else Qt.CheckState.Unchecked,
             )
 
     def _set_all(self, checked):
-        state = Qt.Checked if checked else Qt.Unchecked
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         for item in self._items.values():
             item.setCheckState(0, state)
         self._combo.setCurrentIndex(0)  # switch to custom
@@ -661,7 +661,7 @@ class InitProjectDialog(QDialog):
         """Retourne les keys des couches selectionnees."""
         result = {"v_form_lists"}  # toujours inclus
         for key, item in self._items.items():
-            if item.checkState(0) == Qt.Checked:
+            if item.checkState(0) == Qt.CheckState.Checked:
                 result.add(key)
         return result
 
@@ -669,7 +669,7 @@ class InitProjectDialog(QDialog):
         """Retourne les keys des basemaps selectionnees."""
         result = set()
         for key, item in self._basemap_items.items():
-            if item.checkState(0) == Qt.Checked:
+            if item.checkState(0) == Qt.CheckState.Checked:
                 result.add(key)
         return result
 
@@ -834,7 +834,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             layer = QgsVectorLayer(uri.uri(False), table, "postgres")
 
         if not layer or not layer.isValid():
-            _log(f"Couche invalide: {table}", Qgis.Warning)
+            _log(f"Couche invalide: {table}", Qgis.MessageLevel.Warning)
             continue
 
         if not group_name:
@@ -922,9 +922,9 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
     sslmode_val = conn_params.get("sslmode", "require")
     if sslmode_val:
         uri.setSslMode(
-            QgsDataSourceUri.SslRequire
+            QgsDataSourceUri.SslMode.SslRequire
             if sslmode_val == "require"
-            else QgsDataSourceUri.SslPrefer
+            else QgsDataSourceUri.SslMode.SslPrefer
         )
     uri.setDataSource(schema, table, geom_col, "", pk)
     uri.setParam("estimatedmetadata", "true")
@@ -1016,7 +1016,7 @@ def _add_basemaps(root, selected_keys: set[str]):
             basemap_group.addLayer(layer)
             added += 1
         else:
-            _log(f"Basemap '{name}' invalide", Qgis.Warning)
+            _log(f"Basemap '{name}' invalide", Qgis.MessageLevel.Warning)
 
     if added:
         _log(f"{added} basemap(s) ajoute(s)")
@@ -1037,7 +1037,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
     try:
         import psycopg2
     except ImportError:
-        _log("psycopg2 indisponible — styles non appliques", Qgis.Warning)
+        _log("psycopg2 indisponible — styles non appliques", Qgis.MessageLevel.Warning)
         return styled_keys
 
     conn = None
@@ -1087,7 +1087,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
 
         cur.close()
     except psycopg2.Error as exc:
-        _log(f"Connexion styles impossible: {exc}", Qgis.Warning)
+        _log(f"Connexion styles impossible: {exc}", Qgis.MessageLevel.Warning)
         return styled_keys
     finally:
         if conn is not None:

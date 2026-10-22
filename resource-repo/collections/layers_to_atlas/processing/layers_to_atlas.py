@@ -206,7 +206,7 @@ if HAS_QGIS:
             (
                 node,
                 node.name(),
-                [str(item.data(Qt.DisplayRole) or "") for item in model.layerOriginalLegendNodes(node)],
+                [str(item.data(Qt.ItemDataRole.DisplayRole) or "") for item in model.layerOriginalLegendNodes(node)],
             )
             for node in model.rootGroup().findLayers()
         ]
@@ -214,11 +214,11 @@ if HAS_QGIS:
     def _apply_legend_profile(legend, labels, font_size, columns):
         """Change only the layout's private tree, never source names or styles."""
         font = QFont("Sans Serif", font_size)
-        legend.setStyleFont(QgsLegendStyle.Title, QFont("Sans Serif", 9, QFont.Bold))
+        legend.setStyleFont(QgsLegendStyle.Style.Title, QFont("Sans Serif", 9, QFont.Weight.Bold))
         for component in (
-            QgsLegendStyle.Group,
-            QgsLegendStyle.Subgroup,
-            QgsLegendStyle.SymbolLabel,
+            QgsLegendStyle.Style.Group,
+            QgsLegendStyle.Style.Subgroup,
+            QgsLegendStyle.Style.SymbolLabel,
         ):
             legend.setStyleFont(component, font)
         legend.setColumnCount(columns)
@@ -482,7 +482,7 @@ if HAS_QGIS:
         labels.fieldName = f'CASE WHEN {index_filter} THEN "plan_id" END'
         labels.isExpression = True
         fmt = QgsTextFormat()
-        fmt.setFont(QFont("Sans Serif", 9, QFont.Bold))
+        fmt.setFont(QFont("Sans Serif", 9, QFont.Weight.Bold))
         fmt.setSize(9)
         fmt.setColor(QColor("#26374b"))
         from qgis.core import QgsTextBufferSettings
@@ -503,7 +503,7 @@ if HAS_QGIS:
         layout.initializeDefaults()
         layout.setName(name)
         page = layout.pageCollection().pages()[0]
-        page.setPageSize(paper, QgsLayoutItemPage.Landscape)
+        page.setPageSize(paper, QgsLayoutItemPage.Orientation.Landscape)
         pw, ph, mw, mh = page_geometry(paper, options["SIDEBAR"])
         map_item = QgsLayoutItemMap(layout)
         layout.addLayoutItem(map_item)
@@ -517,8 +517,8 @@ if HAS_QGIS:
         map_item.zoomToExtent(QgsRectangle(*overview))
         map_item.setFrameEnabled(True)
         map_item.setAtlasDriven(True)
-        map_item.setAtlasScalingMode(QgsLayoutItemMap.Fixed)
-        map_item.dataDefinedProperties().setProperty(QgsLayoutObject.MapScale, QgsProperty.fromExpression('"scale"'))
+        map_item.setAtlasScalingMode(QgsLayoutItemMap.AtlasScalingMode.Fixed)
+        map_item.dataDefinedProperties().setProperty(QgsLayoutObject.DataDefinedProperty.MapScale, QgsProperty.fromExpression('"scale"'))
         atlas = layout.atlas()
         atlas.setEnabled(True)
         atlas.setCoverageLayer(coverage)
@@ -565,10 +565,10 @@ if HAS_QGIS:
 
         def visibility(item, expression):
             item.dataDefinedProperties().setProperty(
-                QgsLayoutObject.ExcludeFromExports, QgsProperty.fromExpression("NOT (" + expression + ")")
+                QgsLayoutObject.DataDefinedProperty.ExcludeFromExports, QgsProperty.fromExpression("NOT (" + expression + ")")
             )
             item.dataDefinedProperties().setProperty(
-                QgsLayoutObject.Opacity, QgsProperty.fromExpression("CASE WHEN " + expression + " THEN 100 ELSE 0 END")
+                QgsLayoutObject.DataDefinedProperty.Opacity, QgsProperty.fromExpression("CASE WHEN " + expression + " THEN 100 ELSE 0 END")
             )
             return item
 
@@ -576,7 +576,7 @@ if HAS_QGIS:
             from qgis.core import QgsFillSymbol
 
             item = QgsLayoutItemShape(layout)
-            item.setShapeType(QgsLayoutItemShape.Rectangle)
+            item.setShapeType(QgsLayoutItemShape.Shape.Rectangle)
             item.setSymbol(
                 QgsFillSymbol.createSimple(
                     {
@@ -612,15 +612,15 @@ if HAS_QGIS:
             # Le calcul des entrées visibles doit être terminé avant la garde de taille.
             # Les versions récentes utilisent sinon un hit-test asynchrone.
             if hasattr(QgsLayerTreeModel, "UseThreadedHitTest"):
-                legend.model().setFlag(QgsLayerTreeModel.UseThreadedHitTest, False)
+                legend.model().setFlag(QgsLayerTreeModel.Flag.UseThreadedHitTest, False)
             tree = QgsLayerTree()
             for layer in layers:
                 tree.addLayer(layer)
             tree.setParent(legend.model())
             legend.model().setRootGroup(tree)
             legend.setLegendFilterByMapEnabled(options["LEGEND_FILTER_BY_MAP"])
-            legend.setStyleFont(QgsLegendStyle.Title, QFont("Sans Serif", 9, QFont.Bold))
-            for component in (QgsLegendStyle.Group, QgsLegendStyle.Subgroup, QgsLegendStyle.SymbolLabel):
+            legend.setStyleFont(QgsLegendStyle.Style.Title, QFont("Sans Serif", 9, QFont.Weight.Bold))
+            for component in (QgsLegendStyle.Style.Group, QgsLegendStyle.Style.Subgroup, QgsLegendStyle.Style.SymbolLabel):
                 legend.setStyleFont(component, QFont("Sans Serif", 8))
             if hasattr(legend, "setAutoWrapLinesAfter"):
                 legend.setAutoWrapLinesAfter(48)
@@ -642,9 +642,9 @@ if HAS_QGIS:
             bar.setId("atlas_scalebar")
             bar.setStyle("Single Box")
             bar.setLinkedMap(map_item)
-            bar.setUnits(QgsUnitTypes.DistanceMeters)
+            bar.setUnits(QgsUnitTypes.DistanceUnit.DistanceMeters)
             bar.setUnitsPerSegment(max(1, round(scale / 50)))
-            bar.setSegmentSizeMode(QgsScaleBarSettings.SegmentSizeFitWidth)
+            bar.setSegmentSizeMode(QgsScaleBarSettings.SegmentSizeMode.SegmentSizeFitWidth)
             bar.setMinimumBarWidth(35)
             bar.setMaximumBarWidth(46)
             bar.setNumberOfSegments(2)
@@ -668,7 +668,7 @@ if HAS_QGIS:
         if logo:
             picture = QgsLayoutItemPicture(layout)
             picture.setId("atlas_constructel_logo")
-            picture.setResizeMode(QgsLayoutItemPicture.Zoom)
+            picture.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
             layout.addLayoutItem(picture)
             picture.attemptMove(QgsLayoutPoint(10, y + 1))
             picture.attemptResize(QgsLayoutSize(44, 11))
@@ -749,7 +749,7 @@ if HAS_QGIS:
             if logo:
                 picture = QgsLayoutItemPicture(layout)
                 picture.setId("atlas_cover_logo")
-                picture.setResizeMode(QgsLayoutItemPicture.Zoom)
+                picture.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 layout.addLayoutItem(picture)
                 picture.attemptMove(QgsLayoutPoint(20, 28))
                 picture.attemptResize(QgsLayoutSize(80, 30))
@@ -774,7 +774,7 @@ if HAS_QGIS:
             return LayersToAtlasAlgorithm()
 
         def flags(self):
-            return super().flags() | QgsProcessingAlgorithm.FlagNoThreading
+            return super().flags() | QgsProcessingAlgorithm.Flag.FlagNoThreading
 
         def shortHelpString(self):
             return (
@@ -815,7 +815,7 @@ if HAS_QGIS:
                 QgsProcessingParameterVectorLayer(
                     "INPUT",
                     "Couche du périmètre (sélection / couche entière)",
-                    [QgsProcessing.TypeVectorAnyGeometry],
+                    [QgsProcessing.SourceType.TypeVectorAnyGeometry],
                     optional=True,
                 )
             )
@@ -824,7 +824,7 @@ if HAS_QGIS:
                 QgsProcessingParameterMultipleLayers(
                     "LAYERS",
                     "Couches de la carte (vide = couches visibles du projet)",
-                    QgsProcessing.TypeMapLayer,
+                    QgsProcessing.SourceType.TypeMapLayer,
                     optional=True,
                 )
             )
@@ -838,7 +838,7 @@ if HAS_QGIS:
                 QgsProcessingParameterNumber(
                     "SCALE",
                     "Échelle des détails (1000 = 1:1000)",
-                    QgsProcessingParameterNumber.Double,
+                    QgsProcessingParameterNumber.Type.Double,
                     1000,
                     minValue=100,
                     maxValue=100000,
@@ -848,7 +848,7 @@ if HAS_QGIS:
                 QgsProcessingParameterNumber(
                     "OVERLAP",
                     "Recouvrement des plans (%)",
-                    QgsProcessingParameterNumber.Double,
+                    QgsProcessingParameterNumber.Type.Double,
                     10,
                     minValue=0,
                     maxValue=40,
@@ -856,7 +856,7 @@ if HAS_QGIS:
             )
             self.addParameter(
                 QgsProcessingParameterNumber(
-                    "DPI", "Résolution PDF (dpi)", QgsProcessingParameterNumber.Integer, 200, minValue=72, maxValue=600
+                    "DPI", "Résolution PDF (dpi)", QgsProcessingParameterNumber.Type.Integer, 200, minValue=72, maxValue=600
                 )
             )
             self.addParameter(QgsProcessingParameterCrs("CRS", "CRS projeté en mètres (défaut : projet)", "ProjectCrs"))
@@ -870,7 +870,7 @@ if HAS_QGIS:
                 QgsProcessingParameterFile(
                     "LOGO",
                     "Logo (vider pour aucun logo)",
-                    behavior=QgsProcessingParameterFile.File,
+                    behavior=QgsProcessingParameterFile.Behavior.File,
                     defaultValue=DEFAULT_LOGO if os.path.isfile(DEFAULT_LOGO) else None,
                     optional=True,
                     fileFilter="Images (*.svg *.png *.jpg *.jpeg)",
@@ -916,7 +916,7 @@ if HAS_QGIS:
             basic = {"MODE", "INPUT", "EXTENT", "PAPER", "SCALE", "TITLE", "PDF"}
             for parameter in self.parameterDefinitions():
                 if parameter.name() not in basic:
-                    parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+                    parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
 
         def processAlgorithm(self, parameters, context, feedback):
             feedback.pushInfo(f"Layers to Atlas — version {SCRIPT_VERSION}")
@@ -924,7 +924,7 @@ if HAS_QGIS:
             if project is None:
                 raise QgsProcessingException("Un projet QGIS est requis.")
             crs = self.parameterAsCrs(parameters, "CRS", context)
-            if not crs.isValid() or crs.isGeographic() or crs.mapUnits() != QgsUnitTypes.DistanceMeters:
+            if not crs.isValid() or crs.isGeographic() or crs.mapUnits() != QgsUnitTypes.DistanceUnit.DistanceMeters:
                 raise QgsProcessingException("Choisir un CRS projeté en mètres (EPSG:31370 en Belgique).")
             mode = self.parameterAsEnum(parameters, "MODE", context)
             if mode not in (0, 1, 2, 3):
@@ -999,7 +999,7 @@ if HAS_QGIS:
                         if not geom.isGeosValid():
                             box = geom.boundingBox()
                             if (
-                                geom.type() == QgsWkbTypes.LineGeometry
+                                geom.type() == QgsWkbTypes.GeometryType.LineGeometry
                                 and geom.length() == 0
                                 and box.width() == 0
                                 and box.height() == 0
@@ -1166,7 +1166,7 @@ if HAS_QGIS:
                 ) as tmp:
                     temporary = tmp.name
                 status, error = QgsLayoutExporter.exportToPdf(layout.atlas(), temporary, settings, feedback)
-                if status != QgsLayoutExporter.Success or feedback.isCanceled():
+                if status != QgsLayoutExporter.ExportResult.Success or feedback.isCanceled():
                     raise QgsProcessingException(f"Export PDF impossible ou annulé (code {status}) : {error}")
                 with tempfile.TemporaryDirectory(prefix=".atlas_", dir=os.path.dirname(zone_path)) as tmp_dir:
                     zone_tmp = os.path.join(tmp_dir, "plans.gpkg")
@@ -1176,7 +1176,7 @@ if HAS_QGIS:
                     result = QgsVectorFileWriter.writeAsVectorFormatV2(
                         memory, zone_tmp, context.transformContext(), writer
                     )
-                    if result[0] != QgsVectorFileWriter.NoError:
+                    if result[0] != QgsVectorFileWriter.WriterError.NoError:
                         raise QgsProcessingException(f"Écriture des plans impossible : {result[1]}")
                     _check_cancel(feedback.isCanceled)
                     os.replace(zone_tmp, zone_path)

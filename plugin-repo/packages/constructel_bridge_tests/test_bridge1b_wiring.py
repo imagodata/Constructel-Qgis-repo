@@ -590,7 +590,7 @@ def test_setup_mtls_pgpass_failure_aborts_with_settings_untouched(
 
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
     expected = bp.tr("mtls.pgpass_unwritable", path=str(tmp_path))
-    assert any(expected in m for m in _log_messages(level=Qgis.Critical))
+    assert any(expected in m for m in _log_messages(level=Qgis.MessageLevel.Critical))
 
 
 def test_setup_mtls_authcfg_store_failure_aborts(bp, tmp_path, monkeypatch, _mtls_bundle):
@@ -607,7 +607,7 @@ def test_setup_mtls_authcfg_store_failure_aborts(bp, tmp_path, monkeypatch, _mtl
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
     assert any(
         bp.tr("mtls.activation_failed") in m
-        for m in _log_messages(level=Qgis.Critical)
+        for m in _log_messages(level=Qgis.MessageLevel.Critical)
     )
     # pgpass is written before the authcfg store is attempted (documented order)
     assert "test_user" in pgpass.read_text(encoding="utf-8")
@@ -625,7 +625,7 @@ def test_setup_configured_but_invalid_aborts_loudly(bp, tmp_path, _mtls_bundle):
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
     assert any(
         bp.tr("mtls.cert_missing") in m
-        for m in _log_messages(level=Qgis.Critical)
+        for m in _log_messages(level=Qgis.MessageLevel.Critical)
     )
 
 
@@ -758,7 +758,7 @@ def test_connect_configured_but_invalid_aborts_before_psycopg2(
     assert QgsSettings().value(f"{_pg_base(bp)}/host", None) is None
     assert any(
         bp.tr("mtls.cert_missing") in m
-        for m in _log_messages(level=Qgis.Critical)
+        for m in _log_messages(level=Qgis.MessageLevel.Critical)
     )
 
 
@@ -778,7 +778,7 @@ def test_connect_mtls_server_cert_rejection_maps_diagnostic(
 
     assert any(
         bp.tr("mtls.cert_required_by_server") in m
-        for m in _log_messages(level=Qgis.Critical)
+        for m in _log_messages(level=Qgis.MessageLevel.Critical)
     )
     # Browser entry is still configured on failure (mirrors legacy behavior)
     assert QgsSettings().value(f"{_pg_base(bp)}/sslmode") == "5"
@@ -798,7 +798,7 @@ def test_connect_mtls_other_failure_keeps_generic_diagnostic(
 
     assert plugin._connect("s3cret", silent=True) is False
 
-    assert any("Connection failed" in m for m in _log_messages(level=Qgis.Critical))
+    assert any("Connection failed" in m for m in _log_messages(level=Qgis.MessageLevel.Critical))
     assert all("mtls.cert_required_by_server" not in m for m in _log_messages())
 
 
@@ -813,7 +813,7 @@ def test_connect_inactive_cert_message_stays_generic(bp, monkeypatch):
 
     assert plugin._connect("s3cret", silent=True) is False
 
-    assert any("Connection failed" in m for m in _log_messages(level=Qgis.Critical))
+    assert any("Connection failed" in m for m in _log_messages(level=Qgis.MessageLevel.Critical))
     assert all("mtls." not in m for m in _log_messages())
 
 
@@ -892,9 +892,9 @@ def test_fix_mtls_cert_unavailable_skips_without_downgrade(bp, monkeypatch, _mtl
     assert layer.source() == source
     assert any(
         bp.tr("mtls.activation_failed") in m
-        for m in _log_messages(level=Qgis.Warning)
+        for m in _log_messages(level=Qgis.MessageLevel.Warning)
     )
-    assert any("toujours invalides" in m for m in _log_messages(level=Qgis.Warning))
+    assert any("toujours invalides" in m for m in _log_messages(level=Qgis.MessageLevel.Warning))
 
 
 def test_fix_configured_but_invalid_refuses_loudly(bp, tmp_path, _mtls_bundle):
@@ -915,7 +915,7 @@ def test_fix_configured_but_invalid_refuses_loudly(bp, tmp_path, _mtls_bundle):
     assert layer.source() == source
     assert any(
         bp.tr("mtls.cert_missing") in m
-        for m in _log_messages(level=Qgis.Critical)
+        for m in _log_messages(level=Qgis.MessageLevel.Critical)
     )
 
 
