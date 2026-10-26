@@ -135,15 +135,201 @@
   </labeling>
 
   <fieldConfiguration>
-    <field name="status" configurationFlags="NoFlag">
+    <field name="id" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="zone_pop_id" configurationFlags="NoFlag">
+      <editWidget type="ValueRelation">
+        <config>
+          <Option type="Map">
+            <Option name="AllowMulti" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="true"/>
+            <Option name="Key" type="QString" value="id"/>
+            <Option name="Layer" type="invalid"/>
+            <Option name="LayerName" type="QString" value="zone_pop"/>
+            <Option name="LayerProviderName" type="QString" value="postgres"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
+            <Option name="OrderByValue" type="bool" value="true"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
+            <Option name="Value" type="QString" value="code"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="zone_mro_id" configurationFlags="NoFlag">
+      <editWidget type="ValueRelation">
+        <config>
+          <Option type="Map">
+            <Option name="AllowMulti" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="true"/>
+            <Option name="Key" type="QString" value="id"/>
+            <Option name="Layer" type="invalid"/>
+            <Option name="LayerName" type="QString" value="zone_mro"/>
+            <Option name="LayerProviderName" type="QString" value="postgres"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
+            <Option name="OrderByValue" type="bool" value="true"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
+            <Option name="Value" type="QString" value="name"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="length_m" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="geom_fingerprint" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="start_node_type" configurationFlags="NoFlag">
       <editWidget type="ValueMap">
         <config>
           <Option type="Map">
-            <Option type="List" name="map">
-              <Option type="Map"><Option type="QString" name="TODO - a faire" value="TODO"/></Option>
-              <Option type="Map"><Option type="QString" name="CP - planifie" value="CP"/></Option>
-              <Option type="Map"><Option type="QString" name="CONSTRUCTED - construit" value="CONSTRUCTED"/></Option>
-              <Option type="Map"><Option type="QString" name="AS_BUILT - recole" value="AS_BUILT"/></Option>
+            <Option name="map" type="List">
+              <Option type="Map">
+                <Option name="🏗️ Chambre" type="QString" value="STRUCTURE"/>
+              </Option>
+              <Option type="Map">
+                <Option name="🔀 Carrefour (3 segments ou plus)" type="QString" value="JUNCTION"/>
+              </Option>
+              <Option type="Map">
+                <Option name="➖ Nœud (2 segments)" type="QString" value="NODE"/>
+              </Option>
+              <Option type="Map">
+                <Option name="⏹️ Extrémité libre" type="QString" value="END"/>
+              </Option>
+            </Option>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="end_node_type" configurationFlags="NoFlag">
+      <editWidget type="ValueMap">
+        <config>
+          <Option type="Map">
+            <Option name="map" type="List">
+              <Option type="Map">
+                <Option name="🏗️ Chambre" type="QString" value="STRUCTURE"/>
+              </Option>
+              <Option type="Map">
+                <Option name="🔀 Carrefour (3 segments ou plus)" type="QString" value="JUNCTION"/>
+              </Option>
+              <Option type="Map">
+                <Option name="➖ Nœud (2 segments)" type="QString" value="NODE"/>
+              </Option>
+              <Option type="Map">
+                <Option name="⏹️ Extrémité libre" type="QString" value="END"/>
+              </Option>
+            </Option>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="start_structure_id" configurationFlags="NoFlag">
+      <editWidget type="ValueRelation">
+        <config>
+          <Option type="Map">
+            <Option name="AllowMulti" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="true"/>
+            <Option name="Key" type="QString" value="id"/>
+            <Option name="Layer" type="invalid"/>
+            <Option name="LayerName" type="QString" value="structures"/>
+            <Option name="LayerProviderName" type="QString" value="postgres"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
+            <Option name="OrderByValue" type="bool" value="true"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
+            <Option name="Value" type="QString" value="nomenclature"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="end_structure_id" configurationFlags="NoFlag">
+      <editWidget type="ValueRelation">
+        <config>
+          <Option type="Map">
+            <Option name="AllowMulti" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="true"/>
+            <Option name="Key" type="QString" value="id"/>
+            <Option name="Layer" type="invalid"/>
+            <Option name="LayerName" type="QString" value="structures"/>
+            <Option name="LayerProviderName" type="QString" value="postgres"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
+            <Option name="OrderByValue" type="bool" value="true"/>
+            <Option name="UseCompleter" type="bool" value="true"/>
+            <Option name="Value" type="QString" value="nomenclature"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="duct_count" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="duct_models" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="status" configurationFlags="NoFlag">
+      <editWidget type="ValueRelation">
+        <config>
+          <Option type="Map">
+            <Option name="AllowMulti" type="bool" value="false"/>
+            <Option name="AllowNull" type="bool" value="false"/>
+            <Option name="CompleterMatchFlags" type="int" value="2"/>
+            <Option name="Description" type="invalid"/>
+            <Option name="DisplayGroupName" type="bool" value="false"/>
+            <Option name="FilterExpression" type="QString" value="&quot;category&quot; = 'status_trench_segments'"/>
+            <Option name="Key" type="QString" value="code"/>
+            <Option name="Layer" type="invalid"/>
+            <Option name="LayerName" type="QString" value="v_form_lists"/>
+            <Option name="LayerProviderName" type="QString" value="postgres"/>
+            <Option name="LayerSource" type="QString" value="dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' sslmode=require key='rid' estimatedmetadata=true checkPrimaryKeyUnicity='0' table=&quot;ref&quot;.&quot;v_form_lists&quot;"/>
+            <Option name="NofColumns" type="int" value="1"/>
+            <Option name="OrderByDescending" type="bool" value="false"/>
+            <Option name="OrderByField" type="bool" value="true"/>
+            <Option name="OrderByFieldName" type="QString" value="sort_order"/>
+            <Option name="OrderByKey" type="bool" value="false"/>
+            <Option name="OrderByValue" type="bool" value="false"/>
+            <Option name="UseCompleter" type="bool" value="false"/>
+            <Option name="Value" type="QString" value="label_fr"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="transition_source" configurationFlags="NoFlag">
+      <editWidget type="ValueMap">
+        <config>
+          <Option type="Map">
+            <Option name="map" type="List">
+              <Option type="Map">
+                <Option name="✏️ Saisie manuelle" type="QString" value="MANUAL"/>
+              </Option>
+              <Option type="Map">
+                <Option name="📡 BEON" type="QString" value="BEON"/>
+              </Option>
+              <Option type="Map">
+                <Option name="🤖 Automatique" type="QString" value="AUTO"/>
+              </Option>
+              <Option type="Map">
+                <Option name="📥 Import (statuts Marlin)" type="QString" value="IMPORT"/>
+              </Option>
             </Option>
           </Option>
         </config>
@@ -153,11 +339,63 @@
       <editWidget type="DateTime">
         <config>
           <Option type="Map">
-            <Option type="bool" name="allow_null" value="true"/>
-            <Option type="bool" name="calendar_popup" value="true"/>
-            <Option type="QString" name="display_format" value="dd/MM/yyyy"/>
-            <Option type="QString" name="field_format" value="yyyy-MM-dd"/>
-            <Option type="bool" name="field_iso_format" value="false"/>
+            <Option name="allow_null" type="bool" value="true"/>
+            <Option name="calendar_popup" type="bool" value="true"/>
+            <Option name="display_format" type="QString" value="dd/MM/yyyy"/>
+            <Option name="field_format" type="QString" value="yyyy-MM-dd"/>
+            <Option name="field_format_overwrite" type="bool" value="false"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="review_reason" configurationFlags="NoFlag">
+      <editWidget type="ValueMap">
+        <config>
+          <Option type="Map">
+            <Option name="map" type="List">
+              <Option type="Map">
+                <Option name="⚠️ Aucun fourreau rattaché" type="QString" value="NO_DUCT"/>
+              </Option>
+              <Option type="Map">
+                <Option name="⚠️ Doublon parallèle" type="QString" value="PARALLEL_DUPLICATE"/>
+              </Option>
+              <Option type="Map">
+                <Option name="⚠️ Statuts de fourreaux mélangés" type="QString" value="MIXED_DUCT_STATUS"/>
+              </Option>
+            </Option>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="carried_from_id" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="created_at" configurationFlags="NoFlag">
+      <editWidget type="DateTime">
+        <config>
+          <Option type="Map">
+            <Option name="allow_null" type="bool" value="true"/>
+            <Option name="calendar_popup" type="bool" value="false"/>
+            <Option name="display_format" type="QString" value="dd/MM/yyyy HH:mm"/>
+            <Option name="field_format" type="QString" value="yyyy-MM-dd HH:mm:ss"/>
+            <Option name="field_format_overwrite" type="bool" value="false"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
+    <field name="updated_at" configurationFlags="NoFlag">
+      <editWidget type="DateTime">
+        <config>
+          <Option type="Map">
+            <Option name="allow_null" type="bool" value="true"/>
+            <Option name="calendar_popup" type="bool" value="false"/>
+            <Option name="display_format" type="QString" value="dd/MM/yyyy HH:mm"/>
+            <Option name="field_format" type="QString" value="yyyy-MM-dd HH:mm:ss"/>
+            <Option name="field_format_overwrite" type="bool" value="false"/>
           </Option>
         </config>
       </editWidget>
@@ -185,6 +423,56 @@
     <alias field="updated_at" index="17" name="Modifie le"/>
   </aliases>
 
+  <!-- Formulaire calque sur ducts.qml : memes onglets et groupes ; colonnes NOT NULL en texte (PR #1029) -->
+  <editform tolerant="1"></editform>
+  <editforminit/>
+  <editforminitcodesource>0</editforminitcodesource>
+  <featformsuppress>0</featformsuppress>
+  <editorlayout>tablayout</editorlayout>
+  <attributeEditorForm>
+    <attributeEditorContainer name="General" type="Tab" groupBox="0" columnCount="1" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+      <attributeEditorContainer name="⚡ Actions Terrain" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorField name="status" index="11" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+      <attributeEditorContainer name="📅 Dates" type="GroupBox" groupBox="1" columnCount="3" showLabel="1" collapsed="0" visibilityExpressionEnabled="1" visibilityExpression="&quot;status&quot; IN ('CONSTRUCTED', 'AS_BUILT') OR &quot;completion_date&quot; IS NOT NULL" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorField name="completion_date" index="13" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+      <attributeEditorContainer name="⚠️ À revoir" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="1" visibilityExpression="&quot;review_reason&quot; IS NOT NULL" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorField name="review_reason" index="14" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+    </attributeEditorContainer>
+    <attributeEditorContainer name="🔧 Technique" type="Tab" groupBox="0" columnCount="1" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+      <attributeEditorContainer name="🔀 Extrémités" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorTextElement name="Extremite debut" showLabel="1" horizontalStretch="0" verticalStretch="0">[% represent_value("start_node_type") %]</attributeEditorTextElement>
+        <attributeEditorField name="start_structure_id" index="7" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+        <attributeEditorTextElement name="Extremite fin" showLabel="1" horizontalStretch="0" verticalStretch="0">[% represent_value("end_node_type") %]</attributeEditorTextElement>
+        <attributeEditorField name="end_structure_id" index="8" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+      <attributeEditorContainer name="📏 Dimensions" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorTextElement name="Longueur (m)" showLabel="1" horizontalStretch="0" verticalStretch="0">[% format_number("length_m", 1) %]</attributeEditorTextElement>
+        <attributeEditorTextElement name="Fourreaux" showLabel="1" horizontalStretch="0" verticalStretch="0">[% "duct_count" %]</attributeEditorTextElement>
+        <attributeEditorField name="duct_models" index="10" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+    </attributeEditorContainer>
+    <attributeEditorContainer name="📍 Localisation" type="Tab" groupBox="0" columnCount="1" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+      <attributeEditorContainer name="🗺️ Zones" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorField name="zone_pop_id" index="1" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+        <attributeEditorField name="zone_mro_id" index="2" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+    </attributeEditorContainer>
+    <attributeEditorContainer name="ℹ️ Info" type="Tab" groupBox="0" columnCount="1" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+      <attributeEditorContainer name="🔑 IDs" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorTextElement name="Empreinte geometrique" showLabel="1" horizontalStretch="0" verticalStretch="0">[% "geom_fingerprint" %]</attributeEditorTextElement>
+        <attributeEditorField name="carried_from_id" index="15" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+      <attributeEditorContainer name="💾 Source &amp; Audit" type="GroupBox" groupBox="1" columnCount="2" showLabel="1" collapsed="0" visibilityExpressionEnabled="0" visibilityExpression="" collapsedExpressionEnabled="0" collapsedExpression="" horizontalStretch="0" verticalStretch="0">
+        <attributeEditorTextElement name="Source du statut" showLabel="1" horizontalStretch="0" verticalStretch="0">[% represent_value("transition_source") %]</attributeEditorTextElement>
+        <attributeEditorField name="created_at" index="16" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+        <attributeEditorField name="updated_at" index="17" showLabel="1" horizontalStretch="0" verticalStretch="0"/>
+      </attributeEditorContainer>
+    </attributeEditorContainer>
+  </attributeEditorForm>
+
   <editable>
     <field name="id" editable="0"/>
     <field name="zone_pop_id" editable="0"/>
@@ -206,7 +494,7 @@
     <field name="updated_at" editable="0"/>
   </editable>
 
-  <mapTip enabled="1">[% "status" %] ([% "transition_source" %]) - [% format_number("length_m", 1) %] m - [% "duct_models" %][% CASE WHEN "review_reason" IS NOT NULL THEN ' - a revoir : ' || "review_reason" END %]</mapTip>
+  <mapTip enabled="1">&lt;div style="font-family:Arial;font-size:11px;background:#e6f3ff;padding:8px;border-radius:6px;border:1px solid #4a90d9;">&lt;strong&gt;[% "status" %]&lt;/strong&gt; ([% represent_value("transition_source") %])&lt;br/&gt;Long: [% format_number("length_m", 1) %] m&lt;br/&gt;Fourreaux: [% "duct_count" %][% CASE WHEN "duct_models" IS NOT NULL THEN ' (' || "duct_models" || ')' END %][% CASE WHEN "review_reason" IS NOT NULL THEN '&lt;br/&gt;&lt;span style="color:#E65100;font-weight:bold;"&gt;' || represent_value("review_reason") || '&lt;/span&gt;' END %]&lt;/div&gt;</mapTip>
   <previewExpression>"status" || ' - ' || format_number("length_m", 1) || ' m'</previewExpression>
   <layerGeometryType>1</layerGeometryType>
 </qgis>

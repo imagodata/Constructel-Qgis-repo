@@ -386,6 +386,16 @@ FORM_CONTAINERS_PER_LAYER: dict[str, dict[str, dict[str, str]]] = {
         "🔤 Nomenclature":           {"fr": "🔤 Nomenclature",           "en": "🔤 Nomenclature",         "pt": "🔤 Nomenclatura"},
     },
 
+    # Formulaire calque sur ducts.qml (Farois styles/trench_segments.qml).
+    # "General" reste tel quel en FR, comme sur ducts.
+    "trench_segments": {
+        "General":                   {"fr": "General",                   "en": "General",                 "pt": "Geral"},
+        "🔀 Extrémités":            {"fr": "🔀 Extrémités",            "en": "🔀 Endpoints",            "pt": "🔀 Extremidades"},
+        "⚠️ À revoir":              {"fr": "⚠️ À revoir",              "en": "⚠️ To review",            "pt": "⚠️ A rever"},
+        "🔑 IDs":                    {"fr": "🔑 IDs",                    "en": "🔑 IDs",                  "pt": "🔑 IDs"},
+        "💾 Source & Audit":         {"fr": "💾 Source & Audit",         "en": "💾 Source & Audit",       "pt": "💾 Fonte & Auditoria"},
+    },
+
     "subducts": {
         "🚧 Conduite":              {"fr": "🚧 Conduite",              "en": "🚧 Duct",                 "pt": "🚧 Ducto"},
     },
