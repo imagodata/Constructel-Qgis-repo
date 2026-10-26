@@ -1540,6 +1540,14 @@ class ConstructelBridgePlugin:
         # Charger les couches de reference cachees requises par les ValueRelation
         self._ensure_ref_layers()
 
+        # Le QML de la base designe la couche cible des ValueRelation par son nom
+        # de table : remapper aussitot sur les noms affiches, y compris hors
+        # projet Bridge (_on_project_read s'arrete alors avant l'i18n).
+        try:
+            bridge_sketcher._sync_value_relation_layer_names(project)
+        except Exception as exc:
+            self._log(f"ValueRelation LayerName sync failed: {exc}", Qgis.MessageLevel.Warning)
+
     def _ensure_ref_layers(self):
         """Charge ref.v_form_lists comme couche cachee pour les ValueRelation.
 
