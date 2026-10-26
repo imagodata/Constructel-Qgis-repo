@@ -155,3 +155,51 @@ def test_trench_segments_fr_aliases_match_embedded_qml(project_init):
     assert {field: tr["fr"] for field, tr in aliases.items()} == qml_aliases
     assert all(set(tr) == {"fr", "en", "pt"} for tr in aliases.values())
     assert set(layer_translations.LAYER_DISPLAY_NAMES["trench_segments"]) == {"fr", "en", "pt"}
+
+
+def _trench_qml():
+    import xml.etree.ElementTree as ET
+
+    return ET.parse(MODULE.parent / "styles" / "trench_segments.qml").getroot()
+
+
+def test_trench_segments_form_containers_translated(project_init):
+    from constructel_bridge.i18n import layer_translations
+
+    # Onglets et groupes calqués sur ducts.qml : le sketcher les traduit tous
+    names = {c.get("name") for c in _trench_qml().iter("attributeEditorContainer")}
+    lookup = {
+        **layer_translations._FORM_COMMON,
+        **layer_translations.FORM_CONTAINERS_PER_LAYER.get("trench_segments", {}),
+    }
+    assert names and names <= set(lookup)
+    assert all(set(lookup[name]) == {"fr", "en", "pt"} for name in names)
+
+
+def test_trench_segments_status_list_follows_language(project_init):
+    from constructel_bridge.i18n import layer_translations
+
+    status = next(
+        f for f in _trench_qml().iter("field")
+        if f.get("name") == "status" and f.find("editWidget") is not None
+    )
+    options = {o.get("name"): o.get("value") for o in status.iter("Option")}
+    # Liste ref.v_form_lists : le sketcher bascule label_fr / label_en / label_pt
+    assert status.find("editWidget").get("type") == "ValueRelation"
+    assert options["LayerName"] in layer_translations.VALUE_RELATION_COLUMNS
+    assert options["FilterExpression"] == "\"category\" = 'status_trench_segments'"
+
+
+def test_trench_segments_value_relations_resolvable(project_init):
+    import re
+
+    tables = {entry[3] for entry in project_init.LAYER_CATALOG} | {"v_form_lists"}
+    for field in _trench_qml().find("fieldConfiguration").findall("field"):
+        widget = field.find("editWidget")
+        if widget.get("type") != "ValueRelation":
+            continue
+        options = {o.get("name"): o.get("value") for o in widget.iter("Option")}
+        # Nom de table : _sync_value_relation_layer_names le remappe sur le nom traduit
+        assert options["LayerName"] in tables, field.get("name")
+        # Un champ, pas une expression : QGIS n'évalue pas Value (affichage vide)
+        assert re.fullmatch(r"[a-z_]+", options["Value"]), field.get("name")
