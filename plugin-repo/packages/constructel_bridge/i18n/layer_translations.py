@@ -116,6 +116,24 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
+    # wyre.v_duct_progress (migration Farois 480), cle catalogue duct_progress
+    # Cle = nom de la vue : le sketcher resout la couche par la table de l'URI.
+    # FR = alias de styles/duct_progress.qml (Farois), sans _COMMON.
+    # -----------------------------------------------------------------
+    "v_duct_progress": {
+        "id":                  {"fr": "Fourreau",             "en": "Duct",                   "pt": "Ducto"},
+        "zone_pop_id":         {"fr": "POP",                  "en": "POP",                    "pt": "POP"},
+        "zone_mro_id":         {"fr": "MRO",                  "en": "MRO",                    "pt": "MRO"},
+        "model":               {"fr": "Modele",               "en": "Model",                  "pt": "Modelo"},
+        "status":              {"fr": "Statut",               "en": "Status",                 "pt": "Estado"},
+        "progress_pct":        {"fr": "Avancement (%)",       "en": "Progress (%)",           "pt": "Progresso (%)"},
+        "built_m":             {"fr": "Construit (m)",        "en": "Built (m)",              "pt": "Construido (m)"},
+        "length_m":            {"fr": "Longueur (m)",         "en": "Length (m)",             "pt": "Comprimento (m)"},
+        "blocked_reason":      {"fr": "Blocage",              "en": "Blocking reason",        "pt": "Motivo de bloqueio"},
+        "computed_at":         {"fr": "Calcule le",           "en": "Computed at",            "pt": "Calculado em"},
+    },
+
+    # -----------------------------------------------------------------
     # wyre.subducts
     # -----------------------------------------------------------------
     "subducts": {
@@ -441,6 +459,7 @@ LAYER_DISPLAY_NAMES: dict[str, dict[str, str]] = {
     "ducts":              {"fr": "Conduites",            "en": "Ducts",                "pt": "Ductos"},
     "subducts":           {"fr": "Sous-fourreaux",       "en": "Subducts",             "pt": "Subductos"},
     "trench_segments":    {"fr": "Segments de tranchee", "en": "Trench segments",      "pt": "Segmentos de vala"},
+    "v_duct_progress":    {"fr": "Avancement des fourreaux", "en": "Duct progress",    "pt": "Progresso dos ductos"},
     "demand_points":      {"fr": "Points de demande",    "en": "Demand points",        "pt": "Pontos de procura"},
     "zone_mro":           {"fr": "Zones MRO",            "en": "MRO Zones",            "pt": "Zonas MRO"},
     "zone_pop":           {"fr": "Zones POP",            "en": "POP Zones",            "pt": "Zonas POP"},
