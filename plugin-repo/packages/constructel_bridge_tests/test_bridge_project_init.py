@@ -112,3 +112,46 @@ def test_build_uri_sets_sslmode_without_setSslMode(project_init, monkeypatch, ss
         "pw", "wyre", "cables", "geom", "id",
     )
     assert uri.connection == ("h", "5432", "db", "u", "pw", expected)
+
+
+# --- Catalogue : cohérence des clés (couche trench_segments, migration Farois 475)
+
+
+def test_catalog_keys_wired_consistently(project_init):
+    keys = [entry[0] for entry in project_init.LAYER_CATALOG]
+    assert len(keys) == len(set(keys))
+    styles_dir = MODULE.parent / "styles"
+    for key, qml in project_init.EMBEDDED_STYLES.items():
+        assert key in keys, key
+        assert (styles_dir / qml).is_file(), qml
+    rel_names = [rel[3] for rel in project_init.RELATION_DEFS]
+    assert len(rel_names) == len(set(rel_names))
+    for parent, child, _fk, name in project_init.RELATION_DEFS:
+        assert parent in keys and child in keys, name
+
+
+def test_trench_segments_layer_in_catalog(project_init):
+    entry = next(e for e in project_init.LAYER_CATALOG if e[0] == "trench_segments")
+    # Aligné sur farois/qgis/_impl_init_project.py (groupe, table, géométrie, clé)
+    assert entry[1:6] == ("Infrastructure", "wyre", "trench_segments", "geom", "id")
+    assert project_init.EMBEDDED_STYLES["trench_segments"] == "trench_segments.qml"
+    assert ("zone_pop", "trench_segments", "zone_pop_id", "trench_segments_to_pop") in (
+        project_init.RELATION_DEFS
+    )
+    # Couche de suivi du génie civil : décochée sauf profils chantier et complet
+    profiles = {k for k, t in project_init.TEMPLATES.items() if "trench_segments" in t["layers"]}
+    assert profiles == {"infra_chantier", "complet"}
+
+
+def test_trench_segments_fr_aliases_match_embedded_qml(project_init):
+    import xml.etree.ElementTree as ET
+
+    from constructel_bridge.i18n import layer_translations
+
+    qml = ET.parse(MODULE.parent / "styles" / "trench_segments.qml").getroot()
+    qml_aliases = {a.get("field"): a.get("name") for a in qml.iter("alias")}
+    aliases = layer_translations.FIELD_ALIASES["trench_segments"]
+    # Le sketcher remplace les alias du style : en FR, ce sont ceux du QML Farois.
+    assert {field: tr["fr"] for field, tr in aliases.items()} == qml_aliases
+    assert all(set(tr) == {"fr", "en", "pt"} for tr in aliases.values())
+    assert set(layer_translations.LAYER_DISPLAY_NAMES["trench_segments"]) == {"fr", "en", "pt"}

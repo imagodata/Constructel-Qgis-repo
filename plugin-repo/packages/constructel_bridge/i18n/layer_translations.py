@@ -90,6 +90,32 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
     },
 
     # -----------------------------------------------------------------
+    # wyre.trench_segments (migration Farois 475)
+    # FR = alias de styles/trench_segments.qml (Farois), sans _COMMON :
+    # les libelles communs ("Statut", "Date realisation") sont moins precis.
+    # -----------------------------------------------------------------
+    "trench_segments": {
+        "id":                  {"fr": "Identifiant",          "en": "Identifier",             "pt": "Identificador"},
+        "zone_pop_id":         {"fr": "POP",                  "en": "POP",                    "pt": "POP"},
+        "zone_mro_id":         {"fr": "MRO",                  "en": "MRO",                    "pt": "MRO"},
+        "length_m":            {"fr": "Longueur (m)",         "en": "Length (m)",             "pt": "Comprimento (m)"},
+        "geom_fingerprint":    {"fr": "Empreinte geometrique", "en": "Geometry fingerprint",  "pt": "Impressao geometrica"},
+        "start_node_type":     {"fr": "Extremite debut",      "en": "Start node",             "pt": "Extremidade inicio"},
+        "end_node_type":       {"fr": "Extremite fin",        "en": "End node",               "pt": "Extremidade fim"},
+        "start_structure_id":  {"fr": "Chambre debut",        "en": "Start chamber",          "pt": "Camara inicio"},
+        "end_structure_id":    {"fr": "Chambre fin",          "en": "End chamber",            "pt": "Camara fim"},
+        "duct_count":          {"fr": "Fourreaux",            "en": "Ducts",                  "pt": "Ductos"},
+        "duct_models":         {"fr": "Modeles de fourreaux", "en": "Duct models",            "pt": "Modelos de ductos"},
+        "status":              {"fr": "Statut genie civil",   "en": "Civil works status",     "pt": "Estado obra civil"},
+        "transition_source":   {"fr": "Source du statut",     "en": "Status source",          "pt": "Fonte do estado"},
+        "completion_date":     {"fr": "Date de construction", "en": "Construction date",      "pt": "Data construcao"},
+        "review_reason":       {"fr": "A revoir",             "en": "To review",              "pt": "A rever"},
+        "carried_from_id":     {"fr": "Statut reporte de",    "en": "Status carried from",    "pt": "Estado transportado de"},
+        "created_at":          {"fr": "Cree le",              "en": "Created at",             "pt": "Criado em"},
+        "updated_at":          {"fr": "Modifie le",           "en": "Updated at",             "pt": "Atualizado em"},
+    },
+
+    # -----------------------------------------------------------------
     # wyre.subducts
     # -----------------------------------------------------------------
     "subducts": {
@@ -404,6 +430,7 @@ LAYER_DISPLAY_NAMES: dict[str, dict[str, str]] = {
     "cables":             {"fr": "Cables",               "en": "Cables",               "pt": "Cabos"},
     "ducts":              {"fr": "Conduites",            "en": "Ducts",                "pt": "Ductos"},
     "subducts":           {"fr": "Sous-fourreaux",       "en": "Subducts",             "pt": "Subductos"},
+    "trench_segments":    {"fr": "Segments de tranchee", "en": "Trench segments",      "pt": "Segmentos de vala"},
     "demand_points":      {"fr": "Points de demande",    "en": "Demand points",        "pt": "Pontos de procura"},
     "zone_mro":           {"fr": "Zones MRO",            "en": "MRO Zones",            "pt": "Zonas MRO"},
     "zone_pop":           {"fr": "Zones POP",            "en": "POP Zones",            "pt": "Zonas POP"},
