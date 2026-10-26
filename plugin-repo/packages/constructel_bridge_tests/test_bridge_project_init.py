@@ -203,3 +203,48 @@ def test_trench_segments_value_relations_resolvable(project_init):
         assert options["LayerName"] in tables, field.get("name")
         # Un champ, pas une expression : QGIS n'évalue pas Value (affichage vide)
         assert re.fullmatch(r"[a-z_]+", options["Value"]), field.get("name")
+
+
+# --- Catalogue : couche duct_progress (vue wyre.v_duct_progress, migration Farois 480)
+
+
+def test_duct_progress_layer_in_catalog(project_init):
+    entry = next(e for e in project_init.LAYER_CATALOG if e[0] == "duct_progress")
+    # Aligné sur farois/qgis/_impl_init_project.py : clé duct_progress, vue
+    # v_duct_progress, géométrie geom (MultiLineString 31370), clé QGIS id.
+    assert entry[1:6] == ("Infrastructure", "wyre", "v_duct_progress", "geom", "id")
+    assert project_init.EMBEDDED_STYLES["duct_progress"] == "duct_progress.qml"
+    assert ("zone_pop", "duct_progress", "zone_pop_id", "duct_progress_to_pop") in (
+        project_init.RELATION_DEFS
+    )
+    # Suivi de construction, superposé aux conduites : décochée sauf profils
+    # chantier et complet (comme trench_segments).
+    profiles = {k for k, t in project_init.TEMPLATES.items() if "duct_progress" in t["layers"]}
+    assert profiles == {"infra_chantier", "complet"}
+
+
+def test_duct_progress_embedded_qml_is_read_only(project_init):
+    import xml.etree.ElementTree as ET
+
+    qml = ET.parse(MODULE.parent / "styles" / "duct_progress.qml").getroot()
+    editable = {f.get("name"): f.get("editable") for f in qml.iter("field") if f.get("editable")}
+    aliases = {a.get("field") for a in qml.iter("alias")}
+    # Vue dérivée : aucun champ modifiable dans le formulaire.
+    assert editable and set(editable) == aliases
+    assert set(editable.values()) == {"0"}
+
+
+def test_duct_progress_fr_aliases_match_embedded_qml(project_init):
+    import xml.etree.ElementTree as ET
+
+    from constructel_bridge.i18n import layer_translations
+
+    qml = ET.parse(MODULE.parent / "styles" / "duct_progress.qml").getroot()
+    qml_aliases = {a.get("field"): a.get("name") for a in qml.iter("alias")}
+    # Le sketcher résout la couche par la table de l'URI : i18n indexée par
+    # le nom de la vue, pas par la clé du catalogue.
+    assert "duct_progress" not in layer_translations.FIELD_ALIASES
+    aliases = layer_translations.FIELD_ALIASES["v_duct_progress"]
+    assert {field: tr["fr"] for field, tr in aliases.items()} == qml_aliases
+    assert all(set(tr) == {"fr", "en", "pt"} for tr in aliases.values())
+    assert set(layer_translations.LAYER_DISPLAY_NAMES["v_duct_progress"]) == {"fr", "en", "pt"}
