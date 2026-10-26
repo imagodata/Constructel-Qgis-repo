@@ -312,7 +312,9 @@ def _sync_value_relation_layer_names(project):
       - les expressions ``Value`` contenant get_feature('table_name', ...)
 
     Cette passe construit un mapping table→nom_actuel et corrige les deux
-    pour que QGIS affiche le nom/code au lieu du UUID brut.
+    pour que QGIS affiche le nom/code au lieu du UUID brut. Un LayerName deja
+    remappe sur un nom traduit (ex: "POP Zones" avant une bascule EN→FR) est
+    reconnu via LAYER_DISPLAY_NAMES et remappe sur le nom actuel.
     """
     import re
 
@@ -331,6 +333,17 @@ def _sync_value_relation_layer_names(project):
     if not table_to_layer_name:
         return 0
 
+    # Noms traduits connus -> table (LayerName perime apres changement de langue).
+    # Un nom partage par deux tables est ignore plutot que devine.
+    name_to_table: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for table in table_to_layer_name:
+        for translated in LAYER_DISPLAY_NAMES.get(table, {}).values():
+            if name_to_table.setdefault(translated, table) != table:
+                ambiguous.add(translated)
+    for translated in ambiguous:
+        name_to_table.pop(translated, None)
+
     # Regex pour get_feature('table_name', ...) — capture le nom entre quotes
     gf_pattern = re.compile(
         r"get_feature\(\s*'(" + "|".join(re.escape(t) for t in table_to_layer_name) + r")'\s*,"
@@ -348,12 +361,16 @@ def _sync_value_relation_layer_names(project):
             config = dict(setup.config())
             dirty = False
 
-            # 1. Corriger LayerName
+            # 1. Corriger LayerName, seulement si la liste ne se resout pas : une
+            # couche qui porte deja ce nom est la bonne (copie filtree de la meme
+            # table, couche personnelle homonyme d'un nom traduit)
             ref_name = config.get("LayerName", "")
-            actual_name = table_to_layer_name.get(ref_name)
-            if actual_name and actual_name != ref_name:
-                config["LayerName"] = actual_name
-                dirty = True
+            if ref_name and not project.mapLayersByName(ref_name):
+                ref_table = ref_name if ref_name in table_to_layer_name else name_to_table.get(ref_name)
+                actual_name = table_to_layer_name.get(ref_table)
+                if actual_name:
+                    config["LayerName"] = actual_name
+                    dirty = True
 
             # 2. Corriger get_feature() dans l'expression Value
             value_expr = config.get("Value", "")
@@ -412,7 +429,8 @@ def apply_all_translations(lang: str | None = None):
     groups_renamed = apply_group_names(lang)
 
     # Variable projet accessible via @wyre_language dans les expressions QGIS
-    # (utilisee par le fallback map_get() dans les styles QML)
+    # (QGIS n'evalue pas d'expression dans le Value d'une ValueRelation : les
+    # styles affichent label_fr et apply_value_relation_columns bascule la langue)
     QgsExpressionContextUtils.setProjectVariable(project, "wyre_language", lang)
 
     _log(
