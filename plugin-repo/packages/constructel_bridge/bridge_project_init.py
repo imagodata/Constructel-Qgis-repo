@@ -125,6 +125,10 @@ LAYER_CATALOG = [
     ("cables",             "Infrastructure",  "wyre", "cables",             "geom", "id",  "Cables"),
     ("subducts",           "Infrastructure",  "wyre", "subducts",           "geom", "id",  "Sous-fourreaux"),
     ("ducts",              "Infrastructure",  "wyre", "ducts",              "geom", "id",  "Conduites"),
+    # Segments de tranchee (migration Farois 475) : calcules depuis les
+    # fourreaux par ref.fn_trench_segments_rebuild ; seuls status et
+    # completion_date sont modifiables (droits colonne de ftth_editor).
+    ("trench_segments",    "Infrastructure",  "wyre", "trench_segments",    "geom", "id",  "Segments de tranchee"),
 
     # -- Zones ------------------------------------------------------------
     ("zone_drop",          "Zones",           "wyre", "zone_drop",          "geom", "id",  "Zones Drop"),
@@ -180,6 +184,7 @@ EMBEDDED_STYLES = {
     "cables":           "cables.qml",
     "subducts":         "subducts.qml",
     "ducts":            "ducts.qml",
+    "trench_segments":  "trench_segments.qml",
     # Zones
     "zone_drop":        "zone_drop.qml",
     "zone_distribution":"zone_distribution.qml",
@@ -212,6 +217,8 @@ EMBEDDED_STYLES = {
 
 # Couches infra de base (reutilise dans les templates)
 # NB: subducts est volontairement exclu — decoche par defaut dans tous les profils
+# NB: trench_segments aussi — couche de suivi du genie civil, cochee seulement
+#     dans les profils "Infrastructure + Chantier" et "Projet complet"
 _INFRA_BASE = {
     "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
     "structures", "ducts", "cables",
@@ -245,10 +252,11 @@ TEMPLATES = {
     },
     "infra_chantier": {
         "label": "Infrastructure + Chantier",
-        "description": "Infra complet + couches chantier (interventions, permis, incidents, synergies)",
+        "description": "Infra complet + couches chantier (interventions, permis, incidents, synergies, segments de tranchee)",
         "layers": _INFRA_BASE | {
             "interventions", "incidents", "permis_voirie", "plaintes",
             "interventions_chantier", "synergies", "planning_facades",
+            "trench_segments",
         },
         "basemap": True,
     },
@@ -287,6 +295,7 @@ RELATION_DEFS = [
     ("zone_pop",       "cables",             "zone_pop_id",          "cables_to_pop"),
     ("zone_pop",       "ducts",              "zone_pop_id",          "ducts_to_pop"),
     ("zone_pop",       "subducts",           "zone_pop_id",          "subducts_to_pop"),
+    ("zone_pop",       "trench_segments",    "zone_pop_id",          "trench_segments_to_pop"),
     ("zone_pop",       "demand_points",      "zone_pop_id",          "dp_to_pop"),
     ("zone_drop",      "demand_points",      "zone_drop_id",         "dp_to_drop"),
     ("zone_distribution", "demand_points",   "zone_distribution_id", "dp_to_dist"),
