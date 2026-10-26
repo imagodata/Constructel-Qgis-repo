@@ -196,6 +196,10 @@ class NominatimBlockedError(RuntimeError):
     """Levée quand Nominatim renvoie 403/429 (rate-limit / blocage)."""
 
 
+class NominatimUnavailableError(RuntimeError):
+    """Levée sur une panne réseau / timeout / 5xx : l'adresse n'est PAS « introuvable »."""
+
+
 # ===========================================================================
 # Fonctions PURES — parsing / normalisation / dédoublonnage / requête
 # (aucune dépendance PyQGIS ; couvertes par pytest)
@@ -995,9 +999,13 @@ def nominatim_geocode(
                 f"Nominatim a répondu HTTP {exc.code} (rate-limit / blocage). "
                 "Réduisez la cadence et renseignez CONTACT_EMAIL."
             ) from exc
+        if exc.code >= 500:
+            raise NominatimUnavailableError(f"Nominatim HTTP {exc.code}") from exc
         return None
-    except urllib.error.URLError:
-        return None
+    except OSError as exc:
+        # URLError, timeout (y compris pendant read()), connexion coupée :
+        # panne transitoire, pas une adresse introuvable.
+        raise NominatimUnavailableError(f"Nominatim injoignable ({exc})") from exc
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
@@ -5924,6 +5932,8 @@ if HAS_QGIS:
             # du projet (datums), quel que soit le SCR du projet.
             to_lambert, _ = lambert_transforms(context.transformContext())
             n_ok = n_nf = n_skip_be = 0
+            unavailable: list[str] = []  # pannes réseau Nominatim (PAS des échecs d'adresse)
+            consecutive_unavailable = 0
             # Points déjà en base 'be' (même intervention, ou même work order +
             # même adresse) : leur profondeur n'est remplacée que par un rapport
             # PLUS RÉCENT (plan_depth_updates, écrit à l'étape 1), sans géocodage
@@ -5994,7 +6004,29 @@ if HAS_QGIS:
                         sleep_fn=_rate_limit_pause,
                     )
                 except NominatimBlockedError as exc:
+                    # Les échecs déjà constatés ne doivent pas être perdus.
+                    self._persist_ungeocoded(ungeocoded, feedback)
                     raise QgsProcessingException(str(exc))
+                except NominatimUnavailableError as exc:
+                    # Panne réseau : l'adresse n'est pas « introuvable » -> pas
+                    # d'insertion dans la table des non géocodées (relancer).
+                    unavailable.append(rec.intervention)
+                    consecutive_unavailable += 1
+                    feedback.pushWarning(
+                        f"Géocodage impossible (intervention {rec.intervention}) : "
+                        f"{exc} — non ajoutée aux non géocodées, à relancer."
+                    )
+                    if consecutive_unavailable >= 5:
+                        self._persist_ungeocoded(ungeocoded, feedback)
+                        raise QgsProcessingException(
+                            "Nominatim injoignable (5 échecs réseau consécutifs) — "
+                            "arrêt. Les adresses non trouvées jusque-là sont "
+                            "enregistrées ; relancez plus tard."
+                        )
+                    feedback.setProgress(int(100 * (i + 1) / total))
+                    _rate_limit_pause()
+                    continue
+                consecutive_unavailable = 0
                 reject = None
                 if hit is not None:
                     # Résultat HORS BELGIQUE (Nominatim a pu trouver une rue
@@ -6050,6 +6082,16 @@ if HAS_QGIS:
                 f"{n_ok} interventions géocodées, {n_nf} échecs, "
                 f"{n_skip_be} déjà en base 'be' non géocodées."
             )
+            if unavailable:
+                feedback.pushWarning(
+                    f"{len(unavailable)} intervention(s) non traitées (Nominatim "
+                    f"injoignable), à relancer : {', '.join(unavailable[:10])}"
+                    + ("…" if len(unavailable) > 10 else "")
+                )
+            if feedback.isCanceled() and ungeocoded:
+                # Annulation : rien d'autre n'est écrit, mais les échecs déjà
+                # constatés (coûteux à reproduire) sont conservés.
+                self._persist_ungeocoded(ungeocoded, feedback)
             if postal_mismatches:
                 feedback.pushWarning(
                     f"{len(postal_mismatches)} point(s) dont le code postal de l'adresse "
@@ -6135,26 +6177,7 @@ if HAS_QGIS:
                     )
                 # Echec de geocodage alors qu'un point geocode existe deja pour
                 # cette intervention : point conserve, PAS de ligne en non geocodees.
-                existing_ids = self._existing_point_ids(
-                    [rec.intervention for rec, _query in ungeocoded], feedback
-                )
-                if existing_ids is not None:
-                    ungeocoded, kept = split_ungeocoded(ungeocoded, existing_ids)
-                    for rec, _query in kept:
-                        feedback.pushInfo(
-                            f"Intervention {rec.intervention} : point géocodé existant "
-                            "conservé, échec de re-géocodage ignoré."
-                        )
-                try:
-                    self._upsert_ungeocoded_records(ungeocoded, feedback)
-                except Exception as exc:
-                    feedback.pushWarning(
-                        f"Non géocodées : erreur inattendue lors de l'upsert ({exc})."
-                    )
-                if existing_ids is None:
-                    # Verification impossible avant ecriture : on retablit la
-                    # regle apres coup.
-                    self._purge_ungeocoded_already_geocoded(feedback)
+                ungeocoded = self._persist_ungeocoded(ungeocoded, feedback)
 
                 feedback.pushInfo(
                     f"Étape 2/4 — segments : régénération de "
@@ -6756,6 +6779,48 @@ if HAS_QGIS:
                     "en echec (lignes laissees en place)."
                 )
 
+        def _persist_ungeocoded(self, ungeocoded, feedback):
+            """Écrit les échecs dans geofiber_asbuilt_ungeocoded -> entrées réellement poussées.
+
+            Applique « si géocodé, garder que géocodé » (split_ungeocoded), puis
+            upsert. Ne lève jamais : appelable aussi sur les chemins d'abandon
+            (blocage Nominatim, panne réseau, annulation).
+            """
+            if not ungeocoded:
+                return ungeocoded
+            existing_ids = None
+            try:
+                existing_ids = self._existing_point_ids(
+                    [rec.intervention for rec, _query in ungeocoded], feedback
+                )
+                if existing_ids is not None:
+                    ungeocoded, kept = split_ungeocoded(ungeocoded, existing_ids)
+                    for rec, _query in kept:
+                        feedback.pushInfo(
+                            f"Intervention {rec.intervention} : point géocodé existant "
+                            "conservé, échec de re-géocodage ignoré."
+                        )
+            except Exception as exc:
+                feedback.pushWarning(
+                    f"Non géocodées : contrôle des points existants impossible ({exc})."
+                )
+            try:
+                self._upsert_ungeocoded_records(ungeocoded, feedback)
+            except Exception as exc:
+                feedback.reportError(
+                    f"Non géocodées : ÉCHEC de l'écriture en base ({exc}) — "
+                    f"{len(ungeocoded)} adresse(s) NON enregistrée(s).",
+                    fatalError=False,
+                )
+            if existing_ids is None:
+                # Verification impossible avant ecriture : on retablit la
+                # regle apres coup.
+                try:
+                    self._purge_ungeocoded_already_geocoded(feedback)
+                except Exception as exc:
+                    feedback.pushWarning(f"Non géocodées : purge impossible ({exc}).")
+            return ungeocoded
+
         def _upsert_ungeocoded_records(self, entries, feedback):
             """Upsert les adresses non geocodees dans public.geofiber_asbuilt_ungeocoded.
 
@@ -6770,11 +6835,19 @@ if HAS_QGIS:
                 UNGEOCODED_TABLE_SCHEMA, UNGEOCODED_TABLE_NAME, feedback
             )
             if layer is None:
+                feedback.reportError(
+                    f"{len(entries)} adresse(s) non geocodee(s) NON enregistree(s) : "
+                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} inaccessible "
+                    "(voir avertissement ci-dessus).",
+                    fatalError=False,
+                )
                 return
             if not layer.primaryKeyAttributes():
-                feedback.pushWarning(
+                feedback.reportError(
                     f"Couche {UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} sans cle primaire "
-                    "exploitable — ecriture impossible, rien n'a ete ecrit en base."
+                    f"exploitable — ecriture impossible, {len(entries)} adresse(s) "
+                    "NON enregistree(s) en base.",
+                    fatalError=False,
                 )
                 return
 
