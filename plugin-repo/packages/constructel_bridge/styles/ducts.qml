@@ -1000,7 +1000,7 @@
             <Option name="AllowNull" type="bool" value="false"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Zones POP"/>
+            <Option name="LayerName" type="QString" value="zone_pop"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
@@ -1018,7 +1018,7 @@
             <Option name="AllowNull" type="bool" value="true"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Zones MRO"/>
+            <Option name="LayerName" type="QString" value="zone_mro"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
@@ -1078,12 +1078,12 @@
             <Option name="AllowNull" type="bool" value="true"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Structures"/>
+            <Option name="LayerName" type="QString" value="structures"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
             <Option name="UseCompleter" type="bool" value="true"/>
-            <Option name="Value" type="QString" value="coalesce(attribute(get_feature('Zones MRO', 'id', zone_mro_id), 'name'), '') || ' / ' || coalesce(attribute(get_feature('Zones POP', 'id', zone_pop_id), 'code'), '') || ' / ' || coalesce(nomenclature, label, structure_type)"/>
+            <Option name="Value" type="QString" value="nomenclature"/>
           </Option>
         </config>
       </editWidget>
@@ -1096,12 +1096,12 @@
             <Option name="AllowNull" type="bool" value="true"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Structures"/>
+            <Option name="LayerName" type="QString" value="structures"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
             <Option name="UseCompleter" type="bool" value="true"/>
-            <Option name="Value" type="QString" value="coalesce(attribute(get_feature('Zones MRO', 'id', zone_mro_id), 'name'), '') || ' / ' || coalesce(attribute(get_feature('Zones POP', 'id', zone_pop_id), 'code'), '') || ' / ' || coalesce(nomenclature, label, structure_type)"/>
+            <Option name="Value" type="QString" value="nomenclature"/>
           </Option>
         </config>
       </editWidget>
@@ -1264,6 +1264,33 @@
         </config>
       </editWidget>
     </field>
+    <field name="progress_pct" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="progress_built_m" configurationFlags="NoFlag">
+      <editWidget type="TextEdit">
+        <config>
+          <Option/>
+        </config>
+      </editWidget>
+    </field>
+    <field name="progress_updated_at" configurationFlags="NoFlag">
+      <editWidget type="DateTime">
+        <config>
+          <Option type="Map">
+            <Option name="allow_null" type="bool" value="true"/>
+            <Option name="calendar_popup" type="bool" value="false"/>
+            <Option name="display_format" type="QString" value="dd/MM/yyyy HH:mm"/>
+            <Option name="field_format" type="QString" value="yyyy-MM-dd HH:mm:ss"/>
+            <Option name="field_format_overwrite" type="bool" value="false"/>
+          </Option>
+        </config>
+      </editWidget>
+    </field>
   </fieldConfiguration>
   <aliases>
     <alias name="ID" field="id" index="0"/>
@@ -1286,6 +1313,9 @@
     <alias name="SharePoint folder" field="doc_folder_url" index="17"/>
     <alias name="Created at" field="created_at" index="18"/>
     <alias name="Updated at" field="updated_at" index="19"/>
+    <alias name="Avancement (%)" field="progress_pct" index="20"/>
+    <alias name="Construit (m)" field="progress_built_m" index="21"/>
+    <alias name="Avancement modifié le" field="progress_updated_at" index="22"/>
   </aliases>
   <defaults>
     <default applyOnUpdate="0" expression="" field="id"/>
@@ -1308,6 +1338,9 @@
     <default applyOnUpdate="0" expression="" field="doc_folder_url"/>
     <default applyOnUpdate="0" expression="now()" field="created_at"/>
     <default applyOnUpdate="1" expression="now()" field="updated_at"/>
+    <default applyOnUpdate="0" expression="" field="progress_pct"/>
+    <default applyOnUpdate="0" expression="" field="progress_built_m"/>
+    <default applyOnUpdate="0" expression="" field="progress_updated_at"/>
   </defaults>
   <constraints>
     <constraint exp_strength="0" constraints="3" unique_strength="1" field="id" notnull_strength="1"/>
@@ -1330,6 +1363,9 @@
     <constraint exp_strength="0" constraints="0" unique_strength="0" field="doc_folder_url" notnull_strength="0"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" field="created_at" notnull_strength="0"/>
     <constraint exp_strength="0" constraints="0" unique_strength="0" field="updated_at" notnull_strength="0"/>
+    <constraint exp_strength="0" constraints="0" unique_strength="0" field="progress_pct" notnull_strength="0"/>
+    <constraint exp_strength="0" constraints="0" unique_strength="0" field="progress_built_m" notnull_strength="0"/>
+    <constraint exp_strength="0" constraints="0" unique_strength="0" field="progress_updated_at" notnull_strength="0"/>
   </constraints>
   <constraintExpressions>
     <constraint desc="" field="id" exp=""/>
@@ -1352,6 +1388,9 @@
     <constraint desc="" field="doc_folder_url" exp=""/>
     <constraint desc="" field="created_at" exp=""/>
     <constraint desc="" field="updated_at" exp=""/>
+    <constraint desc="" field="progress_pct" exp=""/>
+    <constraint desc="" field="progress_built_m" exp=""/>
+    <constraint desc="" field="progress_updated_at" exp=""/>
   </constraintExpressions>
   <expressionfields/>
   <attributeactions>
@@ -1387,6 +1426,9 @@
       <column name="transition_source" type="field" hidden="0" width="-1"/>
       <column name="doc_count" type="field" hidden="0" width="-1"/>
       <column name="doc_folder_url" type="field" hidden="0" width="-1"/>
+      <column name="progress_pct" type="field" hidden="0" width="-1"/>
+      <column name="progress_built_m" type="field" hidden="0" width="-1"/>
+      <column name="progress_updated_at" type="field" hidden="0" width="-1"/>
       <column type="actions" hidden="1" width="-1"/>
     </columns>
   </attributetableconfig>
@@ -1466,6 +1508,26 @@ def my_form_open(dialog, layer, feature):
           </labelStyle>
         </attributeEditorField>
       </attributeEditorContainer>
+      <attributeEditorContainer collapsedExpressionEnabled="0" name="📊 Avancement" showLabel="1" horizontalStretch="0" collapsed="0" verticalStretch="0" visibilityExpressionEnabled="1" columnCount="3" groupBox="1" type="GroupBox" visibilityExpression="attribute(@feature, 'progress_pct') IS NOT NULL" collapsedExpression="">
+        <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
+          <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
+        </labelStyle>
+        <attributeEditorField name="progress_pct" showLabel="1" index="20" horizontalStretch="0" verticalStretch="0">
+          <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
+            <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField name="progress_built_m" showLabel="1" index="21" horizontalStretch="0" verticalStretch="0">
+          <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
+            <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField name="progress_updated_at" showLabel="1" index="22" horizontalStretch="0" verticalStretch="0">
+          <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
+            <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
+          </labelStyle>
+        </attributeEditorField>
+      </attributeEditorContainer>
     </attributeEditorContainer>
     <attributeEditorContainer collapsedExpressionEnabled="0" name="🔧 Technique" showLabel="1" horizontalStretch="0" collapsed="0" verticalStretch="0" visibilityExpressionEnabled="0" columnCount="1" groupBox="0" type="Tab" visibilityExpression="" collapsedExpression="">
       <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
@@ -1520,11 +1582,6 @@ def my_form_open(dialog, layer, feature):
         <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
           <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
         </labelStyle>
-        <attributeEditorField name="zone_pop_id" showLabel="1" index="1" horizontalStretch="0" verticalStretch="0">
-          <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
-            <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
-          </labelStyle>
-        </attributeEditorField>
         <attributeEditorField name="zone_mro_id" showLabel="1" index="2" horizontalStretch="0" verticalStretch="0">
           <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
             <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
@@ -1540,11 +1597,6 @@ def my_form_open(dialog, layer, feature):
         <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
           <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
         </labelStyle>
-        <attributeEditorField name="id" showLabel="1" index="0" horizontalStretch="0" verticalStretch="0">
-          <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
-            <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
-          </labelStyle>
-        </attributeEditorField>
         <attributeEditorField name="marlin_id" showLabel="1" index="3" horizontalStretch="0" verticalStretch="0">
           <labelStyle overrideLabelColor="0" overrideLabelFont="0" labelColor="">
             <labelFont bold="0" underline="0" italic="0" strikethrough="0" description="MS Shell Dlg 2,8.3,-1,5,50,0,0,0,0,0" style=""/>
@@ -1616,6 +1668,9 @@ def my_form_open(dialog, layer, feature):
     <field name="model" editable="0"/>
     <field name="nomenclature" editable="1"/>
     <field name="planned_date" editable="1"/>
+    <field name="progress_built_m" editable="0"/>
+    <field name="progress_pct" editable="0"/>
+    <field name="progress_updated_at" editable="0"/>
     <field name="source_data" editable="1"/>
     <field name="start_point_id" editable="0"/>
     <field name="start_structure_id" editable="0"/>
@@ -1640,6 +1695,9 @@ def my_form_open(dialog, layer, feature):
     <field name="model" labelOnTop="0"/>
     <field name="nomenclature" labelOnTop="0"/>
     <field name="planned_date" labelOnTop="0"/>
+    <field name="progress_built_m" labelOnTop="0"/>
+    <field name="progress_pct" labelOnTop="0"/>
+    <field name="progress_updated_at" labelOnTop="0"/>
     <field name="source_data" labelOnTop="0"/>
     <field name="start_point_id" labelOnTop="0"/>
     <field name="start_structure_id" labelOnTop="0"/>
@@ -1667,6 +1725,9 @@ def my_form_open(dialog, layer, feature):
     <field name="nomenclature" reuseLastValue="0"/>
     <field name="planned_date" reuseLastValue="0"/>
     <field name="pose_type" reuseLastValue="0"/>
+    <field name="progress_built_m" reuseLastValue="0"/>
+    <field name="progress_pct" reuseLastValue="0"/>
+    <field name="progress_updated_at" reuseLastValue="0"/>
     <field name="source_data" reuseLastValue="0"/>
     <field name="start_point_id" reuseLastValue="0"/>
     <field name="start_structure_id" reuseLastValue="0"/>
@@ -1688,6 +1749,6 @@ def my_form_open(dialog, layer, feature):
     </widget>
   </widgets>
   <previewExpression>"label"</previewExpression>
-  <mapTip enabled="1">&lt;div style="font-family:Arial;font-size:11px;background:#e6f3ff;padding:8px;border-radius:6px;border:1px solid #4a90d9;">&lt;strong>[% coalesce("nomenclature", "label") %]&lt;/strong>&lt;br/>Pose: [% "pose_type" %]&lt;br/>Long: [% round("length_m", 1) %] m[% IF "doc_count" > 0 %]&lt;br/>&lt;span style="color:#1565C0;font-weight:bold;">[% "doc_count" %] doc(s)&lt;/span>[% END %]&lt;/div></mapTip>
+  <mapTip enabled="1">&lt;div style="font-family:Arial;font-size:11px;background:#e6f3ff;padding:8px;border-radius:6px;border:1px solid #4a90d9;">&lt;strong>[% coalesce("nomenclature", "marlin_id") %]&lt;/strong>&lt;br/>Modèle: [% "model" %]&lt;br/>Long: [% format_number("length_m", 1) %] m[% CASE WHEN attribute(@feature, 'progress_pct') IS NOT NULL THEN '&lt;br/>Avancement: ' || format_number(attribute(@feature, 'progress_pct'), 1) || ' % (' || format_number(attribute(@feature, 'progress_built_m'), 1) || ' m construits)' END %][% CASE WHEN "doc_count" > 0 THEN '&lt;br/>&lt;span style="color:#1565C0;font-weight:bold;">' || "doc_count" || ' doc(s)&lt;/span>' END %]&lt;/div></mapTip>
   <layerGeometryType>1</layerGeometryType>
 </qgis>

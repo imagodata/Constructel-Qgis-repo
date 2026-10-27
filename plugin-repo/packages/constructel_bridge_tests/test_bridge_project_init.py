@@ -248,3 +248,51 @@ def test_duct_progress_fr_aliases_match_embedded_qml(project_init):
     assert {field: tr["fr"] for field, tr in aliases.items()} == qml_aliases
     assert all(set(tr) == {"fr", "en", "pt"} for tr in aliases.values())
     assert set(layer_translations.LAYER_DISPLAY_NAMES["v_duct_progress"]) == {"fr", "en", "pt"}
+
+
+# --- Conduites : champs d'avancement (migration Farois 501, lecture seule)
+
+DUCT_PROGRESS_FIELDS = ("progress_pct", "progress_built_m", "progress_updated_at")
+
+
+def _ducts_qml():
+    import xml.etree.ElementTree as ET
+
+    return ET.parse(MODULE.parent / "styles" / "ducts.qml").getroot()
+
+
+def test_ducts_progress_fields_read_only_in_form(project_init):
+    qml = _ducts_qml()
+    editable = {f.get("name"): f.get("editable") for f in qml.find("editable").findall("field")}
+    group = next(
+        c for c in qml.iter("attributeEditorContainer") if c.get("name") == "📊 Avancement"
+    )
+    # Groupe de l'onglet General, les 3 champs et eux seuls, tous en lecture seule
+    # (la règle ESB ducts:progress:guard neutralise de toute façon une saisie).
+    general = next(c for c in qml.iter("attributeEditorContainer") if c.get("name") == "General")
+    assert group in list(general)
+    assert tuple(f.get("name") for f in group.findall("attributeEditorField")) == DUCT_PROGRESS_FIELDS
+    assert all(editable[name] == "0" for name in DUCT_PROGRESS_FIELDS)
+    # Visible seulement pour un fourreau suivi ; attribute() rend NULL sans erreur
+    # sur une base sans la 501 (groupe masqué, formulaire intact).
+    assert group.get("visibilityExpressionEnabled") == "1"
+    assert group.get("visibilityExpression") == "attribute(@feature, 'progress_pct') IS NOT NULL"
+
+
+def test_ducts_progress_aliases_translated(project_init):
+    from constructel_bridge.i18n import layer_translations
+
+    qml_aliases = {a.get("field"): a.get("name") for a in _ducts_qml().iter("alias")}
+    aliases = layer_translations.FIELD_ALIASES["ducts"]
+    # Le sketcher remplace les alias du style : sans entrée, un champ garderait le
+    # libellé FR du QML dans toutes les langues. FR = alias du QML Farois.
+    for name in DUCT_PROGRESS_FIELDS:
+        assert aliases[name]["fr"] == qml_aliases[name], name
+        assert set(aliases[name]) == {"fr", "en", "pt"} and all(aliases[name].values()), name
+
+
+def test_ducts_progress_group_translated(project_init):
+    from constructel_bridge.i18n import layer_translations
+
+    tr = layer_translations.FORM_CONTAINERS_PER_LAYER["ducts"]["📊 Avancement"]
+    assert tr == {"fr": "📊 Avancement", "en": "📊 Progress", "pt": "📊 Progresso"}

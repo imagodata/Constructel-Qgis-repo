@@ -87,6 +87,11 @@ FIELD_ALIASES: dict[str, dict[str, dict[str, str]]] = {
         "end_point_id":        {"fr": "UUID fin",           "en": "End point UUID",         "pt": "UUID fim"},
         "length_m":            {"fr": "Longueur (m)",       "en": "Length (m)",             "pt": "Comprimento (m)"},
         "subduct_count":       {"fr": "Nb sous-fourreaux",  "en": "Subduct count",          "pt": "Nr subductos"},
+        # Migration Farois 501 : avancement en lecture seule (copie de
+        # duct_progress). FR = alias de styles/ducts.qml (Farois).
+        "progress_pct":        {"fr": "Avancement (%)",     "en": "Progress (%)",           "pt": "Progresso (%)"},
+        "progress_built_m":    {"fr": "Construit (m)",      "en": "Built (m)",              "pt": "Construido (m)"},
+        "progress_updated_at": {"fr": "Avancement modifié le", "en": "Progress updated at", "pt": "Progresso atualizado em"},
     },
 
     # -----------------------------------------------------------------
@@ -402,6 +407,7 @@ FORM_CONTAINERS_PER_LAYER: dict[str, dict[str, dict[str, str]]] = {
         "🔀 Extrémités":            {"fr": "🔀 Extrémités",            "en": "🔀 Endpoints",            "pt": "🔀 Extremidades"},
         "🏷️ Type &amp; Modèle":    {"fr": "🏷️ Type & Modèle",        "en": "🏷️ Type & Model",        "pt": "🏷️ Tipo & Modelo"},
         "🔤 Nomenclature":           {"fr": "🔤 Nomenclature",           "en": "🔤 Nomenclature",         "pt": "🔤 Nomenclatura"},
+        "📊 Avancement":             {"fr": "📊 Avancement",             "en": "📊 Progress",             "pt": "📊 Progresso"},
     },
 
     # Formulaire calque sur ducts.qml (Farois styles/trench_segments.qml).
