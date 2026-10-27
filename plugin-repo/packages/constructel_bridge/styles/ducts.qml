@@ -1000,7 +1000,7 @@
             <Option name="AllowNull" type="bool" value="false"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Zones POP"/>
+            <Option name="LayerName" type="QString" value="zone_pop"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
@@ -1018,7 +1018,7 @@
             <Option name="AllowNull" type="bool" value="true"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Zones MRO"/>
+            <Option name="LayerName" type="QString" value="zone_mro"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
@@ -1078,12 +1078,12 @@
             <Option name="AllowNull" type="bool" value="true"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Structures"/>
+            <Option name="LayerName" type="QString" value="structures"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
             <Option name="UseCompleter" type="bool" value="true"/>
-            <Option name="Value" type="QString" value="coalesce(attribute(get_feature('Zones MRO', 'id', zone_mro_id), 'name'), '') || ' / ' || coalesce(attribute(get_feature('Zones POP', 'id', zone_pop_id), 'code'), '') || ' / ' || coalesce(nomenclature, label, structure_type)"/>
+            <Option name="Value" type="QString" value="nomenclature"/>
           </Option>
         </config>
       </editWidget>
@@ -1096,12 +1096,12 @@
             <Option name="AllowNull" type="bool" value="true"/>
             <Option name="Key" type="QString" value="id"/>
             <Option name="Layer" type="invalid"/>
-            <Option name="LayerName" type="QString" value="Structures"/>
+            <Option name="LayerName" type="QString" value="structures"/>
             <Option name="LayerProviderName" type="QString" value="postgres"/>
             <Option name="OrderByKey" type="bool" value="false"/>
             <Option name="OrderByValue" type="bool" value="true"/>
             <Option name="UseCompleter" type="bool" value="true"/>
-            <Option name="Value" type="QString" value="coalesce(attribute(get_feature('Zones MRO', 'id', zone_mro_id), 'name'), '') || ' / ' || coalesce(attribute(get_feature('Zones POP', 'id', zone_pop_id), 'code'), '') || ' / ' || coalesce(nomenclature, label, structure_type)"/>
+            <Option name="Value" type="QString" value="nomenclature"/>
           </Option>
         </config>
       </editWidget>
