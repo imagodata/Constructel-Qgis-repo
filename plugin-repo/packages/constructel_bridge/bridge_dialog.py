@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 Constructel Bridge - Dialogue de connexion.
+
+Bridge 1.8 : login PostgreSQL nominatif (compte Windows / AD de la
+personne), pre-rempli et modifiable, + mot de passe AD. Le mot de passe est
+toujours memorise par l'Auth Manager QGIS (sonde silencieuse au demarrage
+suivant) : plus de case « retenir le mot de passe ».
 """
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -21,9 +25,10 @@ from .i18n import tr
 
 
 class ConstructelConnectDialog(QDialog):
-    """Dialogue simple pour saisir le mot de passe ftth_editor."""
+    """Dialogue : login nominatif (modifiable) + mot de passe AD."""
 
-    def __init__(self, parent=None, host="localhost", port=5432, dbname="farois_ftth", default_password=""):
+    def __init__(self, parent=None, host="localhost", port=5432, dbname="farois_ftth",
+                 login="", message=""):
         super().__init__(parent)
         self.setWindowTitle(tr("dialog.title"))
         self.setMinimumWidth(380)
@@ -33,6 +38,15 @@ class ConstructelConnectDialog(QDialog):
         header = QLabel(tr("dialog.header"))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
+
+        # Message de ressaisie (mot de passe refuse) : affiche seulement
+        # quand l'appelant en fournit un.
+        self._message_label = None
+        if message:
+            self._message_label = QLabel(message)
+            self._message_label.setWordWrap(True)
+            self._message_label.setStyleSheet("color: #b00020;")
+            layout.addWidget(self._message_label)
 
         form = QFormLayout()
 
@@ -50,17 +64,17 @@ class ConstructelConnectDialog(QDialog):
         self._dbname_edit.setReadOnly(True)
         form.addRow(tr("dialog.database"), self._dbname_edit)
 
-        self._user_edit = QLineEdit("ftth_editor")
-        self._user_edit.setReadOnly(True)
-        form.addRow(tr("dialog.role"), self._user_edit)
+        # Login nominatif : pre-rempli depuis le nom d'utilisateur du poste,
+        # modifiable (compte AD different, identifiant de secours admin).
+        self._user_edit = QLineEdit(login)
+        self._user_edit.setPlaceholderText(tr("dialog.login_placeholder"))
+        form.addRow(tr("dialog.login"), self._user_edit)
 
-        # Password field with show/hide toggle
+        # Password field with show/hide toggle -- jamais pre-rempli.
         pw_layout = QHBoxLayout()
         self._password_edit = QLineEdit()
         self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._password_edit.setPlaceholderText(tr("dialog.password_placeholder"))
-        if default_password:
-            self._password_edit.setText(default_password)
         pw_layout.addWidget(self._password_edit)
 
         self._toggle_pw_btn = QPushButton("\U0001F441")
@@ -72,10 +86,6 @@ class ConstructelConnectDialog(QDialog):
 
         form.addRow(tr("dialog.password"), pw_layout)
 
-        self._save_check = QCheckBox(tr("dialog.save_password"))
-        self._save_check.setChecked(True)
-        form.addRow("", self._save_check)
-
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -84,15 +94,19 @@ class ConstructelConnectDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        # Disable OK button when password is empty
+        # OK seulement quand login ET mot de passe sont renseignes.
+        self._user_edit.textChanged.connect(self._validate)
         self._password_edit.textChanged.connect(self._validate)
         self._validate()
 
-        self._password_edit.setFocus()
+        if login:
+            self._password_edit.setFocus()
+        else:
+            self._user_edit.setFocus()
 
-    def _validate(self):
-        """Enable OK only when password is non-empty."""
-        self._ok_button.setEnabled(bool(self._password_edit.text()))
+    def _validate(self, *_args):
+        """Enable OK only when login and password are non-empty."""
+        self._ok_button.setEnabled(bool(self._user_edit.text().strip()) and bool(self._password_edit.text()))
 
     def _toggle_password_visibility(self, visible: bool):
         """Toggle between masked and clear-text password display."""
@@ -103,8 +117,8 @@ class ConstructelConnectDialog(QDialog):
             self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self._toggle_pw_btn.setToolTip(tr("dialog.show_password"))
 
+    def login(self) -> str:
+        return self._user_edit.text().strip()
+
     def password(self) -> str:
         return self._password_edit.text()
-
-    def save_password(self) -> bool:
-        return self._save_check.isChecked()
