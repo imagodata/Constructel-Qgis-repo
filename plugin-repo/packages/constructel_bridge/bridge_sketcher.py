@@ -392,6 +392,46 @@ def _sync_value_relation_layer_names(project):
     return patched
 
 
+def rewrite_value_relation_sources(project, login: str, authcfg_id: str, hosts) -> int:
+    """Rattache le ``LayerSource`` des ValueRelation pointant sur nos
+    serveurs a l'identite nominative du poste (Bridge 1.8, B9).
+
+    Les QML Farois (embarques et en base) figent ``user='ftth_editor'
+    sslmode=require`` dans LayerSource. QGIS ne consulte cette source que
+    si la couche cible n'est ni dans le projet (Layer) ni resolvable par
+    LayerName ; il ouvrirait alors une connexion avec un identifiant dont
+    un poste nominatif n'a plus le mot de passe (invite bloquante, ou
+    identifiant partage apres la cloture). Reecriture :
+    ``sslmode=verify-full user='<login>' authcfg=<id>``, sans mot de
+    passe, serveurs tiers ignores. Retourne le nombre de widgets corriges.
+    """
+    from .bridge_nominatif import rewrite_datasource_nominal
+
+    known_hosts = [h for h in hosts if h]
+    patched = 0
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        fields = layer.fields()
+        for i in range(fields.count()):
+            setup = layer.editorWidgetSetup(i)
+            if setup.type() != "ValueRelation":
+                continue
+            config = dict(setup.config())
+            source = config.get("LayerSource", "")
+            if not source or not any(
+                f"host={h}" in source or f"host='{h}'" in source for h in known_hosts
+            ):
+                continue
+            new_source = rewrite_datasource_nominal(source, login, authcfg_id)
+            if new_source == source:
+                continue
+            config["LayerSource"] = new_source
+            layer.setEditorWidgetSetup(i, QgsEditorWidgetSetup("ValueRelation", config))
+            patched += 1
+    return patched
+
+
 # =====================================================================
 # API publique — applique tout
 # =====================================================================

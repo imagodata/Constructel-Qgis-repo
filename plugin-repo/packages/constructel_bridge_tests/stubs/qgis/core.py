@@ -187,6 +187,18 @@ class QgsDataSourceUri:
     implemented; other tokens round-trip verbatim. Anything beyond that
     (table/key/sql clauses, service= connections) is out of scope."""
 
+    class SslMode:
+        # Same numeric values as QgsDataSourceUri::SslMode (settings key
+        # "sslmode" of a PG connection stores the number as a string).
+        SslPrefer = 0
+        SslDisable = 1
+        SslAllow = 2
+        SslRequire = 3
+        SslVerifyCa = 4
+        SslVerifyFull = 5
+
+    _SSL_NAMES = {0: "prefer", 1: "disable", 2: "allow", 3: "require", 4: "verify-ca", 5: "verify-full"}
+
     def __init__(self, uri=""):
         self._params = {}
         if uri:
@@ -199,11 +211,57 @@ class QgsDataSourceUri:
                     value = match.group(5)
                 self._params[key] = value
 
-    def setConnection(self, *args, **kwargs):
-        pass
+    def setConnection(self, host, port, database, username, password, sslmode=None, authcfg=None):
+        # Bridge 1.8 tests: a faithful-enough setConnection (the real one
+        # stores every item; sslmode is an SslMode enum value).
+        self._params["host"] = str(host)
+        self._params["port"] = str(port)
+        self._params["dbname"] = database
+        if username:
+            self._params["user"] = username
+        else:
+            self._params.pop("user", None)
+        self.setPassword(password)
+        if sslmode is not None:
+            self.setSslMode(sslmode)
+        self.setAuthConfigId(authcfg or "")
 
-    def setDataSource(self, *args, **kwargs):
-        pass
+    def setDataSource(self, schema, table, geometry_column=None, sql="", key_column=""):
+        self._params["table"] = f'"{schema}"."{table}"' if schema else f'"{table}"'
+        if geometry_column:
+            self._params["geom"] = geometry_column
+        else:
+            self._params.pop("geom", None)
+        if key_column:
+            self._params["key"] = key_column
+
+    def setParam(self, key, value):
+        self._params[key] = str(value)
+
+    def param(self, key):
+        return self._params.get(key, "")
+
+    def setSslMode(self, mode):
+        self._params["sslmode"] = self._SSL_NAMES.get(int(mode), str(mode))
+
+    def sslMode(self):
+        names = {v: k for k, v in self._SSL_NAMES.items()}
+        return names.get(self._params.get("sslmode", "prefer"), 0)
+
+    def schema(self):
+        table = self._params.get("table", "")
+        if table.startswith('"') and '"."' in table:
+            return table.split('"."')[0].strip('"')
+        return ""
+
+    def table(self):
+        table = self._params.get("table", "")
+        if '"."' in table:
+            return table.split('"."')[1].strip('"')
+        return table.strip('"')
+
+    def geometryColumn(self):
+        return self._params.get("geom", "")
 
     def host(self):
         return self._params.get("host", "")
@@ -288,6 +346,25 @@ class QgsProject:
     def layersAdded(self):
         return _StubSignal()
 
+    # Bridge 1.8 tests (_read_and_clean_project): the XML handed to
+    # project.read() is kept for inspection; nothing is parsed.
+    def read(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            self.read_xml = f.read()
+        return True
+
+    def setTitle(self, title):
+        self.title = title
+
+    def setFileName(self, name):
+        self.file_name = name
+
+    def setDirty(self, dirty):
+        self.dirty = dirty
+
+    def error(self):
+        return ""
+
 
 class QgsProjectBadLayerHandler:
     pass
@@ -314,7 +391,25 @@ class QgsSettings:
 
 
 class QgsVectorLayer:
-    pass
+    # Constructible like the real one (source, name, provider) so code that
+    # creates layers (_ensure_ref_layers) runs under the stub; subclasses in
+    # tests override whatever they need.
+    def __init__(self, source="", name="", provider=""):
+        self._source = source
+        self._name = name
+        self._provider_type = provider
+
+    def source(self):
+        return self._source
+
+    def name(self):
+        return self._name
+
+    def providerType(self):
+        return self._provider_type
+
+    def isValid(self):
+        return True
 
 
 class QgsWkbTypes:

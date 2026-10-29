@@ -666,6 +666,16 @@ def _mtls_active() -> tuple[bool, str | None]:
     return (True, None)
 
 
+def _set_uri_verify_full(uri) -> None:
+    """Force sslmode=verify-full sur une QgsDataSourceUri. setSslMode()
+    manque a certaines versions de QGIS (cf. 1.7.2) : repli sur le
+    parametre brut, relu comme item de connexion a la re-analyse de l'URI."""
+    try:
+        uri.setSslMode(QgsDataSourceUri.SslMode.SslVerifyFull)
+    except AttributeError:
+        uri.setParam("sslmode", "verify-full")
+
+
 def _get_plugin_version() -> str:
     """Read current plugin version from metadata.txt."""
     meta_path = os.path.join(os.path.dirname(__file__), "metadata.txt")
@@ -1051,8 +1061,11 @@ class ConstructelBridgePlugin:
         import re
         password = getattr(self, "_password", None) or _DEFAULT_PW
         known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
-        if BE_ENABLED:
+        if BE_ENABLED and BE_USER and _BE_PW:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
+        nominal = self._auth_mode == AUTH_MODE_NOMINAL and bool(self._pg_login)
+        wyre_fixed = _FIXED_AUTH_CFG_IDS["wyre"]
+        be_fixed = _FIXED_AUTH_CFG_IDS["be"]
 
         layers = doc.elementsByTagName("maplayer")
         cleaned = 0
@@ -1066,6 +1079,23 @@ class ConstructelBridgePlugin:
             if ds_node.isNull():
                 continue
             ds = ds_node.text()
+            if nominal:
+                # Session nominative : TOUTE datasource de nos serveurs est
+                # ecrite user='<login>' authcfg=<id fixe> sslmode=verify-full,
+                # mot de passe en clair compris (spec §5.7.7).
+                if not any(h and h in ds for h in (DEFAULT_HOST, BE_HOST)):
+                    continue
+                is_be = BE_ENABLED and (
+                    f"authcfg={be_fixed}" in ds or (bool(BE_USER) and f"user='{BE_USER}'" in ds)
+                )
+                new_ds = rewrite_datasource_nominal(ds, self._pg_login, be_fixed if is_be else wyre_fixed)
+                if new_ds == ds:
+                    continue
+                while ds_node.hasChildNodes():
+                    ds_node.removeChild(ds_node.firstChild())
+                ds_node.appendChild(doc.createTextNode(new_ds))
+                cleaned += 1
+                continue
             if "authcfg=" not in ds:
                 continue
             # Ne jamais injecter nos identifiants dans la datasource d'un
@@ -1783,8 +1813,15 @@ class ConstructelBridgePlugin:
         # utilisateur externe (bureau d'etudes). Hisse hors de la boucle :
         # invariant, pas la peine de le reconstruire par couche.
         known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
-        if BE_ENABLED:
+        if BE_ENABLED and BE_USER and _BE_PW:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
+        # Bridge 1.8 : session nominative = identite DU poste (login + config
+        # fixe), jamais de mot de passe, verify-full ; une couche `be`
+        # (identifiant partage historique ou authcfg be) reste sur la
+        # config be, tout le reste va sur la config wyre (spec §5.7.2/7).
+        nominal = self._auth_mode == AUTH_MODE_NOMINAL and bool(self._pg_login)
+        wyre_fixed = _FIXED_AUTH_CFG_IDS["wyre"]
+        be_fixed = _FIXED_AUTH_CFG_IDS["be"]
 
         # Reachable without _connect (project-load hook), so the
         # configured-but-invalid state must refuse HERE too — never
@@ -1847,16 +1884,39 @@ class ConstructelBridgePlugin:
                     needs_fix = True
                 else:
                     needs_fix = False
+            elif nominal:
+                is_be = BE_ENABLED and (
+                    old_authcfg == be_fixed or (bool(BE_USER) and current_user == BE_USER)
+                )
+                target_cfg = be_fixed if is_be else wyre_fixed
+                needs_fix = (
+                    old_authcfg != target_cfg
+                    or current_user != self._pg_login
+                    or bool(uri.password())
+                    or "sslmode=verify-full" not in uri.uri(False)
+                )
+                if needs_fix:
+                    uri.setAuthConfigId(target_cfg)
+                    uri.setUsername(self._pg_login)
+                    uri.setPassword("")
+                    _set_uri_verify_full(uri)
             else:
-                fixed_cfg = _fixed_authcfg_for_user(current_user)
+                # Mode partage : un login nominatif d'un collegue (projet
+                # enregistre ailleurs) est une identite inconnue -> wyre,
+                # via la config fixe si elle existe (jamais de mot de passe
+                # partage en clair pour un simple user= etranger).
+                target_user = current_user if current_user in known_identities else DEFAULT_USER
+                fixed_cfg = _fixed_authcfg_for_user(target_user)
                 if fixed_cfg:
                     # Identite connue avec authcfg a ID FIXE present sur ce
                     # poste : on y rattache la couche, sans mot de passe en
                     # clair dans la datasource.
-                    needs_fix = old_authcfg != fixed_cfg or bool(uri.password())
+                    needs_fix = (
+                        old_authcfg != fixed_cfg or bool(uri.password()) or current_user != target_user
+                    )
                     if needs_fix:
                         uri.setAuthConfigId(fixed_cfg)
-                        uri.setUsername(current_user)
+                        uri.setUsername(target_user)
                         uri.setPassword("")
                 else:
                     needs_fix = bool(old_authcfg) or current_user not in known_identities
@@ -1967,6 +2027,42 @@ class ConstructelBridgePlugin:
             bridge_sketcher._sync_value_relation_layer_names(project)
         except Exception as exc:
             self._log(f"ValueRelation LayerName sync failed: {exc}", Qgis.MessageLevel.Warning)
+        # ... et leur LayerSource (user='ftth_editor' fige dans les QML)
+        # vers l'identite nominative du poste (Bridge 1.8, B9).
+        self._rewrite_value_relation_sources()
+
+    def _rewrite_value_relation_sources(self):
+        """Session nominative seulement : LayerSource des listes de valeurs
+        rattache au login du poste (jamais bloquant)."""
+        if self._auth_mode != AUTH_MODE_NOMINAL or not self._pg_login:
+            return
+        try:
+            patched = bridge_sketcher.rewrite_value_relation_sources(
+                QgsProject.instance(), self._pg_login, _FIXED_AUTH_CFG_IDS["wyre"],
+                (DEFAULT_HOST, BE_HOST),
+            )
+            if patched:
+                self._log(f"{patched} LayerSource(s) de listes de valeurs rattache(s) au login nominatif")
+        except Exception as exc:  # noqa: BLE001 -- confort, jamais bloquant
+            self._log(f"ValueRelation LayerSource rewrite failed: {exc}", Qgis.MessageLevel.Warning)
+
+    def _init_conn_params(self):
+        """(conn_params, password) pour l'initialisation de projet et les
+        styles : session nominative = login + config fixe + verify-full
+        (aucun mot de passe dans les couches) ; partage = chemin 1.7.3."""
+        password = getattr(self, "_password", None) or _DEFAULT_PW
+        params = {
+            "host": DEFAULT_HOST,
+            "port": DEFAULT_PORT,
+            "dbname": DEFAULT_DBNAME,
+            "user": DEFAULT_USER,
+            "sslmode": DEFAULT_SSLMODE,
+            "sslrootcert": str(root_crt_file_path()),
+        }
+        if self._auth_mode == AUTH_MODE_NOMINAL and self._pg_login:
+            params["user"] = self._pg_login
+            params["authcfg"] = _FIXED_AUTH_CFG_IDS["wyre"]
+        return params, password
 
     def _ensure_ref_layers(self):
         """Charge ref.v_form_lists comme couche cachee pour les ValueRelation.
@@ -1990,10 +2086,18 @@ class ConstructelBridgePlugin:
         # Charger la couche cachee
         password = getattr(self, "_password", None) or _DEFAULT_PW
         uri = QgsDataSourceUri()
-        uri.setConnection(
-            DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
-            DEFAULT_USER, password, DEFAULT_SSLMODE,
-        )
+        if self._auth_mode == AUTH_MODE_NOMINAL and self._pg_login:
+            # Session nominative : login + config fixe, aucun mot de passe.
+            uri.setConnection(
+                DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
+                self._pg_login, "", QgsDataSourceUri.SslMode.SslVerifyFull,
+                _FIXED_AUTH_CFG_IDS["wyre"],
+            )
+        else:
+            uri.setConnection(
+                DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
+                DEFAULT_USER, password, QgsDataSourceUri.SslMode.SslVerifyFull,
+            )
         uri.setDataSource("ref", "v_form_lists", None, "", "rid")
         layer = QgsVectorLayer(uri.uri(False), "v_form_lists", "postgres")
         if layer.isValid():
@@ -2623,14 +2727,7 @@ class ConstructelBridgePlugin:
             return  # rien selectionne
 
         try:
-            conn_params = {
-                "host": DEFAULT_HOST,
-                "port": DEFAULT_PORT,
-                "dbname": DEFAULT_DBNAME,
-                "user": DEFAULT_USER,
-                "sslmode": DEFAULT_SSLMODE,
-            }
-            password = getattr(self, "_password", None) or _DEFAULT_PW
+            conn_params, password = self._init_conn_params()
 
             count = init_project(
                 conn_params, password, selected,
@@ -2642,6 +2739,7 @@ class ConstructelBridgePlugin:
             # Appliquer les traductions i18n
             from . import bridge_sketcher
             bridge_sketcher.apply_all_translations()
+            self._rewrite_value_relation_sources()
 
             # Installer les hooks d'edition
             self._hook_layers()
@@ -2806,15 +2904,27 @@ class ConstructelBridgePlugin:
         # tout basculer vers wyre, et ne jamais toucher un serveur tiers.
         original_xml = xml
         known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
-        if BE_ENABLED:
+        if BE_ENABLED and BE_USER and _BE_PW:
             known_identities[BE_USER] = (BE_USER, _BE_PW)
         known_hosts = tuple(h for h in (DEFAULT_HOST, BE_HOST) if h)
+        nominal = self._auth_mode == AUTH_MODE_NOMINAL and bool(self._pg_login)
+        wyre_fixed = _FIXED_AUTH_CFG_IDS["wyre"]
+        be_fixed = _FIXED_AUTH_CFG_IDS["be"]
 
         def _fix_datasource(m):
             """Callback pour re.sub: nettoie une balise <datasource>."""
             prefix, ds, suffix = m.group(1), m.group(2), m.group(3)
             if not any(h in ds for h in known_hosts):
                 return m.group(0)
+            if nominal:
+                # Session nominative : identite du poste via la config
+                # fixe (presente : la sonde l'a ecrite), aucun mot de passe.
+                is_be = BE_ENABLED and (
+                    f"authcfg={be_fixed}" in ds or (bool(BE_USER) and f"user='{BE_USER}'" in ds)
+                )
+                return prefix + rewrite_datasource_nominal(
+                    ds, self._pg_login, be_fixed if is_be else wyre_fixed,
+                ) + suffix
             # Regression round 3 corrigee : le strip global d'authcfg sur
             # tout le XML a ete retire au profit d'un traitement par
             # datasource, mais le re.sub sur `ds` avait ete oublie -- plus
