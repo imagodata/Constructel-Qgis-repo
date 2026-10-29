@@ -137,6 +137,7 @@ def _plugin_with_one_pg_layer(bp, monkeypatch, events):
         "dataProvider": lambda self: SimpleNamespace(uri=lambda: uri),
         "loadNamedStyle": lambda self, path: events.append("style") or ("", True),
         "triggerRepaint": lambda self: None,
+        "isReadOnly": lambda self: False,
     })()
     QgsProject.instance().addMapLayer(layer)
     cursor = SimpleNamespace(execute=lambda *a: None, fetchone=lambda: ("<qgis/>",), close=lambda: None)

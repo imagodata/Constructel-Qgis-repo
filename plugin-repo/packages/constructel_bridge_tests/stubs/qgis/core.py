@@ -443,10 +443,20 @@ class QgsProject:
         return dict(self._layers)
 
     def addMapLayer(self, layer, add_to_legend=True):
-        layer_id = f"stub-layer-{self._next_layer_id}"
+        # Comme QGIS : la cle est l'id de la couche.
+        layer_id = layer.id() if hasattr(layer, "id") else f"stub-layer-{self._next_layer_id}"
         self._next_layer_id += 1
         self._layers[layer_id] = layer
         return layer
+
+    def mapLayer(self, layer_id):
+        return self._layers.get(layer_id)
+
+    def fileName(self):
+        return getattr(self, "file_name", "")
+
+    def isDirty(self):
+        return getattr(self, "dirty", False)
 
     def setBadLayerHandler(self, handler):
         self.bad_layer_handler = handler
@@ -513,6 +523,21 @@ class QgsVectorLayer:
     def id(self):
         # Les doublures de test sous-classent sans appeler __init__.
         return getattr(self, "_layer_id", None) or f"layer-{id(self)}"
+
+    # Proprietes personnalisees (revue 2, I-1/I-2 : marqueur du verrou D2).
+    def _custom(self):
+        if "_custom_properties" not in self.__dict__:
+            self._custom_properties = {}
+        return self._custom_properties
+
+    def customProperty(self, key, default=None):
+        return self._custom().get(key, default)
+
+    def setCustomProperty(self, key, value):
+        self._custom()[key] = value
+
+    def removeCustomProperty(self, key):
+        self._custom().pop(key, None)
 
     def providerType(self):
         return self._provider_type

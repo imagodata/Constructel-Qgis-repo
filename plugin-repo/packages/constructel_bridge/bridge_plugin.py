@@ -746,6 +746,16 @@ def _ssl_mode_enum(mode: str):
     return getattr(QgsDataSourceUri.SslMode, _SSL_MODE_ENUMS.get(mode, "SslPrefer"))
 
 
+# Revue 2 (I-1/I-2) : marqueur du verrou D2 pose par le plugin, porte par la
+# couche elle-meme. Une lecture seule sans ce marqueur appartient a la
+# personne (ou a un style) et n'est jamais levee par le plugin.
+SCOPE_LOCK_PROPERTY = "constructel_bridge/scope_lock"
+
+
+def _has_scope_lock(layer) -> bool:
+    return bool(layer.customProperty(SCOPE_LOCK_PROPERTY, ""))
+
+
 def _get_plugin_version() -> str:
     """Read current plugin version from metadata.txt."""
     meta_path = os.path.join(os.path.dirname(__file__), "metadata.txt")
@@ -848,9 +858,8 @@ class ConstructelBridgePlugin:
         self._banner = None  # (motif, login) du bandeau de repli D7
         self._banner_item = None
         self._action_retry = None
-        # Revue 29/10 (I8/M6) : couches passees en lecture seule PAR le
-        # plugin (ids), et slots raiseError par id de couche.
-        self._locked_layer_ids = set()
+        # Revue 29/10 (M6) : slots raiseError par id de couche. Le verrou
+        # D2, lui, est marque SUR la couche (SCOPE_LOCK_PROPERTY).
         self._layer_error_slots = {}
 
     # =====================================================================
@@ -1140,13 +1149,17 @@ class ConstructelBridgePlugin:
     def _strip_scope_locks_from_dom(self, doc):
         """Revue 29/10 (I8) : la lecture seule posee par le plugin depend de
         la session du poste, elle ne doit pas etre ecrite dans le projet
-        (readOnly="1" sur <maplayer>, relu tel quel par QGIS)."""
-        if not self._locked_layer_ids:
-            return
+        (readOnly="1" sur <maplayer>, relu tel quel par QGIS). Seules les
+        couches portant notre marqueur sont touchees (revue 2, I-1) : une
+        lecture seule posee par la personne est ecrite telle quelle. Le
+        marqueur, lui, reste dans le projet : a la reouverture, la couche
+        est reverrouillee ou liberee selon la session."""
+        project = QgsProject.instance()
         layers = doc.elementsByTagName("maplayer")
         for i in range(layers.count()):
             elem = layers.at(i).toElement()
-            if elem.firstChildElement("id").text() in self._locked_layer_ids:
+            layer = project.mapLayer(elem.firstChildElement("id").text())
+            if layer is not None and _has_scope_lock(layer):
                 elem.setAttribute("readOnly", "0")
 
     def _strip_authcfg_from_dom(self, doc):
@@ -2446,6 +2459,7 @@ class ConstructelBridgePlugin:
                 tmp = tempfile.NamedTemporaryFile(
                     suffix=".qml", delete=False, mode="w", encoding="utf-8"
                 )
+                was_read_only = layer.isReadOnly()
                 try:
                     tmp.write(row[0])
                     tmp.close()
@@ -2455,6 +2469,13 @@ class ConstructelBridgePlugin:
                         os.unlink(tmp.name)
                     except OSError:
                         pass
+                if not was_read_only and layer.isReadOnly():
+                    # Revue 2 (I-2) : readOnly="1" d'un style par defaut
+                    # (enregistre depuis une couche verrouillee) n'est pas
+                    # une regle de style ; le verrou D2 est l'affaire du
+                    # perimetre de la session.
+                    layer.setReadOnly(False)
+                    self._log(f"Style par defaut de {schema}.{table} : readOnly=1 ignore", Qgis.MessageLevel.Warning)
                 if isinstance(result, tuple):
                     ok = result[1] if isinstance(result[0], str) else result[0]
                 else:
@@ -3104,12 +3125,14 @@ class ConstructelBridgePlugin:
         `wyre` de nos serveurs passent en lecture seule dans QGIS, avec
         message. La barriere reelle reste le serveur (RLS + trigger).
 
-        Revue 29/10 (I8) : le verrou suit la session -- les couches
-        verrouillees PAR le plugin sont memorisees et deverrouillees quand la
-        session ne l'exige plus (Reessayer, repli partage, droit d'ecriture,
-        dechargement) ; une couche en cours d'edition (setReadOnly() refuse)
-        est signalee au lieu d'etre comptee. Retourne le nombre de couches
-        verrouillees par cet appel."""
+        Revue 29/10 (I8) et revue 2 (I-1/I-2) : le verrou est marque SUR la
+        couche (propriete personnalisee SCOPE_LOCK_PROPERTY : relue avec le
+        projet, recopiee par clone, copier-coller et .qlr) et suit la
+        session. Couche marquee : reverrouillee si la session l'exige (projet
+        rouvert, couche dupliquee), sinon liberee et demarquee. Couche non
+        marquee deja en lecture seule : posee par la personne, jamais
+        touchee. setReadOnly() refuse (couche en cours d'edition) : signale.
+        Retourne le nombre de couches verrouillees par cet appel."""
         scope = self._scope if (self._connected and self._auth_mode == AUTH_MODE_NOMINAL) else None
         known_hosts = {h for h in (DEFAULT_HOST, BE_HOST) if h}
         if layers is None:
@@ -3118,20 +3141,20 @@ class ConstructelBridgePlugin:
         for layer in layers:
             if not isinstance(layer, QgsVectorLayer) or layer.providerType() != "postgres":
                 continue
-            layer_id = layer.id()
             uri = QgsDataSourceUri(layer.source())
             try:
+                ours = _has_scope_lock(layer)
                 if uri.host() in known_hosts and should_lock_layer(uri.schema(), scope):
-                    if layer_id in self._locked_layer_ids or layer.isReadOnly():
-                        continue
+                    if layer.isReadOnly():
+                        continue  # deja verrouillee (par nous, ou par la personne)
                     if layer.setReadOnly(True):
-                        self._locked_layer_ids.add(layer_id)
+                        layer.setCustomProperty(SCOPE_LOCK_PROPERTY, "1")
                         locked += 1
                     else:
                         busy.append(layer.name())
-                elif layer_id in self._locked_layer_ids:
+                elif ours:
                     layer.setReadOnly(False)
-                    self._locked_layer_ids.discard(layer_id)
+                    layer.removeCustomProperty(SCOPE_LOCK_PROPERTY)
                     unlocked += 1
             except Exception as exc:  # noqa: BLE001 -- couche exotique
                 self._log(f"Read-only lock failed on {layer.name()}: {exc}", Qgis.MessageLevel.Warning)
@@ -3151,11 +3174,11 @@ class ConstructelBridgePlugin:
         """Leve tous les verrous poses par le plugin (dechargement)."""
         for layer in QgsProject.instance().mapLayers().values():
             try:
-                if layer.id() in self._locked_layer_ids:
+                if _has_scope_lock(layer):
                     layer.setReadOnly(False)
+                    layer.removeCustomProperty(SCOPE_LOCK_PROPERTY)
             except Exception:  # noqa: BLE001 -- couche deja detruite
                 pass
-        self._locked_layer_ids = set()
 
     def _on_before_commit(self):
         layer = self.iface.activeLayer()

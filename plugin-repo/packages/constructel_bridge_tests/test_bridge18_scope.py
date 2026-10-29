@@ -289,7 +289,7 @@ def test_lock_is_lifted_when_the_session_falls_back_to_shared(bp18, monkeypatch)
 
     assert mine.read_only is False
     assert user_locked.read_only is True
-    assert plugin._locked_layer_ids == set()
+    assert mine.customProperty("constructel_bridge/scope_lock") is None
 
 
 def test_lock_is_lifted_when_write_capability_appears(bp18, monkeypatch):
@@ -316,7 +316,7 @@ def test_layer_in_edit_mode_is_reported_not_counted(bp18, monkeypatch):
 
     assert plugin._apply_scope_to_layers() == 0
     assert layer.read_only is False
-    assert plugin._locked_layer_ids == set()
+    assert layer.customProperty("constructel_bridge/scope_lock") is None
     assert bp18.tr("scope.layers_lock_busy", names="Conduites") in plugin.iface.messageBar().warnings()
 
 
@@ -361,17 +361,24 @@ def test_plugin_lock_is_not_written_into_the_project(bp18, monkeypatch):
     plugin = _plugin(bp18, monkeypatch, VIEWER)
     layer = _layer(_src("wyre", "ducts"))
     layer._layer_id = "ducts_1234"
-    QgsProject.instance().addMapLayer(layer)
+    user_locked = _layer(_src("wyre", "cables"))
+    user_locked._layer_id = "cables_5678"
+    user_locked.read_only = True  # verrou de la personne
+    for lyr in (layer, user_locked):
+        QgsProject.instance().addMapLayer(lyr)
     plugin._apply_scope_to_layers()
     ours = _Elem(children={"id": _Elem("ducts_1234")}, attrs={"readOnly": "1"})
-    theirs = _Elem(children={"id": _Elem("other_9")}, attrs={"readOnly": "1"})
+    theirs = _Elem(children={"id": _Elem("cables_5678")}, attrs={"readOnly": "1"})
+    unknown = _Elem(children={"id": _Elem("other_9")}, attrs={"readOnly": "1"})
+    elems = [ours, theirs, unknown]
     doc = SimpleNamespace(elementsByTagName=lambda _t: SimpleNamespace(
-        count=lambda: 2, at=lambda i: [ours, theirs][i]))
+        count=lambda: len(elems), at=lambda i: elems[i]))
 
     plugin._strip_scope_locks_from_dom(doc)
 
     assert ours.attrs["readOnly"] == "0"
-    assert theirs.attrs["readOnly"] == "1"
+    assert theirs.attrs["readOnly"] == "1"  # revue 2 (I-1) : jamais efface
+    assert unknown.attrs["readOnly"] == "1"
 
 
 # --- M6 / M7 ----------------------------------------------------------------
@@ -405,3 +412,92 @@ def test_missing_right_is_not_reported_as_out_of_perimeter(bp18, monkeypatch, me
     layer.raiseError.emit(message)
 
     assert plugin.iface.messageBar().warnings() == [bp18.tr(key, layer="Cables")]
+
+
+# --- revue 2 (I-1/I-2) : verrou marque sur la couche -------------------------
+
+
+def _reopen(layer_id, **attrs):
+    """Le projet est ferme puis rouvert : nouvelle instance, meme id, et
+    ce que le projet enregistre a garde (marqueur, readOnly retire)."""
+    from qgis.core import QgsProject
+
+    QgsProject.instance()._layers.clear()
+    again = _layer(_src("wyre", "ducts"))
+    again._layer_id = layer_id
+    for key, value in attrs.items():
+        setattr(again, key, value)
+    QgsProject.instance().addMapLayer(again)
+    return again
+
+
+def test_reopened_project_layer_is_locked_again(bp18, monkeypatch):
+    # Sonde de revue : fermer/rouvrir rendait la couche editable sans network.write.
+    from qgis.core import QgsProject
+
+    plugin = _plugin(bp18, monkeypatch, VIEWER)
+    first = _layer(_src("wyre", "ducts"))
+    first._layer_id = "ducts_abc"
+    QgsProject.instance().addMapLayer(first)
+    assert plugin._apply_scope_to_layers() == 1 and first.read_only is True
+
+    again = _reopen("ducts_abc")  # projet enregistre par 1.7.x / sans marqueur
+    plugin._on_layers_added_scope([again])
+    assert again.read_only is True
+
+    marked = _reopen("ducts_abc")
+    marked.setCustomProperty("constructel_bridge/scope_lock", "1")  # marqueur relu avec le projet
+    plugin._apply_scope_to_layers()
+    assert marked.read_only is True
+
+
+def test_user_readonly_layer_reusing_an_old_id_is_never_unlocked(bp18, monkeypatch):
+    # Sonde de revue : « Enregistrer sous » reutilise les ids.
+    from qgis.core import QgsProject
+
+    plugin = _plugin(bp18, monkeypatch, VIEWER)
+    first = _layer(_src("wyre", "ducts"))
+    first._layer_id = "ducts_abc"
+    QgsProject.instance().addMapLayer(first)
+    plugin._apply_scope_to_layers()
+    other = _reopen("ducts_abc", read_only=True)
+    plugin._apply_scope_to_layers()
+
+    plugin._auth_mode = bn.AUTH_MODE_SHARED
+    plugin._scope = None
+    plugin._apply_scope_to_layers()
+
+    assert other.read_only is True
+
+
+def test_duplicated_locked_layer_is_followed_and_released(bp18, monkeypatch):
+    # I-2 : clone() / copier-coller recopient readOnly ET le marqueur.
+    plugin = _plugin(bp18, monkeypatch, DESIGNER)
+    clone = _layer(_src("wyre", "ducts"), "Conduites copie")
+    clone.read_only = True
+    clone.setCustomProperty("constructel_bridge/scope_lock", "1")
+
+    plugin._on_layers_added_scope([clone])
+
+    assert clone.read_only is False
+    assert clone.customProperty("constructel_bridge/scope_lock") is None
+
+
+def test_readonly_from_a_db_default_style_is_ignored(bp18, monkeypatch):
+    # I-2 : un style par defaut enregistre depuis une couche verrouillee
+    # porte readOnly="1" (categorie LayerConfiguration).
+    from qgis.core import QgsProject
+
+    plugin = _plugin(bp18, monkeypatch, DESIGNER)
+    layer = _layer(_src("wyre", "ducts"))
+    layer.loadNamedStyle = lambda path: setattr(layer, "read_only", True) or ("", True)
+    layer.triggerRepaint = lambda: None
+    QgsProject.instance().addMapLayer(layer)
+    cursor = SimpleNamespace(execute=lambda *a: None, fetchone=lambda: ('<qgis readOnly="1"/>',),
+                             close=lambda: None)
+    plugin._conn = SimpleNamespace(cursor=lambda: cursor)
+    monkeypatch.setattr(plugin, "_ensure_ref_layers", lambda: None)
+
+    plugin._apply_db_default_styles()
+
+    assert layer.read_only is False
