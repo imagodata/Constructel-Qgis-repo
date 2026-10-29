@@ -995,6 +995,13 @@ class ConstructelBridgePlugin:
         except Exception as exc:
             self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
 
+        # Volet D2 : lecture seule selon le perimetre, projet Bridge ou non
+        # (toute couche de nos serveurs est concernee).
+        try:
+            self._apply_scope_to_layers()
+        except Exception as exc:
+            self._log(f"Scope lock failed: {exc}", Qgis.MessageLevel.Warning)
+
         if not self._connected:
             return
 
@@ -1556,6 +1563,11 @@ class ConstructelBridgePlugin:
             bridge_sketcher.apply_all_translations()
         except Exception as exc:
             self._log(f"i18n apply failed: {exc}", Qgis.MessageLevel.Warning)
+
+        try:
+            self._apply_scope_to_layers()
+        except Exception as exc:
+            self._log(f"Scope lock failed: {exc}", Qgis.MessageLevel.Warning)
 
     # =====================================================================
     # Identification et enregistrement utilisateur
@@ -2548,6 +2560,12 @@ class ConstructelBridgePlugin:
             if isinstance(layer, QgsVectorLayer):
                 self._hook_single_layer(layer)
                 bridge_sketcher.apply_to_layer(layer)
+        # Volet D2 : les couches ajoutees apres la connexion suivent le
+        # perimetre de la session (lecture seule sans network.write).
+        try:
+            self._apply_scope_to_layers(layers)
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Scope lock on added layers failed: {exc}", Qgis.MessageLevel.Warning)
 
     def _hook_single_layer(self, layer: QgsVectorLayer):
         provider = layer.dataProvider()
@@ -2558,7 +2576,81 @@ class ConstructelBridgePlugin:
         except TypeError:
             pass
         layer.beforeCommitChanges.connect(self._on_before_commit)
+        # Volet D2 : un refus serveur (42501, RLS, trg_enforce_gis_scope) sur
+        # un commit est traduit en message clair. Un seul slot par couche.
+        self._connect_layer_error(layer)
         self._log(tr("hook.installed", layer=layer.name()), Qgis.MessageLevel.Info)
+
+    def _connect_layer_error(self, layer):
+        signal = getattr(layer, "raiseError", None)
+        if signal is None:
+            return
+        slots = getattr(self, "_layer_error_slots", None)
+        if slots is None:
+            slots = self._layer_error_slots = {}
+        previous = slots.get(id(layer))
+        if previous is not None:
+            try:
+                signal.disconnect(previous)
+            except TypeError:
+                pass
+
+        def _slot(message, _layer=layer):
+            self._on_layer_error(_layer, message)
+
+        try:
+            signal.connect(_slot)
+        except Exception:  # noqa: BLE001 -- signal absent sur cette version de QGIS
+            return
+        slots[id(layer)] = _slot
+
+    def _on_layer_error(self, layer, message):
+        """Message clair quand le serveur refuse une ecriture pour raison de
+        perimetre ou de capacite (session nominative seulement : en repli,
+        ftth_editor voit et ecrit tout, D6)."""
+        if self._auth_mode != AUTH_MODE_NOMINAL:
+            return
+        if not is_scope_write_refusal(str(message)):
+            return
+        text = tr("scope.write_refused", layer=layer.name())
+        self._log(f"{text} -- {message}", Qgis.MessageLevel.Warning)
+        self.iface.messageBar().pushWarning("Constructel Bridge", text)
+
+    def _apply_scope_to_layers(self, layers=None) -> int:
+        """Volet D2 : sans capacite network.write, les couches des schemas
+        reseau (wyre, osiris...) de nos serveurs passent en lecture seule
+        dans QGIS, avec message. public/ref et les serveurs tiers ne sont
+        jamais touches ; mode partage et perimetre inconnu = statu quo. La
+        barriere reelle reste le serveur (RLS + trigger). Retourne le
+        nombre de couches verrouillees par cet appel."""
+        scope = self._scope if self._auth_mode == AUTH_MODE_NOMINAL else None
+        if scope is None or scope.network_write:
+            return 0
+        known_hosts = {h for h in (DEFAULT_HOST, BE_HOST) if h}
+        if layers is None:
+            layers = QgsProject.instance().mapLayers().values()
+        locked = 0
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer) or layer.providerType() != "postgres":
+                continue
+            uri = QgsDataSourceUri(layer.source())
+            if uri.host() not in known_hosts:
+                continue
+            if not should_lock_layer(uri.schema(), scope):
+                continue
+            try:
+                if layer.isReadOnly():
+                    continue
+                layer.setReadOnly(True)
+            except Exception as exc:  # noqa: BLE001 -- couche exotique
+                self._log(f"Read-only lock failed on {layer.name()}: {exc}", Qgis.MessageLevel.Warning)
+                continue
+            locked += 1
+        if locked:
+            text = tr("scope.layers_locked", count=locked)
+            self._log(text, Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushWarning("Constructel Bridge", text)
+        return locked
 
     def _on_before_commit(self):
         layer = self.iface.activeLayer()
@@ -2743,6 +2835,7 @@ class ConstructelBridgePlugin:
 
             # Installer les hooks d'edition
             self._hook_layers()
+            self._apply_scope_to_layers()
 
             self.iface.messageBar().pushMessage(
                 "Constructel Bridge",

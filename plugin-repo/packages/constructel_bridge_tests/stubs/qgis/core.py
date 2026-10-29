@@ -7,7 +7,9 @@ failing import's traceback names exactly what's missing.
 import re
 
 
-_URI_TOKEN_RE = re.compile(r"(\w+)=('([^']*)'|\"([^\"]*)\"|(\S+))")
+# Tokens key='v', key="schema"."table" (kept WITH quotes so schema()/table()
+# can split them, as in a native QGIS postgres URI) or bare key=v.
+_URI_TOKEN_RE = re.compile(r"(\w+)=('([^']*)'|(\"[^\"]*\"(?:\.\"[^\"]*\")?)|(\S+))")
 _URI_BARE_RE = re.compile(r"^[\w.\-]+$")
 
 
