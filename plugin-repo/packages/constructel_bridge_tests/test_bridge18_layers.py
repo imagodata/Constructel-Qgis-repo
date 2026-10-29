@@ -459,10 +459,21 @@ def test_read_project_keeps_xml_escaped_sql_filter(bp18, monkeypatch, tmp_path, 
     assert "&lt;&gt;" in project.read_xml
 
 
-# --- _ensure_ref_layers (couche cachee v_form_lists) -----------------------------------
+# --- _ensure_ref_layers (couche cachee v_form_lists, revue 29/10 I7) ----------------
 
 
-def test_ensure_ref_layers_nominal_uses_authcfg_without_password(bp18, monkeypatch, tmp_path):
+@pytest.fixture
+def form_lists_project(monkeypatch):
+    """Projet Bridge dont une liste de valeurs depend de v_form_lists."""
+    state = {"bridge": True, "needs": True}
+    monkeypatch.setitem(sys.modules, "constructel_bridge.bridge_project_init",
+                        SimpleNamespace(is_bridge_project=lambda: state["bridge"]))
+    import constructel_bridge.bridge_sketcher as sketcher
+    monkeypatch.setattr(sketcher, "value_relations_use_form_lists", lambda project: state["needs"])
+    return state
+
+
+def test_ensure_ref_layers_nominal_uses_authcfg_without_password(bp18, monkeypatch, tmp_path, form_lists_project):
     from qgis.core import QgsProject
 
     plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
@@ -477,6 +488,58 @@ def test_ensure_ref_layers_nominal_uses_authcfg_without_password(bp18, monkeypat
     assert uri.authConfigId() == "9i19s56"
     assert uri.password() == ""
     assert uri.param("sslmode") == "verify-full"
+
+
+def test_ensure_ref_layers_shared_uses_fixed_config_never_a_plaintext_password(
+        bp18, monkeypatch, tmp_path, form_lists_project):
+    from qgis.core import QgsProject
+
+    plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
+
+    plugin._ensure_ref_layers()
+
+    (layer,) = QgsProject.instance().mapLayers().values()
+    uri = _uri(bp18, layer.source())
+    assert uri.username() == "ftth_editor"
+    assert uri.authConfigId() == "9i19s56"
+    assert uri.password() == ""
+    assert uri.param("sslmode") == "require"  # D-TLS-2
+
+
+def test_ensure_ref_layers_shared_without_fixed_config_adds_nothing(bp18, monkeypatch, tmp_path, form_lists_project):
+    from qgis.core import QgsApplication, QgsProject
+
+    plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
+    QgsApplication.authManager().removeAuthenticationConfig("9i19s56")
+
+    plugin._ensure_ref_layers()
+
+    assert QgsProject.instance().mapLayers() == {}
+
+
+@pytest.mark.parametrize("bridge, needs", [(False, True), (True, False)])
+def test_ensure_ref_layers_only_for_bridge_projects_that_need_it(
+        bp18, monkeypatch, tmp_path, form_lists_project, bridge, needs):
+    # I7 : plus d'injection d'une couche cachee dans un projet tiers.
+    from qgis.core import QgsProject
+
+    form_lists_project.update(bridge=bridge, needs=needs)
+    plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
+
+    plugin._ensure_ref_layers()
+
+    assert QgsProject.instance().mapLayers() == {}
+
+
+def test_value_relations_use_form_lists_detection(sk):
+    by_name = _VrLayer([{"LayerName": "v_form_lists", "Value": "label_fr"}])
+    by_source = _VrLayer([{"LayerName": "Listes formulaires",
+                           "LayerSource": QML_SOURCE.replace('"wyre"."zone_pop" (geom)', '"ref"."v_form_lists"')}])
+    unrelated = _VrLayer([{"LayerName": "zone_pop", "LayerSource": QML_SOURCE}])
+
+    assert sk.value_relations_use_form_lists(_vr_project(by_name)) is True
+    assert sk.value_relations_use_form_lists(_vr_project(by_source)) is True
+    assert sk.value_relations_use_form_lists(_vr_project(unrelated)) is False
 
 
 # --- initialisation de projet (bridge_project_init) ---------------------------------

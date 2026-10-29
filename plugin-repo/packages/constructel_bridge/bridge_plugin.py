@@ -71,14 +71,16 @@ from .bridge_nominatif import (
     datasource_param,
     embedded_ca_paths,
     force_datasource_sslmode,
-    is_scope_write_refusal,
     normalize_login,
     parse_session_scope,
     resolve_pg_login,
     rewrite_datasource_identity,
     rewrite_datasource_nominal,
     scope_kind,
+    SCOPE_REFUSAL_PERIMETER,
+    SCOPE_REFUSAL_RIGHT,
     scope_labels,
+    scope_refusal_kind,
     should_lock_layer,
     should_reprompt,
 )
@@ -846,6 +848,10 @@ class ConstructelBridgePlugin:
         self._banner = None  # (motif, login) du bandeau de repli D7
         self._banner_item = None
         self._action_retry = None
+        # Revue 29/10 (I8/M6) : couches passees en lecture seule PAR le
+        # plugin (ids), et slots raiseError par id de couche.
+        self._locked_layer_ids = set()
+        self._layer_error_slots = {}
 
     # =====================================================================
     # QGIS Plugin lifecycle
@@ -995,6 +1001,10 @@ class ConstructelBridgePlugin:
         # pour que le projet ecrit soit portable (pas d'authcfg user-specific).
         QgsProject.instance().writeProject.connect(self._on_write_project)
 
+        # Revue 29/10 (M8) : toute couche ajoutee au projet courant (Bridge
+        # ou non, navigateur compris) suit le perimetre de la session.
+        QgsProject.instance().layersAdded.connect(self._on_layers_added_scope)
+
         # D-TLS-2 : les projets 1.7.x et ceux enregistres en mode partage
         # portent sslmode=require avec authcfg=9i19s56. Quand cette config
         # porte le mot de passe AD, QGIS ouvrirait leurs couches en require
@@ -1022,6 +1032,12 @@ class ConstructelBridgePlugin:
             QgsProject.instance().writeProject.disconnect(self._on_write_project)
         except TypeError:
             pass
+        try:
+            QgsProject.instance().layersAdded.disconnect(self._on_layers_added_scope)
+        except TypeError:
+            pass
+        # I8 : deconnexion -> plus aucun verrou pose par le plugin.
+        self._release_scope_locks()
         if getattr(self, "_path_preprocessor_id", None):
             QgsPathResolver.removePathPreprocessor(self._path_preprocessor_id)
             self._path_preprocessor_id = None
@@ -1116,6 +1132,22 @@ class ConstructelBridgePlugin:
             self._strip_authcfg_from_dom(doc)
         except Exception as exc:
             self._log(f"Strip authcfg from DOM failed: {exc}", Qgis.MessageLevel.Warning)
+        try:
+            self._strip_scope_locks_from_dom(doc)
+        except Exception as exc:
+            self._log(f"Strip read-only locks from DOM failed: {exc}", Qgis.MessageLevel.Warning)
+
+    def _strip_scope_locks_from_dom(self, doc):
+        """Revue 29/10 (I8) : la lecture seule posee par le plugin depend de
+        la session du poste, elle ne doit pas etre ecrite dans le projet
+        (readOnly="1" sur <maplayer>, relu tel quel par QGIS)."""
+        if not self._locked_layer_ids:
+            return
+        layers = doc.elementsByTagName("maplayer")
+        for i in range(layers.count()):
+            elem = layers.at(i).toElement()
+            if elem.firstChildElement("id").text() in self._locked_layer_ids:
+                elem.setAttribute("readOnly", "0")
 
     def _strip_authcfg_from_dom(self, doc):
         """Parcourt le DOM du projet et retire les authcfg des datasources PG.
@@ -1889,6 +1921,12 @@ class ConstructelBridgePlugin:
             project_hooks = not silent
         if project_hooks:
             self._apply_project_hooks()
+        # I8 : le verrou suit la session (pose en nominatif sans
+        # network.write, leve en partage ou avec le droit d'ecriture).
+        try:
+            self._apply_scope_to_layers()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Scope lock failed: {exc}", Qgis.MessageLevel.Warning)
 
         if nominal:
             self.iface.messageBar().pushSuccess(
@@ -2488,8 +2526,21 @@ class ConstructelBridgePlugin:
         Les formulaires QGIS utilisent des ValueRelation qui referencent
         ref.v_form_lists. Cette couche doit exister dans le projet pour
         que les listes deroulantes fonctionnent.
+
+        Revue 29/10 (I7) : inerte en 1.7.x (TypeError), cette injection
+        touchait TOUT projet ouvert. Desormais : projet Bridge dont une liste
+        de valeurs depend de v_form_lists seulement, et toujours via une
+        config Auth Manager a id fixe -- jamais de mot de passe en clair.
         """
         project = QgsProject.instance()
+        try:
+            from .bridge_project_init import is_bridge_project
+
+            if not is_bridge_project() or not bridge_sketcher.value_relations_use_form_lists(project):
+                return
+        except Exception as exc:  # noqa: BLE001 -- confort, jamais bloquant
+            self._log(f"v_form_lists : projet non analysable ({exc})", Qgis.MessageLevel.Warning)
+            return
         # Verifier si v_form_lists est deja chargee
         for layer in project.mapLayers().values():
             if not isinstance(layer, QgsVectorLayer):
@@ -2502,7 +2553,6 @@ class ConstructelBridgePlugin:
                 return  # Deja chargee
 
         # Charger la couche cachee
-        password = getattr(self, "_password", None) or _DEFAULT_PW
         uri = QgsDataSourceUri()
         if self._auth_mode == AUTH_MODE_NOMINAL and self._pg_login:
             # Session nominative : login + config fixe, aucun mot de passe.
@@ -2512,9 +2562,16 @@ class ConstructelBridgePlugin:
                 _FIXED_AUTH_CFG_IDS["wyre"],
             )
         else:
+            # Session partagee : config fixe 9i19s56 (identifiant partage),
+            # sslmode 1.7.x ; sans elle, pas de couche plutot qu'un mot de
+            # passe en clair dans le projet.
+            fixed_cfg = _fixed_authcfg_for_user(DEFAULT_USER)
+            if not fixed_cfg:
+                self._log("v_form_lists non chargee : config Auth Manager partagee absente")
+                return
             uri.setConnection(
                 DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
-                DEFAULT_USER, password, _ssl_mode_enum(DEFAULT_SSLMODE),
+                DEFAULT_USER, "", _ssl_mode_enum(DEFAULT_SSLMODE), fixed_cfg,
             )
         uri.setDataSource("ref", "v_form_lists", None, "", "rid")
         layer = QgsVectorLayer(uri.uri(False), "v_form_lists", "postgres")
@@ -2948,11 +3005,23 @@ class ConstructelBridgePlugin:
             if isinstance(layer, QgsVectorLayer):
                 self._hook_single_layer(layer)
 
+        # Un seul branchement, meme apres plusieurs lectures de projet.
+        try:
+            project.layersAdded.disconnect(self._on_layers_added)
+        except TypeError:
+            pass
         project.layersAdded.connect(self._on_layers_added)
         self._layer_hooks_installed = True
         self._log(tr("hook.all_installed"))
 
     def _unhook_layers(self):
+        # M6 : slots raiseError retires au dechargement du plugin.
+        for layer, slot in self._layer_error_slots.values():
+            try:
+                layer.raiseError.disconnect(slot)
+            except (TypeError, RuntimeError, AttributeError):
+                pass  # couche supprimee entre-temps
+        self._layer_error_slots = {}
         if not self._layer_hooks_installed:
             return
         try:
@@ -2966,8 +3035,11 @@ class ConstructelBridgePlugin:
             if isinstance(layer, QgsVectorLayer):
                 self._hook_single_layer(layer)
                 bridge_sketcher.apply_to_layer(layer)
-        # Volet D2 : les couches ajoutees apres la connexion suivent le
-        # perimetre de la session (lecture seule sans network.write).
+
+    def _on_layers_added_scope(self, layers):
+        """Volet D2 / M8 : les couches ajoutees apres la connexion suivent le
+        perimetre de la session (lecture seule sans network.write), projet
+        Bridge ou non."""
         try:
             self._apply_scope_to_layers(layers)
         except Exception as exc:  # noqa: BLE001 -- jamais bloquant
@@ -2991,14 +3063,14 @@ class ConstructelBridgePlugin:
         signal = getattr(layer, "raiseError", None)
         if signal is None:
             return
-        slots = getattr(self, "_layer_error_slots", None)
-        if slots is None:
-            slots = self._layer_error_slots = {}
-        previous = slots.get(id(layer))
+        # M6 : indexe sur layer.id() (id(objet) peut etre reutilise par
+        # Python) ; la couche est gardee pour deconnecter a l'unload.
+        layer_id = layer.id()
+        previous = self._layer_error_slots.pop(layer_id, None)
         if previous is not None:
             try:
-                signal.disconnect(previous)
-            except TypeError:
+                previous[0].raiseError.disconnect(previous[1])
+            except (TypeError, RuntimeError):
                 pass
 
         def _slot(message, _layer=layer):
@@ -3008,7 +3080,7 @@ class ConstructelBridgePlugin:
             signal.connect(_slot)
         except Exception:  # noqa: BLE001 -- signal absent sur cette version de QGIS
             return
-        slots[id(layer)] = _slot
+        self._layer_error_slots[layer_id] = (layer, _slot)
 
     def _on_layer_error(self, layer, message):
         """Message clair quand le serveur refuse une ecriture pour raison de
@@ -3016,47 +3088,74 @@ class ConstructelBridgePlugin:
         ftth_editor voit et ecrit tout, D6)."""
         if self._auth_mode != AUTH_MODE_NOMINAL:
             return
-        if not is_scope_write_refusal(str(message)):
+        kind = scope_refusal_kind(str(message))
+        if kind is None:
             return
-        text = tr("scope.write_refused", layer=layer.name())
+        key = {
+            SCOPE_REFUSAL_PERIMETER: "scope.write_refused_perimeter",
+            SCOPE_REFUSAL_RIGHT: "scope.write_refused_right",
+        }.get(kind, "scope.write_refused")
+        text = tr(key, layer=layer.name())
         self._log(f"{text} -- {message}", Qgis.MessageLevel.Warning)
         self.iface.messageBar().pushWarning("Constructel Bridge", text)
 
     def _apply_scope_to_layers(self, layers=None) -> int:
-        """Volet D2 : sans capacite network.write, les couches des schemas
-        reseau (wyre, osiris...) de nos serveurs passent en lecture seule
-        dans QGIS, avec message. public/ref et les serveurs tiers ne sont
-        jamais touches ; mode partage et perimetre inconnu = statu quo. La
-        barriere reelle reste le serveur (RLS + trigger). Retourne le
-        nombre de couches verrouillees par cet appel."""
-        scope = self._scope if self._auth_mode == AUTH_MODE_NOMINAL else None
-        if scope is None or scope.network_write:
-            return 0
+        """Volet D2 : sans capacite network.write, les couches du schema
+        `wyre` de nos serveurs passent en lecture seule dans QGIS, avec
+        message. La barriere reelle reste le serveur (RLS + trigger).
+
+        Revue 29/10 (I8) : le verrou suit la session -- les couches
+        verrouillees PAR le plugin sont memorisees et deverrouillees quand la
+        session ne l'exige plus (Reessayer, repli partage, droit d'ecriture,
+        dechargement) ; une couche en cours d'edition (setReadOnly() refuse)
+        est signalee au lieu d'etre comptee. Retourne le nombre de couches
+        verrouillees par cet appel."""
+        scope = self._scope if (self._connected and self._auth_mode == AUTH_MODE_NOMINAL) else None
         known_hosts = {h for h in (DEFAULT_HOST, BE_HOST) if h}
         if layers is None:
             layers = QgsProject.instance().mapLayers().values()
-        locked = 0
+        locked, unlocked, busy = 0, 0, []
         for layer in layers:
             if not isinstance(layer, QgsVectorLayer) or layer.providerType() != "postgres":
                 continue
+            layer_id = layer.id()
             uri = QgsDataSourceUri(layer.source())
-            if uri.host() not in known_hosts:
-                continue
-            if not should_lock_layer(uri.schema(), scope):
-                continue
             try:
-                if layer.isReadOnly():
-                    continue
-                layer.setReadOnly(True)
+                if uri.host() in known_hosts and should_lock_layer(uri.schema(), scope):
+                    if layer_id in self._locked_layer_ids or layer.isReadOnly():
+                        continue
+                    if layer.setReadOnly(True):
+                        self._locked_layer_ids.add(layer_id)
+                        locked += 1
+                    else:
+                        busy.append(layer.name())
+                elif layer_id in self._locked_layer_ids:
+                    layer.setReadOnly(False)
+                    self._locked_layer_ids.discard(layer_id)
+                    unlocked += 1
             except Exception as exc:  # noqa: BLE001 -- couche exotique
                 self._log(f"Read-only lock failed on {layer.name()}: {exc}", Qgis.MessageLevel.Warning)
-                continue
-            locked += 1
         if locked:
             text = tr("scope.layers_locked", count=locked)
             self._log(text, Qgis.MessageLevel.Warning)
             self.iface.messageBar().pushWarning("Constructel Bridge", text)
+        if busy:
+            text = tr("scope.layers_lock_busy", names=", ".join(busy))
+            self._log(text, Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushWarning("Constructel Bridge", text)
+        if unlocked:
+            self._log(f"{unlocked} couche(s) reseau rendue(s) a l'edition (perimetre de session)")
         return locked
+
+    def _release_scope_locks(self):
+        """Leve tous les verrous poses par le plugin (dechargement)."""
+        for layer in QgsProject.instance().mapLayers().values():
+            try:
+                if layer.id() in self._locked_layer_ids:
+                    layer.setReadOnly(False)
+            except Exception:  # noqa: BLE001 -- couche deja detruite
+                pass
+        self._locked_layer_ids = set()
 
     def _on_before_commit(self):
         layer = self.iface.activeLayer()

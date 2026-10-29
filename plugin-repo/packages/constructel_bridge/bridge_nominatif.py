@@ -390,20 +390,43 @@ def scope_labels(ids: Sequence[str], names: dict) -> list[str]:
 
 def should_lock_layer(schema: str, scope: SessionScope | None) -> bool:
     """True when a layer of *schema* must be set read-only in QGIS: a
-    nominative session without network.write on an operator schema. Shared
-    mode (scope None) and the public/ref schemas are never locked."""
+    nominative session without network.write, on the ``wyre`` schema only
+    (plan D2 ; revue 29/10 I8 -- chantier.*, docs.* stay editable, spec
+    D11 ; public/ref/osiris untouched). Shared mode (scope None): never."""
     if scope is None or scope.network_write:
         return False
-    return schema not in ("public", "ref", "")
+    return schema == "wyre"
 
 
-_SCOPE_REFUSAL_RE = re.compile(
-    r"permission denied|row-level security|42501|gis_scope|perimetre|périmètre",
+# Revue 29/10 (M7) : « hors périmètre » (RLS, trigger de périmètre) et
+# « droit manquant » (GRANT) sont distingués quand le texte du serveur le
+# permet (anglais ou français) ; un 42501 sans autre indice reste neutre.
+SCOPE_REFUSAL_PERIMETER = "perimeter"
+SCOPE_REFUSAL_RIGHT = "right"
+SCOPE_REFUSAL_UNKNOWN = "unknown"
+
+_PERIMETER_REFUSAL_RE = re.compile(
+    r"row-level security|sécurité au niveau ligne|gis_scope|perimetre|périmètre",
     re.IGNORECASE,
 )
+_RIGHT_REFUSAL_RE = re.compile(r"permission denied|droit refusé", re.IGNORECASE)
+
+
+def scope_refusal_kind(message: str) -> str | None:
+    """SCOPE_REFUSAL_PERIMETER, SCOPE_REFUSAL_RIGHT, SCOPE_REFUSAL_UNKNOWN
+    (42501 seul) ou None quand l'erreur de commit n'est pas un refus
+    d'écriture pour raison de périmètre ou de droits."""
+    text = message or ""
+    if _PERIMETER_REFUSAL_RE.search(text):
+        return SCOPE_REFUSAL_PERIMETER
+    if _RIGHT_REFUSAL_RE.search(text):
+        return SCOPE_REFUSAL_RIGHT
+    if "42501" in text:
+        return SCOPE_REFUSAL_UNKNOWN
+    return None
 
 
 def is_scope_write_refusal(message: str) -> bool:
     """True when a commit error message is the server refusing a write for
     scope/capability reasons (RLS policy, trg_enforce_gis_scope, 42501)."""
-    return bool(_SCOPE_REFUSAL_RE.search(message or ""))
+    return scope_refusal_kind(message) is not None

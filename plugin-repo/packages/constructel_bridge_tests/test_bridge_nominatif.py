@@ -325,7 +325,10 @@ def test_should_lock_layer_only_network_schemas_without_write():
     ro = bn.parse_session_scope(("VIEWER", True, False, ["m1"], [], [], []))
     rw = bn.parse_session_scope(("DESIGNER", True, True, ["m1"], ["m1"], [], []))
     assert bn.should_lock_layer("wyre", ro) is True
-    assert bn.should_lock_layer("osiris", ro) is True
+    # Revue 29/10 (I8) : schema wyre seulement (plan D2) ; chantier/docs
+    # restent modifiables (spec D11), osiris n'est pas du reseau edite.
+    for schema in ("osiris", "chantier", "docs"):
+        assert bn.should_lock_layer(schema, ro) is False, schema
     assert bn.should_lock_layer("public", ro) is False
     assert bn.should_lock_layer("ref", ro) is False
     assert bn.should_lock_layer("wyre", rw) is False
@@ -344,3 +347,18 @@ def test_scope_write_refusal_is_recognised(message):
 
 def test_unrelated_commit_error_is_not_a_scope_refusal():
     assert bn.is_scope_write_refusal("duplicate key value violates unique constraint") is False
+    assert bn.scope_refusal_kind("duplicate key value violates unique constraint") is None
+
+
+@pytest.mark.parametrize("message, kind", [
+    ('new row violates row-level security policy for table "cables"', bn.SCOPE_REFUSAL_PERIMETER),
+    ("la nouvelle ligne viole la politique de sécurité au niveau ligne pour la table « cables »",
+     bn.SCOPE_REFUSAL_PERIMETER),
+    ("ERROR: [gis_scope] hors perimetre (MRO 1234)", bn.SCOPE_REFUSAL_PERIMETER),
+    ("ERROR:  permission denied for table cables", bn.SCOPE_REFUSAL_RIGHT),
+    ("ERREUR:  droit refusé pour la table cables", bn.SCOPE_REFUSAL_RIGHT),
+    ("SQLSTATE 42501", bn.SCOPE_REFUSAL_UNKNOWN),
+])
+def test_scope_refusal_kind_distinguishes_perimeter_and_right(message, kind):
+    # Revue 29/10 (M7) : un droit manquant n'est pas presente comme « hors perimetre ».
+    assert bn.scope_refusal_kind(message) == kind

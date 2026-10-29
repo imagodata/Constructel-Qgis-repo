@@ -432,6 +432,28 @@ def rewrite_value_relation_sources(project, login: str, authcfg_id: str, hosts) 
     return patched
 
 
+def value_relations_use_form_lists(project) -> bool:
+    """True si au moins une liste de valeurs du projet cible
+    ``ref.v_form_lists`` (par LayerName ou par LayerSource) -- seule raison
+    de charger cette couche cachee (revue 29/10, I7)."""
+    from .bridge_nominatif import datasource_param
+
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        fields = layer.fields()
+        for i in range(fields.count()):
+            setup = layer.editorWidgetSetup(i)
+            if setup.type() != "ValueRelation":
+                continue
+            config = setup.config()
+            if config.get("LayerName") == "v_form_lists":
+                return True
+            if datasource_param(config.get("LayerSource") or "", "table") == "ref.v_form_lists":
+                return True
+    return False
+
+
 # =====================================================================
 # API publique — applique tout
 # =====================================================================

@@ -302,7 +302,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "scope.readonly": "read only",
         "scope.unknown": "perimeter unknown",
         "scope.layers_locked": "{count} network layer(s) set read-only (no network write right)",
-        "scope.write_refused": "Write refused by the server on {layer}: outside your perimeter or no write right.",
+        "scope.layers_lock_busy": "Layer(s) being edited, not set read-only: {names} (the server will refuse the write).",
+        "scope.write_refused": "Write refused by the server on {layer} (perimeter or rights, see the log).",
+        "scope.write_refused_perimeter": "Write refused by the server on {layer}: object outside your perimeter.",
+        "scope.write_refused_right": "Write refused by the server on {layer}: missing write right.",
     },
 
     # =====================================================================
@@ -602,7 +605,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "scope.readonly": "lecture seule",
         "scope.unknown": "périmètre inconnu",
         "scope.layers_locked": "{count} couche(s) réseau en lecture seule (pas de droit d'écriture réseau)",
-        "scope.write_refused": "Écriture refusée par le serveur sur {layer} : hors de ton périmètre ou sans droit d'écriture.",
+        "scope.layers_lock_busy": "Couche(s) en cours d'édition, non passée(s) en lecture seule : {names} (le serveur refusera l'écriture).",
+        "scope.write_refused": "Écriture refusée par le serveur sur {layer} (périmètre ou droits, voir le journal).",
+        "scope.write_refused_perimeter": "Écriture refusée par le serveur sur {layer} : objet hors de ton périmètre.",
+        "scope.write_refused_right": "Écriture refusée par le serveur sur {layer} : droit d'écriture manquant.",
     },
 
     # =====================================================================
@@ -902,6 +908,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "scope.readonly": "so leitura",
         "scope.unknown": "perimetro desconhecido",
         "scope.layers_locked": "{count} camada(s) de rede em so leitura (sem direito de escrita na rede)",
-        "scope.write_refused": "Escrita recusada pelo servidor em {layer}: fora do seu perimetro ou sem direito de escrita.",
+        "scope.layers_lock_busy": "Camada(s) em edicao, nao passada(s) a so leitura: {names} (o servidor recusara a escrita).",
+        "scope.write_refused": "Escrita recusada pelo servidor em {layer} (perimetro ou direitos, ver o registo).",
+        "scope.write_refused_perimeter": "Escrita recusada pelo servidor em {layer}: objeto fora do seu perimetro.",
+        "scope.write_refused_right": "Escrita recusada pelo servidor em {layer}: falta o direito de escrita.",
     },
 }

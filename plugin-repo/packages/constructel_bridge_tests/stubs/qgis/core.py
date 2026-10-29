@@ -510,6 +510,10 @@ class QgsVectorLayer:
     def name(self):
         return self._name
 
+    def id(self):
+        # Les doublures de test sous-classent sans appeler __init__.
+        return getattr(self, "_layer_id", None) or f"layer-{id(self)}"
+
     def providerType(self):
         return self._provider_type
 
