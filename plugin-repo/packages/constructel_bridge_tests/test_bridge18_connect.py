@@ -973,3 +973,109 @@ def test_ad_password_never_lands_in_the_shared_password_attribute(bp18, monkeypa
     assert nominal._password is None
     assert nominal._ad_password == "ad-pw2"
     assert nominal._init_conn_params()[1] == "ad-pw2"
+
+
+
+# --- revue 2 -----------------------------------------------------------------------
+
+
+def test_first_run_dialog_success_runs_the_onboarding_once(bp18, monkeypatch, tmp_path):
+    # I-3 (sonde de revue) : chemin de mise a jour normal (onboarding_done
+    # efface a chaque changement de version).
+    from qgis.core import QgsSettings
+
+    plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None, None], ask=(LOGIN, "ad-pw"))
+    QgsSettings().remove("constructel_bridge/onboarding_done")
+    runs = []
+
+    def _wizard(is_new):
+        runs.append(is_new)
+        QgsSettings().setValue("constructel_bridge/onboarding_done", True)
+
+    plugin._run_onboarding = _wizard
+
+    _start(plugin)
+
+    assert plugin._auth_mode == bn.AUTH_MODE_NOMINAL
+    assert runs == [False]
+
+
+def test_failed_connect_during_a_nominal_session_keeps_the_memorized_mode(bp18, monkeypatch, tmp_path):
+    # M1 (sonde de revue) : la session reste nominative, le mode memorise aussi.
+    plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None, _ldap_failed(), _ldap_failed()],
+                              stored_ad_pw="good", ask=[(LOGIN, "typo1"), (LOGIN, "typo2")])
+    _start(plugin)
+
+    plugin._on_connect()
+
+    assert plugin._auth_mode == bn.AUTH_MODE_NOMINAL
+    assert _mode() == bn.AUTH_MODE_NOMINAL
+
+
+def test_failed_retry_on_a_shared_workstation_memorizes_shared(bp18, monkeypatch, tmp_path):
+    plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [_refused(), None, _not_permitted()],
+                              stored_ad_pw="good", memorized=bn.AUTH_MODE_NOMINAL)
+    _start(plugin)
+    assert plugin._auth_mode == bn.AUTH_MODE_SHARED and _mode() == bn.AUTH_MODE_NOMINAL
+
+    plugin._on_retry_nominal()  # verdict serveur : login non actif, session partagee
+
+    assert _mode() == bn.AUTH_MODE_SHARED
+
+
+def test_failed_admin_rescue_leaves_the_nominal_session_untouched(bp18, monkeypatch, tmp_path):
+    # M2 (sonde de revue) : rien n'est pose ni reecrit avant le succes.
+    plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None, _refused()],
+                              stored_ad_pw="good", ask=[("ftth_editor", "wrong")])
+    _start(plugin)
+
+    plugin._on_connect()
+
+    assert plugin._auth_mode == bn.AUTH_MODE_NOMINAL
+    assert _pg(bp18, "wyre", "authcfg") == "9i19s56"
+    assert _pg(bp18, "wyre", "username") == LOGIN
+    assert _pg(bp18, "wyre", "sslmode") == "5"
+    assert plugin._password is None
+
+
+def test_admin_rescue_success_during_a_nominal_session_switches(bp18, monkeypatch, tmp_path):
+    plugin, calls, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None, None],
+                                     stored_ad_pw="good", ask=[("ftth_editor", "rotated")])
+    _start(plugin)
+
+    plugin._on_connect()
+
+    assert plugin._auth_mode == bn.AUTH_MODE_SHARED
+    assert plugin._password == "rotated"
+    assert _pg(bp18, "wyre", "username") == "ftth_editor"
+
+
+def test_mtls_configuration_never_receives_the_ad_password(bp18, monkeypatch, tmp_path):
+    # M3 : le chemin mTLS (inchange) ecrirait le mot de passe recu dans pgpass.conf.
+    monkeypatch.setattr(bp18, "_mtls_active", lambda: (True, None))
+    monkeypatch.setattr(bp18, "pgpass_file_path", lambda *a, **k: tmp_path / "pgpass.conf")
+    plugin, calls, asked, _cur = _make_plugin(bp18, monkeypatch, tmp_path, [None], stored_ad_pw="ad-pw",
+                                              ask=(LOGIN, "ad-pw"))
+
+    _start(plugin)
+
+    assert asked == []
+    assert all(c["user"] == "ftth_editor" for c in calls)
+    assert all(c["password"] != "ad-pw" for c in calls)
+    pgpass = tmp_path / "pgpass.conf"
+    assert not pgpass.exists() or "ad-pw" not in pgpass.read_text()
+
+
+@pytest.mark.parametrize("error", [
+    UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte"),
+    RuntimeError("inattendu"),
+])
+def test_unexpected_exception_during_the_probe_falls_back(bp18, monkeypatch, tmp_path, error):
+    # M4 : jamais d'exception vers initGui ou l'action, repli « unavailable ».
+    plugin, calls, _asked, _cur = _make_plugin(bp18, monkeypatch, tmp_path, [error, None], stored_ad_pw="ad-pw")
+
+    _start(plugin)
+
+    assert [c["user"] for c in calls] == [LOGIN, "ftth_editor"]
+    assert plugin._auth_mode == bn.AUTH_MODE_SHARED
+    assert _banner_texts(plugin) == [_expected_banner(bp18, "unavailable")]

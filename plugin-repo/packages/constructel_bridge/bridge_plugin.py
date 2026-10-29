@@ -10,6 +10,7 @@ Responsabilites:
 """
 
 import os
+import sys
 from typing import Optional
 from xml.sax.saxutils import escape as xml_escape, unescape as xml_unescape
 
@@ -796,6 +797,12 @@ def _has_scope_lock(layer) -> bool:
     return bool(layer.customProperty(SCOPE_LOCK_PROPERTY, ""))
 
 
+def _is_connect_error(exc) -> bool:
+    """Exception attendue d'un psycopg2.connect() rate (chemin partage 1.7.x)."""
+    psycopg2 = sys.modules.get("psycopg2")
+    return isinstance(exc, OSError) or isinstance(exc, getattr(psycopg2, "Error", ()))
+
+
 def _get_plugin_version() -> str:
     """Read current plugin version from metadata.txt."""
     meta_path = os.path.join(os.path.dirname(__file__), "metadata.txt")
@@ -1414,13 +1421,17 @@ class ConstructelBridgePlugin:
 
         Phase silencieuse (_startup_silent : sonde avec le mot de passe AD
         memorise, sinon repli partage ; jamais de dialogue) au plus tard a
-        initializationCompleted, mais AVANT tout projet ouvert au lancement :
-        main.cpp ouvre le projet de la ligne de commande et QgisApp le
-        dernier projet (fileOpenAfterLaunch, connecte avant les plugins)
-        AVANT nos slots de initializationCompleted ; QgsProject emet
-        layerLoaded(0, n) avant de creer la premiere couche -> la sonde passe
-        avant toute connexion de couche. Phase interactive (dialogue,
-        assistant d'accueil, bandeau) a initializationCompleted.
+        initializationCompleted, toujours avant la premiere couche d'un
+        projet ouvert au lancement :
+        - projet passe en ligne de commande : main.cpp l'ouvre AVANT
+          completeInitialization() ; QgsProject emet layerLoaded(0, n) avant
+          de creer sa premiere couche -> la phase silencieuse part la ;
+        - « dernier projet » (fileOpenAfterLaunch) : QgisAppInterface relaie
+          initializationCompleted des sa construction, AVANT que
+          setupConnections() ne branche fileOpenAfterLaunch -> nos deux
+          phases passent avant son ouverture (revue 2, M6).
+        Phase interactive (dialogue, assistant d'accueil, bandeau) a
+        initializationCompleted.
         """
         self._startup_state = "pending"
         QgsProject.instance().layerLoaded.connect(self._on_layer_loaded)
@@ -1504,10 +1515,13 @@ class ConstructelBridgePlugin:
         self._update_mode_indicator()
         if self._pending_onboarding is not None:
             is_new_user, self._pending_onboarding = self._pending_onboarding, None
-            try:
-                self._run_onboarding(is_new_user)
-            except Exception as exc:
-                self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
+            # Revue 2 (I-3) : l'assistant a pu tourner entre-temps (dialogue
+            # du premier demarrage reussi) -- relu avant de le relancer.
+            if is_new_user or not QgsSettings().value("constructel_bridge/onboarding_done", False):
+                try:
+                    self._run_onboarding(is_new_user)
+                except Exception as exc:
+                    self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
 
     def _auto_connect(self):
         """Tente une connexion silencieuse au demarrage du plugin.
@@ -1617,6 +1631,13 @@ class ConstructelBridgePlugin:
                 return self._fallback(silent, "no_password", login, explicit)
             self._pending_prompt, self._pending_login = "first", ""
             return self._fallback(silent, None, login, explicit)
+        mtls_active, mtls_reason = _mtls_active()
+        if mtls_active or mtls_reason not in ("disabled", "not_configured"):
+            # Revue 2 (M3) : le chemin mTLS (dormant, inchange) ecrirait le
+            # mot de passe recu dans pgpass.conf et contourne le controle de
+            # 9i19s56 : il ne recoit jamais le mot de passe AD.
+            self._log("Acces nominatif non tente : mTLS configure sur ce poste", Qgis.MessageLevel.Warning)
+            return self._fallback(silent, "local_setup", login, explicit)
         if not _ensure_auth_manager_ready():
             # M2/M3 : sans Auth Manager, 9i19s56 ne porterait pas l'identite
             # nominative des couches -> nominatif impossible.
@@ -1678,28 +1699,32 @@ class ConstructelBridgePlugin:
                         return self._connect_shared(silent, password=password, explicit=True)
                     QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["pg_login"], login)
                     continue
-                QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_SHARED)
             elif kind == LOGIN_DISABLED:
                 # Pas un refus de mot de passe (NOLOGIN : le bind AD a
                 # reussi ; pg_hba/role inconnu : aucun bind) : conserve pour
                 # que la sonde du prochain demarrage bascule seule une fois
                 # l'acces active (AC8).
                 self._remember_ad_password(login, password)
-                QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_SHARED)
-            return self._fallback(silent, kind, login, explicit)
+            # Verdict du serveur sur le login (2 refus, ou login non actif) :
+            # mode « shared » memorise -- seulement si la session qui en
+            # resulte est reellement partagee (revue 2, M1).
+            verdict = kind in (AUTH_REFUSED, LOGIN_DISABLED)
+            return self._fallback(silent, kind, login, explicit, memorize=verdict)
 
     def _fallback(self, silent: bool, kind, login: str, explicit: bool = False,
-                  cancelled: bool = False) -> bool:
+                  cancelled: bool = False, memorize: bool = False) -> bool:
         """Issue d'un acces nominatif non obtenu. Action explicite avec une
         session ouverte : la session est conservee (M1) et l'echec affiche
         (rien si la personne a annule le dialogue). Session partagee deja
         ouverte (phase silencieuse) : bandeau seul. Sinon : connexion
-        partagee (repli D7) + bandeau."""
+        partagee (repli D7) + bandeau. *memorize* : mode « shared » memorise
+        si, et seulement si, la session resultante est partagee."""
         if explicit and self._connected:
             if cancelled:
                 return False
             if self._auth_mode == AUTH_MODE_SHARED:
                 self._set_banner(kind, login)
+                self._memorize_shared(memorize)
             if kind and not silent:
                 QMessageBox.warning(
                     self.iface.mainWindow(), "Constructel Bridge",
@@ -1708,8 +1733,16 @@ class ConstructelBridgePlugin:
             return False
         if self._connected and self._auth_mode == AUTH_MODE_SHARED:
             self._set_banner(kind, login)
+            self._memorize_shared(memorize)
             return True
-        return self._connect_shared(silent, banner=kind, login=login)
+        ok = self._connect_shared(silent, banner=kind, login=login)
+        if ok:
+            self._memorize_shared(memorize)
+        return ok
+
+    def _memorize_shared(self, memorize: bool):
+        if memorize and self._connected and self._auth_mode == AUTH_MODE_SHARED:
+            QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_SHARED)
 
     def _connect_shared(self, silent: bool, banner=None, login: str = "",
                         password: Optional[str] = None, explicit: bool = False) -> bool:
@@ -1885,7 +1918,10 @@ class ConstructelBridgePlugin:
         """
         nominal = bool(login)
         user = login if nominal else DEFAULT_USER
-        if not nominal:
+        # Revue 2 (M2) : une session deja ouverte n'est modifiee qu'apres le
+        # succes de la nouvelle (mot de passe partage, entree navigateur).
+        keep_session = self._connected
+        if not nominal and not keep_session:
             # Revue 29/10 (I6) : seul le mot de passe PARTAGE est expose aux
             # chemins 1.7.x (_fix_layer_credentials, projets, v_form_lists).
             self._password = password
@@ -1946,7 +1982,13 @@ class ConstructelBridgePlugin:
                 **ssl_kwargs,
             )
             new_conn.autocommit = True
-        except (psycopg2.Error, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001 -- filtre ci-dessous
+            if not nominal and not _is_connect_error(exc):
+                raise  # chemin partage : comportement 1.7.x inchange
+            # Revue 2 (M4) : en nominatif, TOUT echec de la tentative
+            # (UnicodeDecodeError d'un message libpq localise, psycopg2
+            # absent...) est un echec de connexion -> repli, jamais une
+            # exception vers initGui ou l'action.
             self._last_connect_error = exc
             if mtls_active and "connection requires a valid client certificate" in str(exc):
                 # Exact server-side verdict (pg_hba clientcert rejection):
@@ -1973,13 +2015,14 @@ class ConstructelBridgePlugin:
                 # L'orchestrateur decide (ressaisie, repli, erreur) : ne pas
                 # ecrire d'entree navigateur nominative sans mot de passe.
                 return False
-            # Even on connection failure, configure the QGIS PG browser
-            # entry with password so that the explorer can still open
-            # projects without prompting for credentials.
-            try:
-                self._setup_qgis_pg_connection(password, use_authcfg=False)
-            except Exception:
-                pass
+            if not keep_session:
+                # Even on connection failure, configure the QGIS PG browser
+                # entry with password so that the explorer can still open
+                # projects without prompting for credentials.
+                try:
+                    self._setup_qgis_pg_connection(password, use_authcfg=False)
+                except Exception:
+                    pass
             if not silent:
                 QMessageBox.critical(
                     self.iface.mainWindow(),
@@ -2003,6 +2046,8 @@ class ConstructelBridgePlugin:
                 )
                 return False
 
+        if not nominal:
+            self._password = password  # M2 : apres succes, session existante ou non
         old_conn = self._conn
         self._conn = new_conn
         if old_conn is not None and old_conn is not new_conn and not getattr(old_conn, "closed", True):
@@ -2092,6 +2137,7 @@ class ConstructelBridgePlugin:
             onboarding_done = QgsSettings().value("constructel_bridge/onboarding_done", False)
             if not onboarding_done or is_new_user:
                 if self._ui_ready:
+                    self._pending_onboarding = None  # I-3 : jamais deux fois
                     self._run_onboarding(is_new_user)
                 else:
                     # I13 : pas d'assistant modal sous l'ecran de demarrage.
