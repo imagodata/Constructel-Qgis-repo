@@ -30,7 +30,7 @@ def test_login_is_prefilled_and_editable(dialog_module):
     assert dlg.login() == "jdoe"
     assert dlg._user_edit.isReadOnly() is False
     dlg._user_edit.setText("JDupont")
-    assert dlg.login() == "JDupont"
+    assert dlg.login() == "jdupont"
 
 
 def test_ok_requires_login_and_password(dialog_module):
@@ -40,6 +40,32 @@ def test_ok_requires_login_and_password(dialog_module):
     assert dlg._ok_button.isEnabled() is True
     dlg._user_edit.setText("")
     assert dlg._ok_button.isEnabled() is False
+
+
+@pytest.mark.parametrize("typed, login", [
+    ("CONSTRUCTELBE\\JDupont", "jdupont"),
+    ("jdupont@constructelbe.corp", "jdupont"),
+    ("ftth_editor", "ftth_editor"),  # secours admin D5
+])
+def test_typed_login_is_normalized(dialog_module, typed, login):
+    dlg = _dialog(dialog_module)
+    dlg._user_edit.setText(typed)
+    dlg._password_edit.setText("secret")
+    assert dlg.login() == login
+    assert dlg._ok_button.isEnabled() is True
+    assert dlg._login_error.isVisible() is False
+
+
+def test_invalid_login_is_reported_in_the_dialog(dialog_module):
+    # Revue 29/10 (I5) : plus de bascule silencieuse en partage.
+    dlg = _dialog(dialog_module)
+    dlg._password_edit.setText("secret")
+    dlg._user_edit.setText("Jean Dupont")
+    assert dlg._login_error.isVisible() is True
+    assert dlg._ok_button.isEnabled() is False
+    assert dlg.login() == ""
+    dlg._user_edit.setText("")
+    assert dlg._login_error.isVisible() is False
 
 
 def test_password_is_masked_and_never_prefilled(dialog_module):

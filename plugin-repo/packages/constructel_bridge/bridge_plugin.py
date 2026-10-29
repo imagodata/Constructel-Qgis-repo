@@ -29,8 +29,8 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import Qt
+from qgis.gui import QgisInterface, QgsMessageBarItem
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtNetwork import QSslCertificate
 from qgis.PyQt.QtWidgets import (
@@ -69,10 +69,10 @@ from .bridge_nominatif import (
     ca_bundle_path,
     classify_auth_failure,
     datasource_param,
-    decide_after_probe_failure,
     embedded_ca_paths,
     force_datasource_sslmode,
     is_scope_write_refusal,
+    normalize_login,
     parse_session_scope,
     resolve_pg_login,
     rewrite_datasource_identity,
@@ -80,6 +80,7 @@ from .bridge_nominatif import (
     scope_kind,
     scope_labels,
     should_lock_layer,
+    should_reprompt,
 )
 
 TAG = "Constructel Bridge"
@@ -164,6 +165,9 @@ DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
 # verify-full obligatoire (spec 2026-10-26 §5.1/§5.5) -- NOMINAL_SSLMODE.
 DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
 NOMINAL_SSLMODE = "verify-full"
+# Revue 29/10 (I2) : delai maximal (s) de la sonde nominative -- annuaire AD
+# lent ou en panne -> repli au lieu d'un QGIS fige.
+NOMINAL_CONNECT_TIMEOUT = 10
 PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
 EMAIL_DOMAIN = _WYRE_CREDS.get("email_domain", "constructel.be")
 
@@ -361,19 +365,46 @@ def _check_fixed_authcfgs() -> str:
         return f"Auth check en echec: {exc}"
 
 
+# Revue 29/10 (M2) : un mot de passe maitre annule ou refuse n'est demande
+# qu'UNE fois par sequence de connexion (4 a 5 invites avant : be, sonde,
+# mot de passe AD, wyre, be). Remis a zero par chaque action explicite de
+# l'utilisateur (Connecter, Reessayer mon acces nominatif).
+_MASTER_PASSWORD_DECLINED = False
+
+
 def _ensure_auth_manager_ready() -> bool:
     """Ensure the Auth Manager is initialized and master password is set.
 
-    Prompts the user to set a master password if not yet configured.
+    Prompts the user to set a master password if not yet configured --
+    at most once until _reset_master_password_prompt() (M2).
     Returns True if Auth Manager is ready.
     """
+    global _MASTER_PASSWORD_DECLINED
     auth_mgr = QgsApplication.authManager()
-    if not auth_mgr.isDisabled():
-        if not auth_mgr.masterPasswordIsSet():
-            # This will prompt the user to enter/create a master password
-            return auth_mgr.setMasterPassword(True)
+    if auth_mgr.isDisabled():
+        return False
+    if auth_mgr.masterPasswordIsSet():
         return True
+    if _MASTER_PASSWORD_DECLINED:
+        return False
+    # This will prompt the user to enter/create a master password
+    if auth_mgr.setMasterPassword(True):
+        return True
+    _MASTER_PASSWORD_DECLINED = True
     return False
+
+
+def _reset_master_password_prompt() -> None:
+    """Action explicite de l'utilisateur : l'invite du mot de passe maitre
+    peut de nouveau s'afficher (une fois)."""
+    global _MASTER_PASSWORD_DECLINED
+    _MASTER_PASSWORD_DECLINED = False
+
+
+class _LocalSetupError(Exception):
+    """Echec local apres une connexion nominative reussie (config Auth
+    Manager non ecrite) : la session nominative serait inutilisable par les
+    couches -> repli partage (revue 29/10, M3)."""
 
 
 def _stored(answer) -> bool:
@@ -726,14 +757,20 @@ def _get_plugin_version() -> str:
 PLUGIN_VERSION = _get_plugin_version()
 
 
-def _clear_audit_identity():
-    """Retire app.current_user de PGOPTIONS et oublie l'adresse en cache."""
+def _clear_audit_identity(forget_email: bool = True):
+    """Retire app.current_user de PGOPTIONS et oublie l'adresse en cache.
+
+    *forget_email* False (session nominative, revue 29/10 M9) : l'adresse
+    memorisee est conservee -- le plugin Historique (farois_audit_rollback)
+    la lit pour pre-remplir sa connexion ; seul le GUC declaratif disparait.
+    """
     cleaned = strip_app_user_option(os.environ.get("PGOPTIONS"))
     if cleaned is None:
         os.environ.pop("PGOPTIONS", None)
     else:
         os.environ["PGOPTIONS"] = cleaned
-    QgsSettings().remove(AUDIT_EMAIL_KEY)
+    if forget_email:
+        QgsSettings().remove(AUDIT_EMAIL_KEY)
 
 
 def _apply_audit_identity(email, log) -> bool:
@@ -794,6 +831,21 @@ class ConstructelBridgePlugin:
         self._scope = None
         self._scope_names = ({}, {})
         self._last_connect_error = None
+        # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
+        # par les chemins 1.7.x) ; le mot de passe AD de la session
+        # nominative n'est lu que par _init_conn_params (styles).
+        self._password = None
+        self._ad_password = None
+        # Revue 29/10 (I13/I9) : connexion de demarrage differee ; dialogues,
+        # assistant d'accueil et bandeau seulement une fois l'interface prete.
+        self._startup_state = "idle"  # "idle" | "pending" | "done" | "cancelled"
+        self._ui_ready = False
+        self._pending_prompt = None  # None | "first" | "reprompt"
+        self._pending_login = ""
+        self._pending_onboarding = None
+        self._banner = None  # (motif, login) du bandeau de repli D7
+        self._banner_item = None
+        self._action_retry = None
 
     # =====================================================================
     # QGIS Plugin lifecycle
@@ -833,6 +885,7 @@ class ConstructelBridgePlugin:
         action_retry = QAction(theme("/mActionRefresh.svg"), tr("menu.retry_nominal"), parent)
         action_retry.triggered.connect(self._on_retry_nominal)
         self._actions.append(action_retry)
+        self._action_retry = action_retry
 
         action_status = QAction(icon_status, tr("menu.status"), parent)
         action_status.triggered.connect(self._on_status)
@@ -919,58 +972,14 @@ class ConstructelBridgePlugin:
                 f"extract-msg pre-provisioning failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
             )
 
-        # Pre-cacher les credentials PG pour que QgsCredentials.get()
-        # les trouve dans le cache AVANT d'appeler request().
-        # Cela couvre le cas ou un projet avec authcfg inconnu est charge
-        # au demarrage (projets recents, browser, etc.).
-        _precache_pg_credentials()
-
-        # Enregistrer la connexion `be` (bureau d'etudes, schema public),
-        # AVEC authcfg : sans reference authcfg stockee, le bouton "Tester
-        # la connexion" et le parcours du navigateur QGIS pour `be`
-        # n'utilisent PAS le meme chemin que le chargement de couche et ne
-        # beneficient donc pas du cache pre-rempli ci-dessus —
-        # l'utilisateur se retrouve avec une invite de mot de passe
-        # bloquante (constate en test reel).
+        # Revue 29/10 (M13) : le pre-cache QgsCredentials de l'identifiant
+        # partage n'est plus pose ici mais a l'ouverture d'une session
+        # PARTAGEE (_connect) : en nominatif, une couche sans authcfg ne doit
+        # pas se connecter silencieusement en ftth_editor.
         #
-        # Ce bloc s'execute AVANT self._auto_connect() (plus bas dans
-        # initGui) : c'est donc `be`, pas `wyre`, qui declenche en premier
-        # _ensure_auth_manager_ready() a chaque demarrage du plugin. Sur un
-        # poste ou le mot de passe maitre QGIS est deja configure (le cas
-        # normal des que `wyre` a reussi une connexion authcfg au moins une
-        # fois), setMasterPassword(True) ne re-affiche PAS de dialogue :
-        # aucune regression. Cas limite assume : premiere installation +
-        # base injoignable des le premier demarrage -> `be` (contrairement
-        # a l'auto-connexion `wyre`, qui reste use_authcfg=False sur son
-        # propre chemin d'echec) peut alors declencher la creation du mot
-        # de passe maitre plus tot que necessaire. Juge acceptable : rare,
-        # et l'utilisateur devra de toute facon configurer ce mot de passe
-        # maitre des que `wyre` se connectera avec succes.
-        #
-        # `be` n'a toujours pas besoin du flux _connect complet (psycopg2,
-        # ref.users, onboarding) : c'est une connexion de consultation.
-        # Controle des configs Auth Manager (ids fixes wyre/be) AVANT la
-        # configuration de `be` : nettoie les anciennes configs a id
-        # aleatoire en reprenant leur mot de passe.
-        self._log(_check_fixed_authcfgs())
-
-        # Bridge 1.8 : `be` nominative (meme compte AD) est configuree apres
-        # la sonde reussie, dans _connect (elle a besoin du mot de passe AD).
-        # Seul l'identifiant partage `be` historique (credentials 1.5 -> 1.7)
-        # peut l'etre des maintenant, independamment de `wyre`.
-        if BE_SHARED_AVAILABLE:
-            try:
-                self._setup_qgis_pg_connection(_BE_PW, use_authcfg=True, conn="be")
-            except Exception as exc:
-                QgsMessageLog.logMessage(
-                    f"BE connection setup failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
-                )
-        elif not BE_ENABLED:
-            QgsMessageLog.logMessage(
-                "Connexion 'be' non configuree "
-                "(bloc absent ou invalide dans credentials.json)",
-                TAG, level=Qgis.MessageLevel.Info,
-            )
+        # Revue 29/10 (I13) : le controle des configs Auth Manager et la
+        # connexion `be` partagee sont faits par la phase silencieuse du
+        # demarrage (_startup_silent), plus dans initGui.
 
         # Supprimer le dialogue "Traiter les couches inutilisables" —
         # les couches avec un authcfg inconnu seront reparees apres
@@ -999,7 +1008,8 @@ class ConstructelBridgePlugin:
         # connexion DB et l'enregistrement utilisateur, sans toucher au
         # projet (pas de fix credentials, hooks, etc.) pour eviter de
         # rendre le projet vide "dirty" et le dialogue "Enregistrer".
-        self._auto_connect()
+        # Revue 29/10 (I13) : differee, jamais dans initGui.
+        self._schedule_startup_connection()
 
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
@@ -1015,6 +1025,8 @@ class ConstructelBridgePlugin:
         if getattr(self, "_path_preprocessor_id", None):
             QgsPathResolver.removePathPreprocessor(self._path_preprocessor_id)
             self._path_preprocessor_id = None
+        self._cancel_startup_connection()
+        self._remove_banner()
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
@@ -1037,6 +1049,10 @@ class ConstructelBridgePlugin:
         traductions i18n — sans toucher a la structure du layer tree.
         Ne s'active que sur les projets inities par le plugin (bridge_operator).
         """
+        # Filet de securite (I13) : la phase silencieuse du demarrage a
+        # normalement deja tourne a layerLoaded(0, n), avant les couches.
+        if self._startup_state == "pending":
+            self._startup_silent()
         # Toujours corriger les credentials (utilise le mot de passe par
         # defaut si pas encore connecte — suffit pour reparer les authcfg).
         try:
@@ -1227,27 +1243,136 @@ class ConstructelBridgePlugin:
     # Auto-connexion
     # =====================================================================
 
+    def _schedule_startup_connection(self):
+        """Programme la connexion de demarrage (revue 29/10, I13) : rien de
+        modal ni de reseau dans initGui, masque par l'ecran de demarrage.
+
+        Phase silencieuse (_startup_silent : sonde avec le mot de passe AD
+        memorise, sinon repli partage ; jamais de dialogue) au plus tard a
+        initializationCompleted, mais AVANT tout projet ouvert au lancement :
+        main.cpp ouvre le projet de la ligne de commande et QgisApp le
+        dernier projet (fileOpenAfterLaunch, connecte avant les plugins)
+        AVANT nos slots de initializationCompleted ; QgsProject emet
+        layerLoaded(0, n) avant de creer la premiere couche -> la sonde passe
+        avant toute connexion de couche. Phase interactive (dialogue,
+        assistant d'accueil, bandeau) a initializationCompleted.
+        """
+        self._startup_state = "pending"
+        QgsProject.instance().layerLoaded.connect(self._on_layer_loaded)
+        main_window = self.iface.mainWindow()
+        if main_window is not None and main_window.isVisible():
+            # Plugin active apres le demarrage de QGIS : interface prete.
+            QTimer.singleShot(0, self._on_initialization_completed)
+        else:
+            self.iface.initializationCompleted.connect(self._on_initialization_completed)
+
+    def _cancel_startup_connection(self):
+        """unload : plus aucun rappel de demarrage en attente."""
+        try:
+            QgsProject.instance().layerLoaded.disconnect(self._on_layer_loaded)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self.iface.initializationCompleted.disconnect(self._on_initialization_completed)
+        except (TypeError, RuntimeError, AttributeError):
+            pass
+        self._startup_state = "cancelled"
+
+    def _on_layer_loaded(self, index, _count):
+        if index == 0 and self._startup_state == "pending":
+            self._startup_silent()
+
+    def _on_initialization_completed(self):
+        if self._startup_state == "cancelled":
+            return  # plugin decharge avant le rappel (QTimer.singleShot)
+        try:
+            self.iface.initializationCompleted.disconnect(self._on_initialization_completed)
+        except (TypeError, RuntimeError, AttributeError):
+            pass
+        self._startup_silent()
+        self._startup_interactive()
+
+    def _startup_silent(self):
+        """Phase silencieuse du demarrage, une seule fois : controle des
+        configs Auth Manager, `be` partagee historique, puis connexion
+        (_auto_connect). Aucun dialogue de connexion."""
+        if self._startup_state != "pending":
+            return
+        self._startup_state = "done"
+        try:
+            QgsProject.instance().layerLoaded.disconnect(self._on_layer_loaded)
+        except (TypeError, RuntimeError):
+            pass
+        # Configs Auth Manager a id fixe (wyre/be) : nettoie les anciennes
+        # configs a id aleatoire en reprenant leur mot de passe.
+        self._log(_check_fixed_authcfgs())
+        # `be` nominative (meme compte AD) est configuree apres la sonde
+        # reussie, dans _connect. Seul l'identifiant partage `be` historique
+        # (credentials 1.5 -> 1.7) l'est ici, independamment de `wyre`.
+        if BE_SHARED_AVAILABLE:
+            try:
+                self._setup_qgis_pg_connection(_BE_PW, use_authcfg=True, conn="be")
+            except Exception as exc:
+                QgsMessageLog.logMessage(
+                    f"BE connection setup failed: {exc}", TAG, level=Qgis.MessageLevel.Warning,
+                )
+        elif not BE_ENABLED:
+            QgsMessageLog.logMessage(
+                "Connexion 'be' non configuree "
+                "(bloc absent ou invalide dans credentials.json)",
+                TAG, level=Qgis.MessageLevel.Info,
+            )
+        self._auto_connect()
+
+    def _startup_interactive(self):
+        """Phase interactive : l'interface est prete. Dialogue differe
+        (premier demarrage, ressaisie apres refus), bandeau, assistant."""
+        self._ui_ready = True
+        prompt, self._pending_prompt = self._pending_prompt, None
+        if prompt:
+            # Le dialogue est la seule interaction de demarrage ; apres une
+            # saisie, un echec est affiche (revue 29/10, M12).
+            self._connect_nominal_or_fallback(
+                silent=False, login=self._pending_login or None, reprompt=prompt == "reprompt",
+            )
+        self._show_banner()
+        self._update_mode_indicator()
+        if self._pending_onboarding is not None:
+            is_new_user, self._pending_onboarding = self._pending_onboarding, None
+            try:
+                self._run_onboarding(is_new_user)
+            except Exception as exc:
+                self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
+
     def _auto_connect(self):
         """Tente une connexion silencieuse au demarrage du plugin.
 
         Bridge 1.8 : sonde nominative unique (login AD de la personne, mot
         de passe memorise dans l'Auth Manager), puis repli D7 sur
-        l'identifiant partage si le login n'est pas actif. En cas d'echec,
-        aucune erreur n'est affichee — l'utilisateur pourra se connecter
-        manuellement via le menu.
+        l'identifiant partage si le login n'est pas actif. Jamais de
+        dialogue ici : un dialogue necessaire est differe a la phase
+        interactive (_startup_interactive).
         """
         if self._connected:
             return
-        self._connect_nominal_or_fallback(silent=True)
+        self._connect_nominal_or_fallback(silent=True, interactive=False)
 
     def _nominal_login(self) -> str:
         """Login PostgreSQL nominatif du poste : lower(nom d'utilisateur
         QGIS/OS), "" s'il ne peut pas etre un login (spec §5.1/§5.7.1)."""
         return resolve_pg_login(self._get_qgis_username())
 
+    def _startup_login(self) -> str:
+        """Login a sonder : celui saisi ou valide lors d'une connexion
+        precedente (revue 29/10, I4 -- compte AD different du nom Windows),
+        sinon celui deduit du poste."""
+        memorized = normalize_login(QgsSettings().value(NOMINAL_SETTINGS_KEYS["pg_login"], "") or "")
+        return memorized or self._nominal_login()
+
     def _ask_password(self, login: str, reprompt: bool = False):
-        """Dialogue de connexion : login (pre-rempli, modifiable) + mot de
-        passe AD. Retourne (login, password) ou None si annule."""
+        """Dialogue de connexion : login (pre-rempli, modifiable, normalise
+        et valide par le dialogue) + mot de passe AD. Retourne (login,
+        password) ou None si annule."""
         from .bridge_dialog import ConstructelConnectDialog
 
         dlg = ConstructelConnectDialog(
@@ -1260,93 +1385,178 @@ class ConstructelBridgePlugin:
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return None
-        return (resolve_pg_login(dlg.login()), dlg.password())
+        return (dlg.login(), dlg.password())
+
+    def _stored_ad_password(self, login: str) -> str:
+        """Mot de passe AD memorise pour *login* ("" sinon) : jamais celui
+        d'un autre login."""
+        return _retrieve_password_encrypted("ad") if login and _stored_login("ad") == login else ""
+
+    def _remember_ad_password(self, login: str, password: str):
+        """Memorise le mot de passe AD de *login* pour la sonde du prochain
+        demarrage -- seulement quand il n'a pas ete refuse (revue 29/10, I10)."""
+        _store_password_encrypted(password, "ad", username=login)
+        QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["pg_login"], login)
+
+    def _forget_refused_password(self, login: str, password: str):
+        """Un mot de passe refuse n'est plus jamais rejoue (revue 29/10, I10) :
+        ni par la sonde du demarrage suivant (nomin18), ni par les couches ou
+        le navigateur (9i19s56/07254s7). Seules les configs qui portent
+        exactement ce login ET ce mot de passe sont retirees."""
+        auth_mgr = QgsApplication.authManager()
+        for conn in ("ad", "wyre", "be"):
+            try:
+                if _stored_login(conn) == login and _retrieve_password_encrypted(conn) == password:
+                    auth_mgr.removeAuthenticationConfig(_FIXED_AUTH_CFG_IDS[conn])
+                    self._log(f"Mot de passe refuse retire de la config {_FIXED_AUTH_CFG_IDS[conn]} ({conn})")
+            except Exception as exc:  # noqa: BLE001 -- best-effort, jamais bloquant
+                self._log(f"Retrait du mot de passe refuse ({conn}) impossible : {exc}", Qgis.MessageLevel.Warning)
 
     def _connect_nominal_or_fallback(self, silent: bool = False, login: Optional[str] = None,
-                                     password: Optional[str] = None, allow_prompt: bool = True) -> bool:
-        """Sonde nominative UNIQUE puis repli D7 (spec §5.7.4-5, AC8).
+                                     password: Optional[str] = None, interactive: bool = True,
+                                     explicit: bool = False, reprompt: bool = False) -> bool:
+        """Sonde nominative UNIQUE puis repli D7 (spec §5.7.4-5, AC8 ; revue
+        29/10 I2/I4/I5/I10/M1/M2/M3/M11/M12).
 
-        1. CA importees dans QGIS (D-TLS-1) : echec = repli partage ;
-        2. login = lower(nom d'utilisateur du poste) ; inutilisable -> partage ;
-        3. mot de passe AD : memorise (config `ad` du MEME login), sinon
-           dialogue -- sauf au demarrage silencieux d'un poste deja en repli ;
-        4. UNE connexion psycopg2 nominative ; sur refus d'authentification :
-           - mot de passe refuse, poste en mode nominal : UNE ressaisie ;
-           - login desactive / inconnu / pg_hba : repli direct (1 seul bind) ;
-           - toute autre erreur (reseau, TLS, serveur) : erreur, pas de repli.
-        Jamais plus de 2 binds refuses par demarrage. Le mode retenu est
-        memorise (QgsSettings) ; nouvelle sonde au demarrage suivant.
+        1. login (memorise, sinon deduit du poste) ; ``ftth_editor`` saisi =
+           secours admin D5 -> session partagee explicite, apres CHAQUE
+           dialogue ;
+        2. prerequis locaux : Auth Manager utilisable (une seule invite du
+           mot de passe maitre) et CA importees dans QGIS (D-TLS-1) ; sinon
+           repli partage ;
+        3. mot de passe AD memorise pour ce login, sinon dialogue -- differe
+           a la phase interactive au demarrage (*interactive* False), jamais
+           propose d'office a un poste deja en repli sans mot de passe ;
+        4. UNE connexion psycopg2 (verify-full, connect_timeout) ; sur echec :
+           - mot de passe refuse : UNE ressaisie si permise
+             (should_reprompt), sinon repli ; mot de passe oublie ;
+           - login non actif (NOLOGIN, inconnu, pg_hba) : repli direct, mot
+             de passe conserve (pas un refus de mot de passe) ;
+           - toute autre erreur (delai, TLS, serveur, motif inconnu) : repli,
+             mode memorise inchange.
+        Jamais plus de 2 binds refuses par demarrage. *explicit* (Connecter,
+        Reessayer) : la ressaisie est permise meme en repli, et un echec
+        conserve la session ouverte au lieu de la remplacer. *reprompt* :
+        ressaisie differee d'un refus deja compte (phase silencieuse).
         """
         memorized = QgsSettings().value(NOMINAL_SETTINGS_KEYS["auth_mode"], "") or ""
         if login is None:
-            login = self._nominal_login()
-        if not login:
-            self._log(tr("nominal.login_unusable", user=self._get_qgis_username()), Qgis.MessageLevel.Warning)
-            return self._connect_shared(silent)
+            login = self._startup_login()
         if DEFAULT_USER and login == DEFAULT_USER:
             # Identifiant de secours saisi explicitement (admin, D5) : chemin partage.
-            return self._connect_shared(silent, password=password)
+            return self._connect_shared(silent, password=password, explicit=True)
+        if not login and not interactive:
+            self._log(tr("nominal.login_unusable", user=self._get_qgis_username()), Qgis.MessageLevel.Warning)
+            if memorized == AUTH_MODE_SHARED:
+                return self._fallback(silent, "no_password", login, explicit)
+            self._pending_prompt, self._pending_login = "first", ""
+            return self._fallback(silent, None, login, explicit)
+        if not _ensure_auth_manager_ready():
+            # M2/M3 : sans Auth Manager, 9i19s56 ne porterait pas l'identite
+            # nominative des couches -> nominatif impossible.
+            self._log("Acces nominatif impossible : Auth Manager indisponible "
+                      "(mot de passe maitre non saisi ou gestionnaire desactive)", Qgis.MessageLevel.Warning)
+            return self._fallback(silent, "local_setup", login, explicit)
         if not _ensure_qgis_trusted_cas():
             # D-TLS-1 : sans la CA dans QGIS, aucune couche nominative ne
             # passerait verify-full -> nominatif impossible, repli partage.
-            return self._connect_shared(silent, banner="local_setup", login=login)
-        if password is None:
-            password = _retrieve_password_encrypted("ad") if _stored_login("ad") == login else ""
+            return self._fallback(silent, "local_setup", login, explicit)
+        refused = 1 if reprompt else 0
+        if password is None and not reprompt:
+            password = self._stored_ad_password(login)
         if not password:
-            if silent and memorized == AUTH_MODE_SHARED:
-                self._log(
-                    f"Acces nominatif ({login}) : aucun mot de passe memorise, poste en repli "
-                    "-- sonde reportee a l'action 'Reessayer mon acces nominatif'",
-                )
-                return self._connect_shared(silent, banner="no_password", login=login)
-            answer = self._ask_password(login) if allow_prompt else None
-            if not answer or not answer[1]:
-                return self._connect_shared(silent, banner="no_password", login=login)
+            if not interactive:
+                if memorized == AUTH_MODE_SHARED:
+                    # Poste en repli sans mot de passe memorise (refuse et
+                    # oublie) : pas de dialogue d'office a chaque demarrage.
+                    return self._fallback(silent, "no_password", login, explicit)
+                self._pending_prompt, self._pending_login = "first", login
+                return self._fallback(silent, None, login, explicit)
+            answer = self._ask_password(login, reprompt=reprompt)
+            if not answer:
+                # I9 : annuler ne fige pas le poste en repli -- mode memorise
+                # inchange, nouvelle demande au demarrage suivant.
+                return self._fallback(silent, AUTH_REFUSED if reprompt else "no_password", login, explicit,
+                                      cancelled=True)
             login, password = answer
-            if not login:
-                self._log(tr("nominal.login_unusable", user=self._get_qgis_username()), Qgis.MessageLevel.Warning)
-                return self._connect_shared(silent)
-        reprompted = False
+            if DEFAULT_USER and login == DEFAULT_USER:
+                return self._connect_shared(silent, password=password, explicit=True)
+            QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["pg_login"], login)
         while True:
-            _store_password_encrypted(password, "ad", username=login)
-            if self._connect(password, silent=True, login=login):
+            if self._connect(password, silent=True, login=login, project_hooks=not silent):
+                self._remember_ad_password(login, password)
                 QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_NOMINAL)
-                QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["pg_login"], login)
+                self._set_banner(None)
                 return True
-            kind = classify_auth_failure(self._last_connect_error)
-            decision = decide_after_probe_failure(kind, memorized, SHARED_FALLBACK_AVAILABLE, reprompted)
-            if decision == "reprompt":
-                answer = self._ask_password(login, reprompt=True) if allow_prompt else None
-                if answer and answer[0] and answer[1]:
-                    login, password = answer
-                    reprompted = True
-                    continue
-                decision = "fallback" if SHARED_FALLBACK_AVAILABLE else "error"
-            if decision == "fallback":
-                self._log(
-                    f"Acces nominatif ({login}) refuse [{kind}] : repli sur l'identifiant partage "
-                    f"-- {self._last_connect_error}",
-                    Qgis.MessageLevel.Warning,
-                )
-                return self._connect_shared(silent, banner=kind, login=login)
-            error = f"{DEFAULT_HOST}:{DEFAULT_PORT} — {self._last_connect_error}"
-            if kind is not None:
-                message = tr("nominal.no_fallback", login=login, error=error)
-                self._log(message, Qgis.MessageLevel.Critical)
+            error = self._last_connect_error
+            if isinstance(error, _LocalSetupError):
+                kind = "local_setup"
             else:
-                message = tr("conn.failed", error=error)
-            if not silent:
-                QMessageBox.critical(self.iface.mainWindow(), "Constructel Bridge", message)
+                kind = classify_auth_failure(error) or "unavailable"
+            self._log(
+                f"Acces nominatif ({login}) non obtenu [{kind}] -- {error}",
+                Qgis.MessageLevel.Warning,
+            )
+            if kind == AUTH_REFUSED:
+                refused += 1
+                self._forget_refused_password(login, password)
+                if should_reprompt(kind, memorized, refused, explicit=explicit):
+                    if not interactive:
+                        self._pending_prompt, self._pending_login = "reprompt", login
+                        return self._fallback(silent, AUTH_REFUSED, login, explicit)
+                    answer = self._ask_password(login, reprompt=True)
+                    if not answer:
+                        return self._fallback(silent, AUTH_REFUSED, login, explicit, cancelled=True)
+                    login, password = answer
+                    if DEFAULT_USER and login == DEFAULT_USER:
+                        return self._connect_shared(silent, password=password, explicit=True)
+                    QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["pg_login"], login)
+                    continue
+                QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_SHARED)
+            elif kind == LOGIN_DISABLED:
+                # Pas un refus de mot de passe (NOLOGIN : le bind AD a
+                # reussi ; pg_hba/role inconnu : aucun bind) : conserve pour
+                # que la sonde du prochain demarrage bascule seule une fois
+                # l'acces active (AC8).
+                self._remember_ad_password(login, password)
+                QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_SHARED)
+            return self._fallback(silent, kind, login, explicit)
+
+    def _fallback(self, silent: bool, kind, login: str, explicit: bool = False,
+                  cancelled: bool = False) -> bool:
+        """Issue d'un acces nominatif non obtenu. Action explicite avec une
+        session ouverte : la session est conservee (M1) et l'echec affiche
+        (rien si la personne a annule le dialogue). Session partagee deja
+        ouverte (phase silencieuse) : bandeau seul. Sinon : connexion
+        partagee (repli D7) + bandeau."""
+        if explicit and self._connected:
+            if cancelled:
+                return False
+            if self._auth_mode == AUTH_MODE_SHARED:
+                self._set_banner(kind, login)
+            if kind and not silent:
+                QMessageBox.warning(
+                    self.iface.mainWindow(), "Constructel Bridge",
+                    tr("nominal.retry_failed", reason=self._reason_text(kind, login)),
+                )
             return False
+        if self._connected and self._auth_mode == AUTH_MODE_SHARED:
+            self._set_banner(kind, login)
+            return True
+        return self._connect_shared(silent, banner=kind, login=login)
 
     def _connect_shared(self, silent: bool, banner=None, login: str = "",
-                        password: Optional[str] = None) -> bool:
-        """Connexion avec l'identifiant partage (chemin 1.7.3) + bandeau
-        persistant D7. Sans identifiant partage (cloture 1.8.x) : erreur
-        claire, jamais de KeyError."""
+                        password: Optional[str] = None, explicit: bool = False) -> bool:
+        """Connexion avec l'identifiant partage (chemin 1.7.x) + bandeau
+        persistant D7 (sauf secours admin *explicit*). Sans identifiant
+        partage (cloture 1.8.x) : erreur claire, jamais de KeyError."""
         if not SHARED_FALLBACK_AVAILABLE:
-            error = f"{DEFAULT_HOST}:{DEFAULT_PORT} — {self._last_connect_error}"
-            message = tr("nominal.no_fallback", login=login or self._nominal_login(), error=error)
+            error = f"{DEFAULT_HOST}:{DEFAULT_PORT} — {self._last_connect_error or '-'}"
+            message = tr(
+                "nominal.no_fallback",
+                reason=self._reason_text(banner or "unavailable", login or self._nominal_login()),
+                error=error,
+            )
             self._log(message, Qgis.MessageLevel.Critical)
             if not silent:
                 QMessageBox.critical(self.iface.mainWindow(), "Constructel Bridge", message)
@@ -1358,33 +1568,76 @@ class ConstructelBridgePlugin:
             password = stored or _DEFAULT_PW
         ok = self._connect(password, silent=silent)
         if ok:
-            QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_SHARED)
-            if banner == LOGIN_DISABLED:
-                text = tr("nominal.banner_login_disabled")
-            elif banner == AUTH_REFUSED:
-                text = tr("nominal.banner_auth_refused", login=login)
-            elif banner == "no_password":
-                text = tr("nominal.banner_no_password")
-            elif banner == "local_setup":
-                text = tr("nominal.banner_local_setup")
-            else:
-                text = ""
-            if text:
-                self._log(text, Qgis.MessageLevel.Warning)
-                self.iface.messageBar().pushWarning("Constructel Bridge", text)
+            self._set_banner(None if explicit else banner, login)
         return ok
 
     def _on_retry_nominal(self):
         """Action « Reessayer mon acces nominatif » : nouvelle sonde (mot de
         passe memorise, sinon dialogue, une ressaisie permise) ; succes ->
-        bascule nominative immediate, sans redemarrage ni reinstallation."""
-        QgsSettings().setValue(NOMINAL_SETTINGS_KEYS["auth_mode"], AUTH_MODE_NOMINAL)
-        self._connected = False
-        ok = self._connect_nominal_or_fallback(silent=False)
+        bascule nominative immediate, sans redemarrage ni reinstallation.
+        Echec -> la session en cours est conservee (M1)."""
+        _reset_master_password_prompt()
+        ok = self._connect_nominal_or_fallback(silent=False, explicit=True)
         if ok and self._auth_mode == AUTH_MODE_NOMINAL:
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge", tr("nominal.retry_ok", login=self._pg_login),
             )
+
+    # =====================================================================
+    # Bandeau de repli D7 et indicateur de mode (revue 29/10, I9/I14)
+    # =====================================================================
+
+    _REASON_KEYS = {
+        LOGIN_DISABLED: "nominal.reason_login_disabled",
+        AUTH_REFUSED: "nominal.reason_auth_refused",
+        "unavailable": "nominal.reason_unavailable",
+        "local_setup": "nominal.reason_local_setup",
+        "no_password": "nominal.reason_no_password",
+    }
+
+    def _reason_text(self, kind, login: str = "") -> str:
+        return tr(self._REASON_KEYS.get(kind, "nominal.reason_unavailable"), login=login or "-")
+
+    def _set_banner(self, kind, login: str = ""):
+        """Bandeau persistant du repli D7 (None = aucun) : journalise tout de
+        suite, affiche des que l'interface est prete."""
+        self._banner = (kind, login) if kind else None
+        if self._banner:
+            self._log(tr("nominal.banner", reason=self._reason_text(kind, login)), Qgis.MessageLevel.Warning)
+        if self._ui_ready:
+            self._show_banner()
+        self._update_mode_indicator()
+
+    def _remove_banner(self):
+        if self._banner_item is None:
+            return
+        try:
+            self.iface.messageBar().popWidget(self._banner_item)
+        except (RuntimeError, AttributeError):
+            pass  # deja ferme par l'utilisateur (objet C++ detruit)
+        self._banner_item = None
+
+    def _show_banner(self):
+        """Message SANS expiration (duree 0) dans la barre de messages ;
+        remplace le precedent, retire quand la session redevient nominative."""
+        self._remove_banner()
+        if self._banner is None or not (self._connected and self._auth_mode == AUTH_MODE_SHARED):
+            return
+        kind, login = self._banner
+        item = QgsMessageBarItem(
+            "Constructel Bridge", tr("nominal.banner", reason=self._reason_text(kind, login)),
+            Qgis.MessageLevel.Warning, 0,
+        )
+        self.iface.messageBar().pushItem(item)
+        self._banner_item = item
+
+    def _update_mode_indicator(self):
+        """Indication permanente dans le menu du plugin : libelle de l'action
+        « Reessayer mon acces nominatif » quand la session est partagee."""
+        if self._action_retry is None:
+            return
+        shared = self._connected and self._auth_mode == AUTH_MODE_SHARED
+        self._action_retry.setText(tr("menu.retry_nominal_shared" if shared else "menu.retry_nominal"))
 
     # =====================================================================
     # Language
@@ -1422,6 +1675,7 @@ class ConstructelBridgePlugin:
         ]
         for action, key in zip(self._actions, keys):
             action.setText(tr(key))
+        self._update_mode_indicator()
 
     # =====================================================================
     # Connexion
@@ -1429,30 +1683,35 @@ class ConstructelBridgePlugin:
 
     def _on_connect(self):
         """Action manuelle : dialogue de connexion (login nominatif pre-rempli
-        et modifiable + mot de passe AD). Le dialogue EST la ressaisie :
-        une seule sonde, repli D7 si refusee."""
-        answer = self._ask_password(self._pg_login or self._nominal_login())
+        et modifiable + mot de passe AD). Meme machine d'etat que le
+        demarrage (revue 29/10, M11) : mot de passe refuse -> UNE ressaisie
+        avec message ; echec -> la session en cours est conservee (M1)."""
+        _reset_master_password_prompt()
+        answer = self._ask_password(self._pg_login or self._startup_login())
         if not answer:
             return
         login, password = answer
-        self._connected = False
-        self._connect_nominal_or_fallback(
-            silent=False, login=login, password=password, allow_prompt=False,
-        )
+        self._connect_nominal_or_fallback(silent=False, login=login, password=password, explicit=True)
 
-    def _connect(self, password: str, silent: bool = False, login: Optional[str] = None):
+    def _connect(self, password: str, silent: bool = False, login: Optional[str] = None,
+                 project_hooks: Optional[bool] = None):
         """Etablit la connexion et initialise l'utilisateur.
 
         Returns True on success, False on failure.
         When *silent* is True, no error dialog is shown (used by auto-connect).
+        *project_hooks* (defaut : not silent) : corrections du projet courant
+        apres succes.
 
         *login* (Bridge 1.8) : login PostgreSQL nominatif ; None = identifiant
-        partage (chemin 1.7.3, repli D7). En nominatif : verify-full, SELECT
-        seul sur ref.users, plus d'app.current_user (le serveur connait
-        l'auteur), perimetre lu et affiche. Sur echec, l'exception est
-        conservee dans self._last_connect_error pour l'orchestrateur
+        partage (chemin 1.7.x, repli D7). En nominatif : verify-full avec les
+        CA du paquet et connect_timeout, configs Auth Manager ecrites et
+        verifiees AVANT de declarer la session (M3), SELECT seul sur
+        ref.users, plus d'app.current_user (le serveur connait l'auteur),
+        perimetre lu et affiche. Sur echec, l'exception est conservee dans
+        self._last_connect_error pour l'orchestrateur
         (_connect_nominal_or_fallback) ; le dialogue d'erreur est laisse a
-        l'appelant en nominatif.
+        l'appelant en nominatif. La connexion en cours n'est fermee qu'apres
+        le succes de la nouvelle (revue 29/10, M1).
 
         When mTLS is active, connects with verify-full + client certificate
         (paths from the mTLS settings). When mTLS is configured but
@@ -1460,7 +1719,10 @@ class ConstructelBridgePlugin:
         """
         nominal = bool(login)
         user = login if nominal else DEFAULT_USER
-        self._password = password
+        if not nominal:
+            # Revue 29/10 (I6) : seul le mot de passe PARTAGE est expose aux
+            # chemins 1.7.x (_fix_layer_credentials, projets, v_form_lists).
+            self._password = password
         self._last_connect_error = None
         qgis_user = self._get_qgis_username()
 
@@ -1496,19 +1758,17 @@ class ConstructelBridgePlugin:
                 "sslmode": NOMINAL_SSLMODE,
                 "sslrootcert": str(ca_bundle_path(os.path.dirname(__file__))),
             }
-
-        if self._conn is not None and not getattr(self._conn, "closed", True):
-            try:
-                self._conn.close()
-            except Exception:  # noqa: BLE001 -- ancienne connexion deja morte
-                pass
+        if nominal:
+            # Revue 29/10 (I2) : AD lent ou en panne -> echec borne puis
+            # repli, au lieu de geler QGIS jusqu'a authentication_timeout.
+            ssl_kwargs["connect_timeout"] = NOMINAL_CONNECT_TIMEOUT
 
         try:
             import psycopg2
 
             app_name = f"constructel_bridge:{qgis_user}"
             ssl_mode = ssl_kwargs.pop("sslmode", DEFAULT_SSLMODE)
-            self._conn = psycopg2.connect(
+            new_conn = psycopg2.connect(
                 host=DEFAULT_HOST,
                 port=DEFAULT_PORT,
                 dbname=DEFAULT_DBNAME,
@@ -1519,7 +1779,7 @@ class ConstructelBridgePlugin:
                 sslmode=ssl_mode,
                 **ssl_kwargs,
             )
-            self._conn.autocommit = True
+            new_conn.autocommit = True
         except (psycopg2.Error, OSError) as exc:
             self._last_connect_error = exc
             if mtls_active and "connection requires a valid client certificate" in str(exc):
@@ -1562,32 +1822,60 @@ class ConstructelBridgePlugin:
                 )
             return False
 
+        if nominal:
+            # M3 : la session nominative n'existe que si 9i19s56 porte bien
+            # l'identite du poste -- sinon les couches pointeraient vers une
+            # config absente ou perimee alors que le plugin se dirait connecte.
+            try:
+                self._setup_qgis_pg_connection(password, use_authcfg=True, login=login)
+            except Exception as exc:
+                self._log(f"QGIS PG config failed: {exc}", Qgis.MessageLevel.Warning)
+            if not mtls_active and _stored_login("wyre") != login:
+                new_conn.close()
+                self._last_connect_error = _LocalSetupError(
+                    f"config Auth Manager {_FIXED_AUTH_CFG_IDS['wyre']} non ecrite pour {login}"
+                )
+                return False
+
+        old_conn = self._conn
+        self._conn = new_conn
+        if old_conn is not None and old_conn is not new_conn and not getattr(old_conn, "closed", True):
+            try:
+                old_conn.close()
+            except Exception:  # noqa: BLE001 -- ancienne connexion deja morte
+                pass
+
         self._connected = True
         self._auth_mode = AUTH_MODE_NOMINAL if nominal else AUTH_MODE_SHARED
         self._pg_login = login or ""
+        self._ad_password = password if nominal else None
         self._scope = None
         self._scope_names = ({}, {})
         if nominal:
             self._log(tr("conn.established_nominal", login=login))
             # Le serveur connait l'auteur (session_user) : l'adresse
-            # declaree n'est plus posee (spec §5.7.6, AC9).
-            _clear_audit_identity()
+            # declaree n'est plus posee (spec §5.7.6, AC9) ; l'adresse
+            # memorisee reste pour le plugin Historique (revue 29/10, M9).
+            _clear_audit_identity(forget_email=False)
         else:
             self._log(tr("conn.established"))
+            # M13 : pre-cache QgsCredentials de l'identifiant partage
+            # seulement en session partagee.
+            _precache_pg_credentials()
 
         try:
-            is_new_user = self._register_bridge_user(select_only=nominal)
+            is_new_user = self._register_bridge_user(select_only=nominal, login=login)
         except Exception as exc:
             self._log(f"User registration failed: {exc}", Qgis.MessageLevel.Warning)
             is_new_user = False
 
         if nominal:
             self._read_session_scope()
-
-        try:
-            self._setup_qgis_pg_connection(password, use_authcfg=True, login=login)
-        except Exception as exc:
-            self._log(f"QGIS PG config failed: {exc}", Qgis.MessageLevel.Warning)
+        else:
+            try:
+                self._setup_qgis_pg_connection(password, use_authcfg=True)
+            except Exception as exc:
+                self._log(f"QGIS PG config failed: {exc}", Qgis.MessageLevel.Warning)
 
         try:
             self._setup_be_connection(password, login)
@@ -1597,7 +1885,9 @@ class ConstructelBridgePlugin:
         # En mode silent (auto-connect au demarrage), ne pas toucher au
         # projet pour eviter de le rendre "dirty" et declencher le
         # dialogue "Enregistrer le projet".
-        if not silent:
+        if project_hooks is None:
+            project_hooks = not silent
+        if project_hooks:
             self._apply_project_hooks()
 
         if nominal:
@@ -1610,11 +1900,16 @@ class ConstructelBridgePlugin:
                 "Constructel Bridge",
                 tr("conn.connected_as", user=self._bridge_user),
             )
+        self._update_mode_indicator()
 
         try:
             onboarding_done = QgsSettings().value("constructel_bridge/onboarding_done", False)
             if not onboarding_done or is_new_user:
-                self._run_onboarding(is_new_user)
+                if self._ui_ready:
+                    self._run_onboarding(is_new_user)
+                else:
+                    # I13 : pas d'assistant modal sous l'ecran de demarrage.
+                    self._pending_onboarding = bool(is_new_user or self._pending_onboarding)
         except Exception as exc:
             self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
 
@@ -1680,15 +1975,18 @@ class ConstructelBridgePlugin:
         import getpass
         return resolve_username(explicit, profile_name, getpass.getuser())
 
-    def _register_bridge_user(self, select_only: bool = False) -> bool:
+    def _register_bridge_user(self, select_only: bool = False, login: Optional[str] = None) -> bool:
         """Enregistre l'utilisateur QGIS dans ref.users si absent.
 
         *select_only* (session nominative, Bridge 1.8) : lecture seule --
         l'utilisateur existe par ldap_sync, ni INSERT ni UPDATE (spec
         §5.7.8 ; la mig 502 les refuserait), ni adresse d'audit declaree.
-        Un login hors ref.users (bureau d'etudes) est simplement journalise.
+        La recherche porte sur le login PostgreSQL de la session (*login*,
+        = lower(username) cote serveur), pas sur le nom du poste (revue
+        29/10, M10). Un login hors ref.users (bureau d'etudes) est
+        simplement journalise.
         """
-        username = self._get_qgis_username()
+        username = login if (select_only and login) else self._get_qgis_username()
         self._bridge_user = username
         is_new = False
 
@@ -1710,6 +2008,8 @@ class ConstructelBridgePlugin:
             if row:
                 self._bridge_user_id = str(row[0])
                 self._bridge_user_email = row[2]
+                if select_only:
+                    self._bridge_user = row[1] or username
                 self._log(tr("user.existing", username=username, user_id=self._bridge_user_id))
             elif select_only:
                 self._log(
@@ -1831,6 +2131,24 @@ class ConstructelBridgePlugin:
             self._setup_qgis_pg_connection(_BE_PW, use_authcfg=True, conn="be")
         else:
             self._log("Connexion 'be' : aucun identifiant disponible en mode partage (login nominatif requis)")
+            self._neutralize_nominal_be()
+
+    def _neutralize_nominal_be(self):
+        """Repli partage sans identifiant `be` : 07254s7 ne doit plus porter
+        le login + mot de passe AD d'une session nominative precedente, que
+        les couches `be` et le navigateur rejoueraient (binds refuses si le
+        mot de passe a change ; revue 29/10, I10). La config est retiree et
+        l'entree navigateur `be` n'y fait plus reference."""
+        fixed_id = _FIXED_AUTH_CFG_IDS["be"]
+        try:
+            auth_mgr = QgsApplication.authManager()
+            if fixed_id not in auth_mgr.configIds() or _stored_login("be") in ("", BE_USER):
+                return
+            auth_mgr.removeAuthenticationConfig(fixed_id)
+            QgsSettings().remove(f"PostgreSQL/connections/{_PG_CONNECTIONS['be']['name']}/authcfg")
+            self._log(f"Connexion 'be' : config nominative {fixed_id} retiree (session partagee)")
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Connexion 'be' : neutralisation impossible : {exc}", Qgis.MessageLevel.Warning)
 
     def _set_app_user(self, username: str):
         """Positionne app.current_user dans la session PostgreSQL (mode
@@ -2159,6 +2477,9 @@ class ConstructelBridgePlugin:
             params["authcfg"] = _FIXED_AUTH_CFG_IDS["wyre"]
             params["sslmode"] = NOMINAL_SSLMODE
             params["sslrootcert"] = str(ca_bundle_path(os.path.dirname(__file__)))
+            # I6 : seul lecteur du mot de passe AD (connexion psycopg2 des
+            # styles) ; jamais ecrit dans une couche (authcfg).
+            password = self._ad_password or ""
         return params, password
 
     def _ensure_ref_layers(self):

@@ -73,13 +73,22 @@ def test_placeholders_match_across_languages():
 
 
 @pytest.mark.parametrize("key", [
-    "menu.retry_nominal", "dialog.login", "dialog.reprompt", "conn.connected_nominal",
-    "nominal.banner_login_disabled", "nominal.banner_auth_refused", "nominal.banner_no_password",
-    "nominal.no_fallback", "nominal.ca_import_failed", "nominal.banner_local_setup",
-    "nominal.login_unusable", "nominal.retry_ok",
+    "menu.retry_nominal", "menu.retry_nominal_shared", "dialog.login", "dialog.login_invalid",
+    "dialog.reprompt", "conn.connected_nominal", "nominal.banner", "nominal.retry_failed",
+    "nominal.reason_login_disabled", "nominal.reason_auth_refused", "nominal.reason_unavailable",
+    "nominal.reason_local_setup", "nominal.reason_no_password",
+    "nominal.no_fallback", "nominal.ca_import_failed", "nominal.login_unusable", "nominal.retry_ok",
     "scope.all", "scope.none", "scope.scoped", "scope.readonly", "scope.unknown",
     "scope.layers_locked", "scope.write_refused",
 ])
 def test_bridge18_keys_present_in_three_languages(key):
     for lang in ("en", "fr", "pt"):
         assert TRANSLATIONS[lang][key].strip()
+
+
+def test_refusal_wording_does_not_blame_the_password_only():
+    # Revue 29/10 (I14) : un role absent recoit aussi « password
+    # authentication failed » (ligne scram) -> le message cite l'activation.
+    for lang, word in (("fr", "activ"), ("en", "activat"), ("pt", "ativad")):
+        for key in ("dialog.reprompt", "nominal.reason_auth_refused"):
+            assert word in TRANSLATIONS[lang][key].lower(), (lang, key)

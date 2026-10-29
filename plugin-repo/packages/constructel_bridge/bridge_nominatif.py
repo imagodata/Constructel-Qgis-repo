@@ -37,25 +37,53 @@ def resolve_pg_login(username: str) -> str:
     return login if PG_LOGIN_RE.fullmatch(login) else ""
 
 
+def normalize_login(text: str) -> str:
+    """Login saisi par la personne -> login PostgreSQL (revue 29/10, I5) :
+    ``DOMAINE\\login`` et ``login@suffixe`` (constructelbe.corp ou autre)
+    sont ramenés à ``login``, en minuscules. "" si le résultat ne peut pas
+    être un login (le dialogue l'affiche au lieu de basculer en partagé)."""
+    login = (text or "").strip()
+    if "\\" in login:
+        login = login.rsplit("\\", 1)[1]
+    if "@" in login:
+        login = login.split("@", 1)[0]
+    return resolve_pg_login(login)
+
+
 # --- probe failure classification ---------------------------------------------
+#
+# Revue 29/10 (I2) : seul le REFUS DU MOT DE PASSE déclenche la ressaisie ;
+# tout autre échec pendant la connexion (login non actif, pg_hba, délai,
+# TLS, trop de connexions, motif inconnu) mène au repli partagé quand il
+# existe. Messages du serveur en anglais ou en français (lc_messages),
+# relevés dans src/backend/po/fr.po (PostgreSQL 17).
 
 AUTH_REFUSED = "auth_refused"      # bind refused: the password is wrong (re-prompt once)
 LOGIN_DISABLED = "login_disabled"  # role NOLOGIN / unknown / no pg_hba line: not activated
 
 _LOGIN_DISABLED_PATTERNS = (
     re.compile(r"is not permitted to log in"),
+    re.compile(r"n'est pas autorisé à se connecter"),
     re.compile(r'role "[^"]*" does not exist'),
+    re.compile(r"le rôle .{0,80}? n'existe pas"),
     re.compile(r"no pg_hba\.conf entry"),
+    re.compile(r"aucune entrée dans pg_hba\.conf"),
+    re.compile(r"pg_hba\.conf rejects connection"),
+    re.compile(r"pg_hba\.conf rejette la connexion"),
 )
 _AUTH_REFUSED_PATTERNS = (
-    re.compile(r"authentication failed"),  # password / LDAP / SCRAM authentication failed
+    # password = méthodes password/md5/scram ; LDAP = lignes ldap (bind AD).
+    re.compile(r"\b(?:password|LDAP) authentication failed"),
+    re.compile(r"authentification (?:par mot de passe|LDAP) échouée"),
 )
 
 
 def classify_auth_failure(exc) -> str | None:
-    """AUTH_REFUSED, LOGIN_DISABLED, or None when *exc* is not an
-    authentication failure (network, TLS, server down: no fallback, spec
-    §5.7.5). Never raises.
+    """AUTH_REFUSED (mot de passe refusé : ressaisie possible),
+    LOGIN_DISABLED (login non actif ou non admis : pas un problème de mot de
+    passe) ou None (tout le reste : délai, TLS, réseau, motif inconnu).
+    L'appelant replie dans tous les cas où il ne ressaisit pas. Ne lève
+    jamais.
     """
     try:
         message = str(exc)
@@ -68,8 +96,10 @@ def classify_auth_failure(exc) -> str | None:
         if pattern.search(message):
             return AUTH_REFUSED
     pgcode = getattr(exc, "pgcode", None)
-    if isinstance(pgcode, str) and pgcode.startswith("28"):
+    if pgcode == "28P01":  # invalid_password
         return AUTH_REFUSED
+    if isinstance(pgcode, str) and pgcode.startswith("28"):
+        return LOGIN_DISABLED
     return None
 
 
@@ -83,24 +113,18 @@ NOMINAL_SETTINGS_KEYS = {
     "pg_login": "constructel_bridge/pg_login",
 }
 
+# Spec §5.7.4 / AC8 : jamais plus de 2 binds refusés par démarrage.
+MAX_REFUSED_BINDS = 2
 
-def decide_after_probe_failure(kind, memorized_mode: str, has_shared_password: bool,
-                               reprompted: bool) -> str:
-    """"reprompt" (ask the password once more), "fallback" (shared login +
-    banner, D7) or "error" (current error behaviour, no fallback).
 
-    A wrong password is re-asked ONCE, and only when the workstation is not
-    already in shared mode (a workstation that fell back before gets a
-    single silent probe per startup, no dialog). A disabled or unknown login
-    never re-prompts: the password is not the problem.
-    """
-    if kind is None:
-        return "error"
-    if kind == AUTH_REFUSED and memorized_mode in ("", None, AUTH_MODE_NOMINAL) and not reprompted:
-        return "reprompt"
-    if has_shared_password:
-        return "fallback"
-    return "error"
+def should_reprompt(kind, memorized_mode: str, refused_binds: int, explicit: bool = False) -> bool:
+    """Redemander le mot de passe (une seule fois) après *refused_binds*
+    refus ? Seulement pour un mot de passe refusé, sous le plafond de binds
+    refusés, et jamais d'office au démarrage d'un poste déjà en repli (une
+    action explicite de la personne -- Connecter, Réessayer -- si)."""
+    if kind != AUTH_REFUSED or refused_binds >= MAX_REFUSED_BINDS:
+        return False
+    return explicit or memorized_mode != AUTH_MODE_SHARED
 
 
 # --- CA du serveur (verify-full) ---------------------------------------------

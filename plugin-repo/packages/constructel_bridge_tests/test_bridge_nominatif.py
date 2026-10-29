@@ -71,9 +71,39 @@ def test_no_pg_hba_entry_is_login_disabled():
     assert bn.classify_auth_failure(exc) == bn.LOGIN_DISABLED
 
 
-def test_sqlstate_class_28_without_known_text_is_auth_refused():
-    exc = _PgErr("something odd", pgcode="28000")
-    assert bn.classify_auth_failure(exc) == bn.AUTH_REFUSED
+def test_sqlstate_28p01_is_auth_refused_other_28_is_login_disabled():
+    assert bn.classify_auth_failure(_PgErr("something odd", pgcode="28P01")) == bn.AUTH_REFUSED
+    assert bn.classify_auth_failure(_PgErr("something odd", pgcode="28000")) == bn.LOGIN_DISABLED
+
+
+# Revue 29/10 (I2) : lc_messages francais du serveur (PostgreSQL 17, fr.po).
+_LIBPQ_FR = 'la connexion au serveur sur « 192.168.160.31 », port 5432 a échoué : FATAL:  '
+
+
+@pytest.mark.parametrize("message, kind", [
+    (_LIBPQ_FR + "authentification par mot de passe échouée pour l'utilisateur  « jdoe »", bn.AUTH_REFUSED),
+    (_LIBPQ_FR + "authentification LDAP échouée pour l'utilisateur « jdoe »", bn.AUTH_REFUSED),
+    (_LIBPQ_FR + "le rôle « jdoe » n'est pas autorisé à se connecter", bn.LOGIN_DISABLED),
+    (_LIBPQ_FR + "le rôle « jdoe » n'existe pas", bn.LOGIN_DISABLED),
+    (_LIBPQ_FR + "aucune entrée dans pg_hba.conf pour l'hôte « 10.1.2.3 », utilisateur « jdoe »,\n"
+                 "base de données « farois_ftth », chiffrement SSL", bn.LOGIN_DISABLED),
+    (_LIBPQ_FR + "pg_hba.conf rejette la connexion pour l'hôte « 10.1.2.3 »", bn.LOGIN_DISABLED),
+    (_LIBPQ + 'pg_hba.conf rejects connection for host "10.1.2.3", user "jdoe"', bn.LOGIN_DISABLED),
+])
+def test_french_and_pg_hba_reject_messages_are_classified(message, kind):
+    assert bn.classify_auth_failure(_PgErr(message)) == kind
+
+
+@pytest.mark.parametrize("message", [
+    _LIBPQ + 'too many connections for role "jdoe"',
+    _LIBPQ_FR + "trop de connexions pour le rôle « jdoe »",
+    _LIBPQ + "canceling authentication due to timeout",
+    _LIBPQ_FR + "annulation de l'authentification à cause du délai écoulé",
+    _LIBPQ + 'certificate authentication failed for user "jdoe"',
+])
+def test_non_password_server_failures_are_not_a_password_refusal(message):
+    # Pas de ressaisie : l'orchestrateur replie (I2).
+    assert bn.classify_auth_failure(_PgErr(message)) != bn.AUTH_REFUSED
 
 
 @pytest.mark.parametrize("message", [
@@ -91,43 +121,45 @@ def test_classify_never_raises_on_exotic_exception():
     assert bn.classify_auth_failure(OSError(111, "Connection refused")) is None
 
 
-# --- decide_after_probe_failure -------------------------------------------------
+# --- should_reprompt (I2 : une seule ressaisie, <= 2 binds refuses) ---------------
 
 
-def test_other_error_never_falls_back():
-    assert bn.decide_after_probe_failure(None, bn.AUTH_MODE_NOMINAL, True, False) == "error"
+def test_password_refusal_reprompts_once_in_nominal_or_first_run():
+    assert bn.should_reprompt(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, 1) is True
+    assert bn.should_reprompt(bn.AUTH_REFUSED, "", 1) is True
 
 
-def test_auth_refused_in_nominal_mode_reprompts_once():
-    assert bn.decide_after_probe_failure(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, True, False) == "reprompt"
+def test_never_more_than_two_refused_binds():
+    assert bn.MAX_REFUSED_BINDS == 2
+    assert bn.should_reprompt(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, 2) is False
+    assert bn.should_reprompt(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, 2, explicit=True) is False
 
 
-def test_auth_refused_first_run_reprompts_once():
-    # Mode jamais memorise (premier demarrage 1.8) : une faute de frappe ne
-    # doit pas condamner le poste au repli.
-    assert bn.decide_after_probe_failure(bn.AUTH_REFUSED, "", True, False) == "reprompt"
+def test_shared_workstation_startup_never_reprompts_but_explicit_action_does():
+    assert bn.should_reprompt(bn.AUTH_REFUSED, bn.AUTH_MODE_SHARED, 1) is False
+    assert bn.should_reprompt(bn.AUTH_REFUSED, bn.AUTH_MODE_SHARED, 1, explicit=True) is True
 
 
-def test_auth_refused_after_reprompt_falls_back():
-    assert bn.decide_after_probe_failure(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, True, True) == "fallback"
+@pytest.mark.parametrize("kind", [bn.LOGIN_DISABLED, None, "unavailable", "local_setup"])
+def test_only_a_password_refusal_reprompts(kind):
+    assert bn.should_reprompt(kind, bn.AUTH_MODE_NOMINAL, 1, explicit=True) is False
 
 
-def test_auth_refused_in_shared_mode_falls_back_without_reprompt():
-    # Poste deja en repli : une seule sonde par demarrage, pas de dialogue.
-    assert bn.decide_after_probe_failure(bn.AUTH_REFUSED, bn.AUTH_MODE_SHARED, True, False) == "fallback"
+# --- normalize_login (I5) -----------------------------------------------------------
 
 
-def test_login_disabled_falls_back_without_reprompt():
-    assert bn.decide_after_probe_failure(bn.LOGIN_DISABLED, bn.AUTH_MODE_NOMINAL, True, False) == "fallback"
-
-
-def test_login_disabled_without_shared_password_is_an_error():
-    # Cloture 1.8.x : plus de wyre.password -> pas de repli possible.
-    assert bn.decide_after_probe_failure(bn.LOGIN_DISABLED, bn.AUTH_MODE_NOMINAL, False, False) == "error"
-
-
-def test_auth_refused_after_reprompt_without_shared_password_is_an_error():
-    assert bn.decide_after_probe_failure(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, False, True) == "error"
+@pytest.mark.parametrize("typed, login", [
+    ("CONSTRUCTELBE\\JDoe", "jdoe"),
+    ("jdoe@constructelbe.corp", "jdoe"),
+    ("J.Doe@constructel.be", "j.doe"),
+    ("  JDoe  ", "jdoe"),
+    ("ftth_editor", "ftth_editor"),
+    ("jean dupont", ""),
+    ("DOM\\", ""),
+    ("@constructel.be", ""),
+])
+def test_normalize_login(typed, login):
+    assert bn.normalize_login(typed) == login
 
 
 # --- pem_blocks -------------------------------------------------------------------

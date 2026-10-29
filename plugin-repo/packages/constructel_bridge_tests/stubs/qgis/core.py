@@ -213,13 +213,18 @@ class QgsCredentials:
 
     def __init__(self):
         QgsCredentials._instance = self
+        # Test-double : realms pre-caches (revue 29/10, M13).
+        self.puts = []
 
     @classmethod
     def instance(cls):
+        # Comme QGIS : toujours une instance (QgsCredentialsNone par defaut).
+        if cls._instance is None:
+            cls._instance = cls()
         return cls._instance
 
     def put(self, realm, username, password):
-        pass
+        self.puts.append((realm, username, password))
 
     def get(self, realm, username, password, message=""):
         return False, username, password

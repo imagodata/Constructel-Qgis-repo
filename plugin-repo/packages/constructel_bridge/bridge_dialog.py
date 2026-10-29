@@ -5,7 +5,9 @@ Constructel Bridge - Dialogue de connexion.
 Bridge 1.8 : login PostgreSQL nominatif (compte Windows / AD de la
 personne), pre-rempli et modifiable, + mot de passe AD. Le mot de passe est
 toujours memorise par l'Auth Manager QGIS (sonde silencieuse au demarrage
-suivant) : plus de case « retenir le mot de passe ».
+suivant) : plus de case « retenir le mot de passe ». Revue 29/10 (I5) : la
+saisie est normalisee (« DOMAINE\\login », « login@domaine » -> login, en
+minuscules) et un login invalide est signale dans le dialogue.
 """
 
 from qgis.PyQt.QtCore import Qt
@@ -21,6 +23,7 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
 )
 
+from .bridge_nominatif import normalize_login
 from .i18n import tr
 
 
@@ -69,6 +72,13 @@ class ConstructelConnectDialog(QDialog):
         self._user_edit = QLineEdit(login)
         self._user_edit.setPlaceholderText(tr("dialog.login_placeholder"))
         form.addRow(tr("dialog.login"), self._user_edit)
+        # Login saisi qui ne peut pas etre un login PostgreSQL : dit ici,
+        # plutot qu'une bascule silencieuse sur l'identifiant partage.
+        self._login_error = QLabel(tr("dialog.login_invalid"))
+        self._login_error.setWordWrap(True)
+        self._login_error.setStyleSheet("color: #b00020;")
+        self._login_error.setVisible(False)
+        form.addRow("", self._login_error)
 
         # Password field with show/hide toggle -- jamais pre-rempli.
         pw_layout = QHBoxLayout()
@@ -105,8 +115,12 @@ class ConstructelConnectDialog(QDialog):
             self._user_edit.setFocus()
 
     def _validate(self, *_args):
-        """Enable OK only when login and password are non-empty."""
-        self._ok_button.setEnabled(bool(self._user_edit.text().strip()) and bool(self._password_edit.text()))
+        """OK seulement avec un login valide (apres normalisation) et un
+        mot de passe ; un login saisi mais invalide est signale."""
+        typed = self._user_edit.text().strip()
+        valid = bool(normalize_login(typed))
+        self._login_error.setVisible(bool(typed) and not valid)
+        self._ok_button.setEnabled(valid and bool(self._password_edit.text()))
 
     def _toggle_password_visibility(self, visible: bool):
         """Toggle between masked and clear-text password display."""
@@ -118,7 +132,9 @@ class ConstructelConnectDialog(QDialog):
             self._toggle_pw_btn.setToolTip(tr("dialog.show_password"))
 
     def login(self) -> str:
-        return self._user_edit.text().strip()
+        """Login normalise (``DOMAINE\\login`` / ``login@domaine`` ->
+        ``login``, minuscules) ; "" s'il est invalide."""
+        return normalize_login(self._user_edit.text())
 
     def password(self) -> str:
         return self._password_edit.text()

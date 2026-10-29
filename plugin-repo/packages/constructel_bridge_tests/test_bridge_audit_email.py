@@ -154,7 +154,8 @@ def test_initgui_applies_cache_before_anything_else(bp):
     src = inspect.getsource(bp.ConstructelBridgePlugin.initGui)
     first_call = src.index("_apply_cached_audit_identity(")
     assert first_call < src.index("init_language(")
-    assert first_call < src.index("self._auto_connect(")
+    # Revue 29/10 (I13) : la connexion est differee, l'adresse posee avant.
+    assert first_call < src.index("self._schedule_startup_connection(")
 
 
 # --- _register_bridge_user ---------------------------------------------

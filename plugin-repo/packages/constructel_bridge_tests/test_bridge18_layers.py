@@ -116,7 +116,7 @@ def _nominal_plugin(bp, monkeypatch, tmp_path):
     plugin = bp.ConstructelBridgePlugin(_FakeIface())
     plugin._auth_mode = bn.AUTH_MODE_NOMINAL
     plugin._pg_login = LOGIN
-    plugin._password = "ad-pw"
+    plugin._ad_password = "ad-pw"  # I6 : jamais dans _password (chemins partages)
     plugin._connected = True
     return plugin
 
