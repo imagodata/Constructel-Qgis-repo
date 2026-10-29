@@ -16,11 +16,13 @@ from xml.sax.saxutils import escape as xml_escape, unescape as xml_unescape
 from qgis.core import (
     Qgis,
     QgsApplication,
+    QgsAuthCertUtils,
     QgsAuthMethodConfig,
     QgsCredentials,
     QgsDataProvider,
     QgsDataSourceUri,
     QgsMessageLog,
+    QgsPathResolver,
     QgsProject,
     QgsProjectBadLayerHandler,
     QgsSettings,
@@ -30,6 +32,7 @@ from qgis.core import (
 from qgis.gui import QgisInterface
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtNetwork import QSslCertificate
 from qgis.PyQt.QtWidgets import (
     QAction,
     QDialog,
@@ -63,6 +66,7 @@ from .bridge_nominatif import (
     LOGIN_DISABLED,
     NOMINAL_SETTINGS_KEYS,
     SCOPE_QUERY,
+    ca_bundle_path,
     classify_auth_failure,
     datasource_param,
     decide_after_probe_failure,
@@ -73,11 +77,9 @@ from .bridge_nominatif import (
     resolve_pg_login,
     rewrite_datasource_identity,
     rewrite_datasource_nominal,
-    root_crt_file_path,
     scope_kind,
     scope_labels,
     should_lock_layer,
-    upsert_root_crt_pem,
 )
 
 TAG = "Constructel Bridge"
@@ -156,11 +158,12 @@ DEFAULT_USER = _WYRE_CREDS.get("user", "")
 _DEFAULT_PW = decode_password(_WYRE_CREDS["password"]) if _WYRE_CREDS.get("password") else ""
 SHARED_FALLBACK_AVAILABLE = bool(DEFAULT_USER and _DEFAULT_PW)
 DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
-# verify-full OBLIGATOIRE (spec 2026-10-26 §5.1/§5.5) : le mot de passe AD
-# transite jusqu'au serveur, l'identite du serveur doit etre verifiee. La
-# valeur de credentials.json n'est plus consultee ; root.crt est ecrit par
-# le plugin (_ensure_root_crt) avant toute connexion.
-DEFAULT_SSLMODE = "verify-full"
+# Revue 29/10 (D-TLS-2) : sslmode de l'identifiant PARTAGE (repli D7,
+# secours admin) = 1.7.x a l'identique (credentials.json, defaut require).
+# Seule la session NOMINATIVE, qui transporte le mot de passe AD, est en
+# verify-full obligatoire (spec 2026-10-26 §5.1/§5.5) -- NOMINAL_SSLMODE.
+DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
+NOMINAL_SSLMODE = "verify-full"
 PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
 EMAIL_DOMAIN = _WYRE_CREDS.get("email_domain", "constructel.be")
 
@@ -176,7 +179,7 @@ BE_PORT = int(os.getenv("BE_DB_PORT", str(_BE_CREDS.get("port", 5432))))
 BE_DBNAME = os.getenv("BE_DB_NAME", "") or _BE_CREDS.get("dbname", "")
 BE_USER = _BE_CREDS.get("user", "")
 _BE_PW = decode_password(_BE_CREDS["password"]) if _BE_CREDS.get("password") else ""
-BE_SSLMODE = "verify-full"
+BE_SSLMODE = _BE_CREDS.get("sslmode", "require")  # identifiant partage be (1.7.x)
 
 # `wyre` et `be` pointent sur le MEME host et la MEME base : dans un realm
 # QgsCredentials, seul l'utilisateur les distingue (cf.
@@ -495,30 +498,55 @@ def _stored_login(conn: str = "wyre") -> str:
         return ""
 
 
-def _ensure_root_crt() -> bool:
-    """Ecrit les CA embarquees (CA Farois DB + racine AD Constructel) dans
-    le root.crt de libpq du poste, par upsert de blocs PEM : un root.crt
-    existant (racines d'entreprise) est conserve. Prerequis de
-    sslmode=verify-full pour TOUTES les connexions (psycopg2, couches,
-    projets). Echec -> False + journal Critical : l'appelant n'ouvre AUCUNE
-    connexion (pas de repli en `require`, spec §5.7.3)."""
-    path = root_crt_file_path()
+def _ensure_qgis_trusted_cas() -> bool:
+    """Importe les CA embarquees (CA Farois DB + racine AD Constructel) dans
+    la base d'authentification QGIS, avec la politique « Trusted ».
+
+    Revue 29/10 (D-TLS-1) : pour une couche authcfg (methode Basic) en
+    sslmode verify-*, QGIS REMPLACE tout sslrootcert= par un fichier
+    temporaire contenant QgsAuthManager.trustedCaCerts() (magasin systeme +
+    CA de la base d'authentification ; QgsAuthBasicMethod::
+    updateDataSourceUriItems, 3.28 -> 4.x). Un root.crt sur le poste n'y
+    sert donc a rien : sans cet import, toute couche nominative echouerait
+    (« certificate verify failed ») alors que la sonde psycopg2 reussit.
+
+    Idempotent (certificat deja present et deja « Trusted » : rien n'est
+    ecrit). Ni storeCertAuthority ni storeCertTrustPolicy n'exigent le mot
+    de passe maitre (verifie dans le source QGIS 3.28 et master). Echec ->
+    False + journal Critical : le nominatif est alors impossible, l'appelant
+    passe en repli partage (jamais de poste bloque)."""
     try:
-        blocks = [p.read_text(encoding="utf-8") for p in embedded_ca_paths(os.path.dirname(__file__))]
-        os.makedirs(os.path.dirname(os.path.abspath(str(path))), exist_ok=True)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                existing = f.read()
-        except FileNotFoundError:
-            existing = ""
-        text = upsert_root_crt_pem(existing, blocks)
-        if text != existing:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
+        auth_mgr = QgsApplication.authManager()
+        if auth_mgr.isDisabled():
+            raise RuntimeError("Auth Manager desactive")
+        trusted = QgsAuthCertUtils.CertTrustPolicy.Trusted
+        changed = False
+        for path in embedded_ca_paths(os.path.dirname(__file__)):
+            with open(path, "rb") as f:
+                certs = QSslCertificate.fromData(f.read())
+            if len(certs) != 1 or certs[0].isNull():
+                raise ValueError(f"{path.name} : un certificat attendu, {len(certs)} lu(s)")
+            cert = certs[0]
+            # certAuthority(id) plutot que existsCertAuthority() : ce dernier
+            # interroge une colonne inexistante en 3.28 (toujours False).
+            if auth_mgr.certAuthority(QgsAuthCertUtils.shaHexForCert(cert)).isNull():
+                if not auth_mgr.storeCertAuthority(cert):
+                    raise RuntimeError(f"storeCertAuthority a echoue ({path.name})")
+                changed = True
+            if auth_mgr.certTrustPolicy(cert) != trusted:
+                if not auth_mgr.storeCertTrustPolicy(cert, trusted):
+                    raise RuntimeError(f"storeCertTrustPolicy a echoue ({path.name})")
+                changed = True
+        if changed:
+            # trustedCaCerts() lit les caches CA et politiques : sans
+            # reconstruction, l'import ne vaudrait qu'au prochain demarrage.
+            auth_mgr.rebuildCaCertsCache()
+            auth_mgr.rebuildCertTrustCache()
+            auth_mgr.rebuildTrustedCaCertsCache()
         return True
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 -- jamais d'exception vers la connexion
         QgsMessageLog.logMessage(
-            f"{tr('nominal.root_crt_failed', path=str(path))} ({exc})",
+            f"{tr('nominal.ca_import_failed')} ({exc})",
             TAG, level=Qgis.MessageLevel.Critical,
         )
         return False
@@ -668,6 +696,21 @@ def _mtls_active() -> tuple[bool, str | None]:
     if not result.ok:
         return (False, result.reason)
     return (True, None)
+
+
+_SSL_MODE_ENUMS = {
+    "disable": "SslDisable",
+    "allow": "SslAllow",
+    "prefer": "SslPrefer",
+    "require": "SslRequire",
+    "verify-ca": "SslVerifyCa",
+    "verify-full": "SslVerifyFull",
+}
+
+
+def _ssl_mode_enum(mode: str):
+    """QgsDataSourceUri.SslMode correspondant a un sslmode libpq."""
+    return getattr(QgsDataSourceUri.SslMode, _SSL_MODE_ENUMS.get(mode, "SslPrefer"))
 
 
 def _get_plugin_version() -> str:
@@ -943,6 +986,15 @@ class ConstructelBridgePlugin:
         # pour que le projet ecrit soit portable (pas d'authcfg user-specific).
         QgsProject.instance().writeProject.connect(self._on_write_project)
 
+        # D-TLS-2 : les projets 1.7.x et ceux enregistres en mode partage
+        # portent sslmode=require avec authcfg=9i19s56. Quand cette config
+        # porte le mot de passe AD, QGIS ouvrirait leurs couches en require
+        # (serveur non verifie) AVANT _fix_layer_credentials : le
+        # preprocesseur force verify-full a la lecture, avant toute connexion.
+        self._path_preprocessor_id = QgsPathResolver.setPathPreprocessor(
+            self._nominal_source_preprocessor
+        )
+
         # Auto-connexion silencieuse au demarrage: etablit uniquement la
         # connexion DB et l'enregistrement utilisateur, sans toucher au
         # projet (pas de fix credentials, hooks, etc.) pour eviter de
@@ -960,6 +1012,9 @@ class ConstructelBridgePlugin:
             QgsProject.instance().writeProject.disconnect(self._on_write_project)
         except TypeError:
             pass
+        if getattr(self, "_path_preprocessor_id", None):
+            QgsPathResolver.removePathPreprocessor(self._path_preprocessor_id)
+            self._path_preprocessor_id = None
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
@@ -1135,6 +1190,40 @@ class ConstructelBridgePlugin:
             self._log(f"{cleaned} datasource(s) PG nettoyee(s) avant sauvegarde (authcfg retire)")
 
     # =====================================================================
+    # verify-full des couches qui recoivent le mot de passe AD (D-TLS-2)
+    # =====================================================================
+
+    def _ad_password_in_layer_configs(self) -> bool:
+        """True quand 9i19s56/07254s7 portent le mot de passe AD : session
+        nominative ouverte ou, avant la sonde du demarrage, poste laisse en
+        nominatif par la session precedente."""
+        if self._connected:
+            return self._auth_mode == AUTH_MODE_NOMINAL
+        return (QgsSettings().value(NOMINAL_SETTINGS_KEYS["auth_mode"], "") or "") == AUTH_MODE_NOMINAL
+
+    def _nominal_source_preprocessor(self, source):
+        """Preprocesseur QgsPathResolver (appele par QGIS pour chaque chemin
+        et chaque datasource lus dans un projet, avant creation des couches) :
+        une datasource de NOS serveurs rattachee a 9i19s56/07254s7 passe en
+        verify-full tant que ces configs portent le mot de passe AD. Rien
+        d'autre n'est touche ; ne leve jamais (QGIS 3.28 remplacerait la
+        source par une chaine vide)."""
+        try:
+            if "authcfg=" not in source:
+                return source
+            if datasource_param(source, "authcfg") not in (_FIXED_AUTH_CFG_IDS["wyre"], _FIXED_AUTH_CFG_IDS["be"]):
+                return source
+            if datasource_param(source, "host") not in {h for h in (DEFAULT_HOST, BE_HOST) if h}:
+                return source
+            if datasource_param(source, "sslmode") == NOMINAL_SSLMODE:
+                return source
+            if not self._ad_password_in_layer_configs():
+                return source
+            return force_datasource_sslmode(source, NOMINAL_SSLMODE)
+        except Exception:  # noqa: BLE001 -- voir docstring
+            return source
+
+    # =====================================================================
     # Auto-connexion
     # =====================================================================
 
@@ -1177,7 +1266,7 @@ class ConstructelBridgePlugin:
                                      password: Optional[str] = None, allow_prompt: bool = True) -> bool:
         """Sonde nominative UNIQUE puis repli D7 (spec §5.7.4-5, AC8).
 
-        1. root.crt (verify-full) : echec = bloquant, AUCUNE connexion ;
+        1. CA importees dans QGIS (D-TLS-1) : echec = repli partage ;
         2. login = lower(nom d'utilisateur du poste) ; inutilisable -> partage ;
         3. mot de passe AD : memorise (config `ad` du MEME login), sinon
            dialogue -- sauf au demarrage silencieux d'un poste deja en repli ;
@@ -1188,13 +1277,6 @@ class ConstructelBridgePlugin:
         Jamais plus de 2 binds refuses par demarrage. Le mode retenu est
         memorise (QgsSettings) ; nouvelle sonde au demarrage suivant.
         """
-        if not _ensure_root_crt():
-            if not silent:
-                QMessageBox.critical(
-                    self.iface.mainWindow(), "Constructel Bridge",
-                    tr("nominal.root_crt_failed", path=str(root_crt_file_path())),
-                )
-            return False
         memorized = QgsSettings().value(NOMINAL_SETTINGS_KEYS["auth_mode"], "") or ""
         if login is None:
             login = self._nominal_login()
@@ -1204,6 +1286,10 @@ class ConstructelBridgePlugin:
         if DEFAULT_USER and login == DEFAULT_USER:
             # Identifiant de secours saisi explicitement (admin, D5) : chemin partage.
             return self._connect_shared(silent, password=password)
+        if not _ensure_qgis_trusted_cas():
+            # D-TLS-1 : sans la CA dans QGIS, aucune couche nominative ne
+            # passerait verify-full -> nominatif impossible, repli partage.
+            return self._connect_shared(silent, banner="local_setup", login=login)
         if password is None:
             password = _retrieve_password_encrypted("ad") if _stored_login("ad") == login else ""
         if not password:
@@ -1279,6 +1365,8 @@ class ConstructelBridgePlugin:
                 text = tr("nominal.banner_auth_refused", login=login)
             elif banner == "no_password":
                 text = tr("nominal.banner_no_password")
+            elif banner == "local_setup":
+                text = tr("nominal.banner_local_setup")
             else:
                 text = ""
             if text:
@@ -1400,13 +1488,13 @@ class ConstructelBridgePlugin:
                 "sslkey": QgsSettings().value(MTLS_SETTINGS_KEYS["key_path"], ""),
                 "sslrootcert": QgsSettings().value(MTLS_SETTINGS_KEYS["ca_path"], ""),
             }
-        else:
-            # Bridge 1.8 : verify-full partout, racine = root.crt ecrit par
-            # _ensure_root_crt (chemin par defaut de libpq, passe
-            # explicitement pour ne pas dependre de HOME/APPDATA de QGIS).
+        elif nominal:
+            # Session nominative (mot de passe AD) : verify-full obligatoire,
+            # CA lues en place dans le paquet du plugin (D-TLS-1, rien
+            # d'ecrit sur le poste). Partage : kwargs 1.7.x (D-TLS-2).
             ssl_kwargs = {
-                "sslmode": DEFAULT_SSLMODE,
-                "sslrootcert": str(root_crt_file_path()),
+                "sslmode": NOMINAL_SSLMODE,
+                "sslrootcert": str(ca_bundle_path(os.path.dirname(__file__))),
             }
 
         if self._conn is not None and not getattr(self._conn, "closed", True):
@@ -2056,7 +2144,8 @@ class ConstructelBridgePlugin:
     def _init_conn_params(self):
         """(conn_params, password) pour l'initialisation de projet et les
         styles : session nominative = login + config fixe + verify-full
-        (aucun mot de passe dans les couches) ; partage = chemin 1.7.3."""
+        (aucun mot de passe dans les couches, CA du paquet pour la
+        connexion psycopg2 des styles) ; partage = chemin 1.7.x exact."""
         password = getattr(self, "_password", None) or _DEFAULT_PW
         params = {
             "host": DEFAULT_HOST,
@@ -2064,11 +2153,12 @@ class ConstructelBridgePlugin:
             "dbname": DEFAULT_DBNAME,
             "user": DEFAULT_USER,
             "sslmode": DEFAULT_SSLMODE,
-            "sslrootcert": str(root_crt_file_path()),
         }
         if self._auth_mode == AUTH_MODE_NOMINAL and self._pg_login:
             params["user"] = self._pg_login
             params["authcfg"] = _FIXED_AUTH_CFG_IDS["wyre"]
+            params["sslmode"] = NOMINAL_SSLMODE
+            params["sslrootcert"] = str(ca_bundle_path(os.path.dirname(__file__)))
         return params, password
 
     def _ensure_ref_layers(self):
@@ -2103,7 +2193,7 @@ class ConstructelBridgePlugin:
         else:
             uri.setConnection(
                 DEFAULT_HOST, str(DEFAULT_PORT), DEFAULT_DBNAME,
-                DEFAULT_USER, password, QgsDataSourceUri.SslMode.SslVerifyFull,
+                DEFAULT_USER, password, _ssl_mode_enum(DEFAULT_SSLMODE),
             )
         uri.setDataSource("ref", "v_form_lists", None, "", "rid")
         layer = QgsVectorLayer(uri.uri(False), "v_form_lists", "postgres")
@@ -2214,8 +2304,8 @@ class ConstructelBridgePlugin:
         historiques (_connect).
 
         *login* (Bridge 1.8) : login nominatif porte par l'entree et par la
-        config Auth Manager a id fixe ; None = identifiant partage. Le mode
-        SSL est verify-full ("5") dans tous les cas.
+        config Auth Manager a id fixe, en verify-full ("5") ; None =
+        identifiant partage, en require ("3") comme 1.7.x (D-TLS-2).
 
         When *use_authcfg* is True, stores credentials in Auth Manager
         and references the authcfg ID instead of storing the password
@@ -2244,7 +2334,7 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/port", str(params["port"]))
         settings.setValue(f"{base}/database", params["dbname"])
         settings.setValue(f"{base}/username", user)
-        settings.setValue(f"{base}/sslmode", "5")
+        settings.setValue(f"{base}/sslmode", "5" if login else "3")
         settings.setValue(f"{base}/estimatedMetadata", True)
         settings.setValue(f"{base}/allowGeometrylessTables", False)
         settings.setValue(f"{base}/geometryColumnsOnly", True)

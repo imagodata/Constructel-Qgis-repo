@@ -5,6 +5,7 @@ ouvertes, projets enregistres, projets lus en base, couche cachee
 ref.v_form_lists, LayerSource des listes de valeurs, initialisation de
 projet). Stub-level, pas de QGIS reel.
 """
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -109,7 +110,6 @@ def _nominal_plugin(bp, monkeypatch, tmp_path):
     """Plugin already connected nominatively (no psycopg2 involved)."""
     from qgis.core import QgsSettings
 
-    monkeypatch.setattr(bp, "root_crt_file_path", lambda *a, **k: tmp_path / "root.crt")
     QgsSettings().setValue("constructel_bridge/onboarding_done", True)
     bp._store_password_encrypted("ad-pw", "wyre", username=LOGIN)
     bp._store_password_encrypted("ad-pw", "be", username=LOGIN)
@@ -124,7 +124,6 @@ def _nominal_plugin(bp, monkeypatch, tmp_path):
 def _shared_plugin(bp, monkeypatch, tmp_path):
     from qgis.core import QgsSettings
 
-    monkeypatch.setattr(bp, "root_crt_file_path", lambda *a, **k: tmp_path / "root.crt")
     QgsSettings().setValue("constructel_bridge/onboarding_done", True)
     bp._store_password_encrypted("shared-pw", "wyre")
     plugin = bp.ConstructelBridgePlugin(_FakeIface())
@@ -515,15 +514,15 @@ def test_init_conn_params_nominal_carry_authcfg_and_no_password(bp18, monkeypatc
     assert params["user"] == LOGIN
     assert params["authcfg"] == "9i19s56"
     assert params["sslmode"] == "verify-full"
-    assert params["sslrootcert"] == str(tmp_path / "root.crt")
+    assert params["sslrootcert"] == str(bp18.ca_bundle_path(os.path.dirname(bp18.__file__)))
     assert password == "ad-pw"
 
 
 def test_init_conn_params_shared_mode_are_17x(bp18, monkeypatch, tmp_path):
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
     params, password = plugin._init_conn_params()
-    assert params["user"] == "ftth_editor"
-    assert "authcfg" not in params
+    assert params == {"host": HOST18, "port": 5432, "dbname": "test_db",
+                      "user": "ftth_editor", "sslmode": "require"}  # 1.7.x (D-TLS-2)
     assert password == "shared-pw"
 
 
@@ -563,13 +562,13 @@ def test_apply_styles_from_db_passes_ssl_params(pi, monkeypatch):
 
     pi._apply_styles_from_db(
         {"host": HOST18, "port": 5432, "dbname": "test_db", "user": LOGIN,
-         "sslmode": "verify-full", "sslrootcert": "/x/root.crt", "authcfg": "9i19s56"},
+         "sslmode": "verify-full", "sslrootcert": "/x/root-ca-bundle.pem", "authcfg": "9i19s56"},
         "ad-pw", {},
     )
 
     assert calls and calls[0]["user"] == LOGIN
     assert calls[0]["sslmode"] == "verify-full"
-    assert calls[0]["sslrootcert"] == "/x/root.crt"
+    assert calls[0]["sslrootcert"] == "/x/root-ca-bundle.pem"
 
 
 # --- LayerSource des listes de valeurs (B9 : 38 user='ftth_editor' dans les QML) --------

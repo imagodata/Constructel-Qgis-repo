@@ -155,7 +155,6 @@ def _make_plugin(bp, monkeypatch, tmp_path, outcomes, *, cursor=None, stored_ad_
                  memorized=None, ask=None, qgis_user=QGIS_USER):
     from qgis.core import QgsSettings
 
-    monkeypatch.setattr(bp, "root_crt_file_path", lambda *a, **k: tmp_path / "root.crt")
     QgsSettings().setValue("constructel_bridge/onboarding_done", True)
     if memorized is not None:
         QgsSettings().setValue(bn.NOMINAL_SETTINGS_KEYS["auth_mode"], memorized)
@@ -214,17 +213,30 @@ def test_startup_probe_with_stored_ad_password_connects_nominal(bp18, monkeypatc
     assert calls[0]["user"] == LOGIN
     assert calls[0]["password"] == "ad-pw"
     assert calls[0]["sslmode"] == "verify-full"
-    assert calls[0]["sslrootcert"] == str(tmp_path / "root.crt")
+    assert calls[0]["sslrootcert"] == str(bp18.ca_bundle_path(os.path.dirname(bp18.__file__)))
     assert asked == []
     assert plugin._auth_mode == bn.AUTH_MODE_NOMINAL
     assert _mode() == bn.AUTH_MODE_NOMINAL
     assert "success" in plugin.iface.messageBar().kinds()
 
 
-def test_root_crt_is_written_before_the_probe(bp18, monkeypatch, tmp_path):
+def test_cas_are_imported_into_qgis_before_the_probe(bp18, monkeypatch, tmp_path):
+    from qgis.core import QgsAuthCertUtils, QgsApplication
+
+    events = []
+    real = bp18._ensure_qgis_trusted_cas
+    monkeypatch.setattr(bp18, "_ensure_qgis_trusted_cas", lambda: events.append("cas") or real())
     plugin, calls, _asked, _cur = _make_plugin(bp18, monkeypatch, tmp_path, [None], stored_ad_pw="ad-pw")
+    real_connect = plugin._connect
+    plugin._connect = lambda *a, **k: events.append("probe") or real_connect(*a, **k)
+
     plugin._auto_connect()
-    assert (tmp_path / "root.crt").read_text().count("BEGIN CERTIFICATE") == 2
+
+    assert events[:2] == ["cas", "probe"]
+    mgr = QgsApplication.authManager()
+    assert len(mgr._cas) == 2
+    assert set(mgr._trust.values()) == {QgsAuthCertUtils.CertTrustPolicy.Trusted}
+    assert not (tmp_path / "root.crt").exists()
 
 
 def test_nominal_success_writes_login_in_fixed_wyre_and_be_configs(bp18, monkeypatch, tmp_path):
@@ -291,7 +303,9 @@ def test_login_disabled_falls_back_to_shared_with_banner_and_no_reprompt(bp18, m
     assert asked == []
     assert [c["user"] for c in calls] == [LOGIN, "ftth_editor"]
     assert calls[1]["password"] == "shared-pw"
-    assert calls[1]["sslmode"] == "verify-full"
+    # D-TLS-2 : identifiant partage = kwargs 1.7.x (require, pas de CA)
+    assert calls[1]["sslmode"] == "require"
+    assert "sslrootcert" not in calls[1]
     assert plugin._connected is True
     assert plugin._auth_mode == bn.AUTH_MODE_SHARED
     assert _mode() == bn.AUTH_MODE_SHARED
@@ -300,6 +314,7 @@ def test_login_disabled_falls_back_to_shared_with_banner_and_no_reprompt(bp18, m
     # chemin 1.7.3 exact : la config fixe wyre porte l'identifiant partage
     assert _config("9i19s56").config("username") == "ftth_editor"
     assert _pg(bp18, "wyre", "username") == "ftth_editor"
+    assert _pg(bp18, "wyre", "sslmode") == "3"
     # ... et le mot de passe AD est conserve pour la sonde du prochain demarrage
     assert _config("nomin18").config("password") == "ad-pw"
 
@@ -403,14 +418,17 @@ def test_login_disabled_without_shared_password_is_a_clear_error(load_bp18, monk
                for m in _logs(level=Qgis.MessageLevel.Critical))
 
 
-def test_unwritable_root_crt_blocks_every_connection(bp18, monkeypatch, tmp_path):
+def test_ca_import_failure_falls_back_to_shared_without_nominal_bind(bp18, monkeypatch, tmp_path):
+    # D-TLS-1 : sans la CA dans QGIS, aucune couche nominative ne passerait
+    # verify-full -> nominatif impossible, repli partage (jamais bloque).
     plugin, calls, _asked, _cur = _make_plugin(bp18, monkeypatch, tmp_path, [None], stored_ad_pw="ad-pw")
-    monkeypatch.setattr(bp18, "_ensure_root_crt", lambda: False)
+    monkeypatch.setattr(bp18, "_ensure_qgis_trusted_cas", lambda: False)
 
     plugin._auto_connect()
 
-    assert calls == []
-    assert plugin._connected is False
+    assert [c["user"] for c in calls] == ["ftth_editor"]
+    assert plugin._connected is True
+    assert plugin._auth_mode == bn.AUTH_MODE_SHARED
 
 
 def test_unusable_workstation_name_goes_straight_to_shared(bp18, monkeypatch, tmp_path):

@@ -1072,13 +1072,12 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
         _log("psycopg2 indisponible — styles non appliques", Qgis.MessageLevel.Warning)
         return styled_keys
 
-    # Bridge 1.8 : verify-full (racine = root.crt du poste) comme toute
-    # connexion du plugin ; absent des conn_params (appelant historique) =
-    # defaut libpq.
+    # Bridge 1.8 : session nominative = verify-full avec les CA du paquet
+    # (sslrootcert fourni par l'appelant) ; identifiant partage = connexion
+    # 1.7.x a l'identique, defaut libpq (revue 29/10, D-TLS-2).
     ssl_kwargs = {}
-    if conn_params.get("sslmode"):
-        ssl_kwargs["sslmode"] = conn_params["sslmode"]
     if conn_params.get("sslrootcert"):
+        ssl_kwargs["sslmode"] = conn_params.get("sslmode", "verify-full")
         ssl_kwargs["sslrootcert"] = conn_params["sslrootcert"]
 
     conn = None

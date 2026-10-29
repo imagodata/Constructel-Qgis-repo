@@ -75,7 +75,8 @@ def test_placeholders_match_across_languages():
 @pytest.mark.parametrize("key", [
     "menu.retry_nominal", "dialog.login", "dialog.reprompt", "conn.connected_nominal",
     "nominal.banner_login_disabled", "nominal.banner_auth_refused", "nominal.banner_no_password",
-    "nominal.no_fallback", "nominal.root_crt_failed", "nominal.login_unusable", "nominal.retry_ok",
+    "nominal.no_fallback", "nominal.ca_import_failed", "nominal.banner_local_setup",
+    "nominal.login_unusable", "nominal.retry_ok",
     "scope.all", "scope.none", "scope.scoped", "scope.readonly", "scope.unknown",
     "scope.layers_locked", "scope.write_refused",
 ])

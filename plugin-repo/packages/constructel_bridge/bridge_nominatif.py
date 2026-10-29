@@ -15,11 +15,10 @@ Server facts encoded here (verified 2026-10-29 on prod):
 """
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 # --- identity -----------------------------------------------------------------
 
@@ -104,26 +103,19 @@ def decide_after_probe_failure(kind, memorized_mode: str, has_shared_password: b
     return "error"
 
 
-# --- root.crt (libpq trusted roots) -------------------------------------------
-
-def root_crt_file_path(os_name: str = os.name) -> Path:
-    """libpq's default trusted-roots file: %APPDATA%\\postgresql\\root.crt on
-    Windows, ~/.postgresql/root.crt elsewhere. Same shape as
-    bridge_mtls.pgpass_file_path (os_name passed explicitly for tests)."""
-    if os_name == "nt":
-        return Path(os.getenv("APPDATA", "")) / "postgresql" / "root.crt"
-    return Path.home() / ".postgresql" / "root.crt"
-
+# --- CA du serveur (verify-full) ---------------------------------------------
+#
+# Revue 29/10 (D-TLS-1) : plus de root.crt sur le poste. QGIS remplace tout
+# sslrootcert= d'une couche authcfg en verify-* par un fichier temporaire de
+# ses CA de confiance (QgsAuthBasicMethod::updateDataSourceUriItems) : les CA
+# sont donc importées dans la base d'authentification QGIS
+# (bridge_plugin._ensure_qgis_trusted_cas) ; la connexion psycopg2 du
+# plugin, elle, lit le bundle en lecture seule dans le paquet.
 
 _PEM_CERT_RE = re.compile(
     r"-----BEGIN CERTIFICATE-----\s*(?P<body>.*?)\s*-----END CERTIFICATE-----",
     re.DOTALL,
 )
-_PEM_ANY_RE = re.compile(r"-----BEGIN ([A-Z ]+)-----")
-
-
-def _normalize_body(body: str) -> str:
-    return "".join(body.split())
 
 
 def pem_blocks(text: str) -> list[str]:
@@ -132,7 +124,7 @@ def pem_blocks(text: str) -> list[str]:
     newline). Non-certificate material is ignored."""
     blocks = []
     for match in _PEM_CERT_RE.finditer(text or ""):
-        body = _normalize_body(match.group("body"))
+        body = "".join(match.group("body").split())
         if not body:
             continue
         lines = [body[i:i + 64] for i in range(0, len(body), 64)]
@@ -140,40 +132,18 @@ def pem_blocks(text: str) -> list[str]:
     return blocks
 
 
-def upsert_root_crt_pem(existing_text: str, blocks: Iterable[str]) -> str:
-    """Append every certificate of *blocks* that is not already in
-    *existing_text*, which is otherwise preserved verbatim (comments, foreign
-    roots, line layout). Certificates match by base64 body, whitespace
-    ignored. The result ends with exactly one newline.
-
-    Raises ValueError for a block that is not a certificate (a private key
-    must never land in root.crt) or contains no certificate at all.
-    """
-    present = {_normalize_body(m.group("body")) for m in _PEM_CERT_RE.finditer(existing_text or "")}
-    to_add = []
-    for block in blocks:
-        kinds = _PEM_ANY_RE.findall(block or "")
-        if not kinds or any(kind != "CERTIFICATE" for kind in kinds):
-            raise ValueError("refusing to write a non-certificate PEM block into root.crt")
-        parsed = pem_blocks(block)
-        if not parsed:
-            raise ValueError("refusing to write an empty certificate block into root.crt")
-        for cert in parsed:
-            key = _normalize_body(_PEM_CERT_RE.search(cert).group("body"))
-            if key in present:
-                continue
-            present.add(key)
-            to_add.append(cert)
-    base = (existing_text or "").rstrip("\r\n")
-    parts = ([base] if base else []) + to_add
-    return "\n".join(parts) + "\n"
-
-
 def embedded_ca_paths(plugin_dir) -> list[Path]:
     """The two public CA certificates shipped in the plugin package (spec
     §5.5): the Farois DB CA, then the Constructel AD root."""
     certs = Path(plugin_dir) / "certs"
     return [certs / "farois-db-ca.crt", certs / "constructelbe-ca.pem"]
+
+
+def ca_bundle_path(plugin_dir) -> Path:
+    """Bundle PEM des deux CA (même ordre), passé en ``sslrootcert`` à la
+    connexion psycopg2 nominative : lu en place dans le paquet, aucune
+    écriture sur le poste."""
+    return Path(plugin_dir) / "certs" / "root-ca-bundle.pem"
 
 
 # --- datasource rewriting -----------------------------------------------------

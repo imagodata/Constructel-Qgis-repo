@@ -4,6 +4,7 @@ the real API beyond what's needed for a clean module import — extend as
 needed if other constructel_bridge modules require more symbols; a
 failing import's traceback names exactly what's missing.
 """
+import hashlib
 import re
 
 
@@ -104,6 +105,60 @@ class _StubAuthManager:
     def removeAuthenticationConfig(self, authcfg_id):
         _StubAuthManager._configs.pop(authcfg_id, None)
         return True
+
+    # --- Bridge 1.8 revue (D-TLS-1) : CA dans la base d'authentification.
+    # Semantique QGIS : id = QgsAuthCertUtils.shaHexForCert, store =
+    # remplace, trustedCaCerts() = caches reconstruits (rebuild*).
+    _cas = {}
+    _trust = {}
+    _cache_rebuilds = []
+    _ca_store_fails = False
+
+    def certAuthority(self, cert_id):
+        from qgis.PyQt.QtNetwork import QSslCertificate
+
+        return _StubAuthManager._cas.get(cert_id) or QSslCertificate()
+
+    def storeCertAuthority(self, cert):
+        if _StubAuthManager._ca_store_fails or cert.isNull():
+            return False
+        _StubAuthManager._cas[QgsAuthCertUtils.shaHexForCert(cert)] = cert
+        return True
+
+    def certTrustPolicy(self, cert):
+        return _StubAuthManager._trust.get(
+            QgsAuthCertUtils.shaHexForCert(cert), QgsAuthCertUtils.CertTrustPolicy.DefaultTrust
+        )
+
+    def storeCertTrustPolicy(self, cert, policy):
+        if _StubAuthManager._ca_store_fails or cert.isNull():
+            return False
+        _StubAuthManager._trust[QgsAuthCertUtils.shaHexForCert(cert)] = policy
+        return True
+
+    def rebuildCaCertsCache(self):
+        _StubAuthManager._cache_rebuilds.append("ca")
+        return True
+
+    def rebuildCertTrustCache(self):
+        _StubAuthManager._cache_rebuilds.append("trust")
+        return True
+
+    def rebuildTrustedCaCertsCache(self):
+        _StubAuthManager._cache_rebuilds.append("trusted")
+        return True
+
+
+class QgsAuthCertUtils:
+    class CertTrustPolicy:
+        DefaultTrust = 0
+        Trusted = 1
+        Untrusted = 2
+        NoPolicy = 3
+
+    @staticmethod
+    def shaHexForCert(cert, formatted=False):
+        return hashlib.sha1(cert.toPem()).hexdigest()
 
 
 class QgsApplication:
@@ -302,6 +357,30 @@ class QgsDataSourceUri:
         return " ".join(parts)
 
 
+class QgsPathResolver:
+    """Preprocesseurs de chemins/datasources (QGIS >= 3.22 : id rendu,
+    removePathPreprocessor). Test-double : liste ordonnee inspectable."""
+    _preprocessors = {}
+    _next_id = 1
+
+    @staticmethod
+    def setPathPreprocessor(processor):
+        pid = f"stub-preprocessor-{QgsPathResolver._next_id}"
+        QgsPathResolver._next_id += 1
+        QgsPathResolver._preprocessors[pid] = processor
+        return pid
+
+    @staticmethod
+    def removePathPreprocessor(pid):
+        return QgsPathResolver._preprocessors.pop(pid, None) is not None
+
+    @staticmethod
+    def apply(path):
+        for processor in list(QgsPathResolver._preprocessors.values()):
+            path = processor(path)
+        return path
+
+
 class QgsMessageLog:
     # Test-double introspection: real code never reads this; wiring tests
     # assert diagnostics through it. Reset by a fresh module import.
@@ -315,11 +394,26 @@ class QgsMessageLog:
 
 
 class _StubSignal:
-    def connect(self, *_args, **_kwargs):
-        pass
+    """Signal enregistreur : connect/disconnect comme PyQt (disconnect d'un
+    slot non connecte -> TypeError), emit synchrone pour les tests."""
 
-    def disconnect(self, *_args, **_kwargs):
-        pass
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot, *_args, **_kwargs):
+        self._slots.append(slot)
+
+    def disconnect(self, slot=None):
+        if slot is None:
+            self._slots = []
+        elif slot in self._slots:
+            self._slots.remove(slot)
+        else:
+            raise TypeError("disconnect() failed: not connected")
+
+    def emit(self, *args):
+        for slot in list(self._slots):
+            slot(*args)
 
 
 class QgsProject:
@@ -328,6 +422,11 @@ class QgsProject:
     def __init__(self):
         self._layers = {}
         self._next_layer_id = 1
+        # Signaux utilises par le plugin (initGui/unload, hooks, perimetre).
+        self.layersAdded = _StubSignal()
+        self.readProject = _StubSignal()
+        self.writeProject = _StubSignal()
+        self.layerLoaded = _StubSignal()
 
     @classmethod
     def instance(cls):
@@ -344,9 +443,8 @@ class QgsProject:
         self._layers[layer_id] = layer
         return layer
 
-    @property
-    def layersAdded(self):
-        return _StubSignal()
+    def setBadLayerHandler(self, handler):
+        self.bad_layer_handler = handler
 
     # Bridge 1.8 tests (_read_and_clean_project): the XML handed to
     # project.read() is kept for inspection; nothing is parsed.

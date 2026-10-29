@@ -6,7 +6,10 @@
 1. statique : chaque nom importé depuis qgis.* et chaque chaîne `Nom.attr[.attr]`
    sur ces noms (enums, classes) doit exister dans l'API du QGIS courant ;
 2. plugins : classFactory(iface) -> initGui() -> fenêtres -> unload() ;
-3. scripts Processing : instanciation + initAlgorithm().
+3. TLS nominatif (Bridge 1.8, D-TLS-1) : CA Farois importée dans la base
+   d'authentification QGIS, présente dans le sslrootcert que QGIS fabrique
+   pour une config Basic en verify-full, import idempotent ;
+4. scripts Processing : instanciation + initAlgorithm().
 
 Sort en code 1 si un contrôle échoue.
 """
@@ -15,6 +18,7 @@ import base64
 import configparser
 import importlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -36,6 +40,9 @@ from qgis.testing.mocked import get_iface
 REPO = Path(__file__).resolve().parents[1]
 COLLECTIONS = REPO / "resource-repo/collections"
 
+# Base d'authentification jetable (lue par QgsApplication à l'initialisation) :
+# le contrôle TLS y importe des CA et y pose un mot de passe maître.
+os.environ["QGIS_AUTH_DB_DIR_PATH"] = tempfile.mkdtemp(prefix="qgis-auth-smoke-")
 app = start_app()
 print(f"QGIS {Qgis.version()}")
 QGIS_VERSION = tuple(int(part) for part in Qgis.QGIS_VERSION.split("-")[0].split(".")[:2])
@@ -255,7 +262,76 @@ for name, parent in (("constructel_bridge", work / "bridge"), ("farois_audit_rol
     except Exception:
         fail(name, traceback.format_exc())
 
-# --- 3. scripts Processing ---------------------------------------------------
+# --- 3. TLS nominatif ----------------------------------------------------------
+def check_bridge_tls():
+    """QgsAuthBasicMethod remplace tout sslrootcert= d'une datasource
+    verify-* par un fichier temporaire des CA de confiance de QGIS : la CA
+    Farois doit y figurer après l'import du plugin (_ensure_qgis_trusted_cas)."""
+    from qgis.core import QgsApplication, QgsAuthCertUtils, QgsAuthMethodConfig
+    from qgis.PyQt.QtNetwork import QSslCertificate
+
+    bridge = importlib.import_module("constructel_bridge.bridge_plugin")
+    mgr = QgsApplication.authManager()
+    if mgr.isDisabled():
+        fail("tls", f"Auth Manager désactivé : {mgr.disabledMessage()}")
+        return
+    ca_path = work / "bridge/constructel_bridge/certs/farois-db-ca.crt"
+    farois = QSslCertificate.fromData(ca_path.read_bytes())[0]
+    farois_der = farois.toDer().data()
+
+    def occurrences():
+        return sum(1 for cert in mgr.databaseCAs() if cert.toDer().data() == farois_der)
+
+    for attempt in (1, 2):  # le second import ne doit rien dupliquer
+        if not bridge._ensure_qgis_trusted_cas():
+            fail("tls", f"import des CA en échec (essai {attempt})")
+            return
+        if occurrences() != 1:
+            fail("tls", f"CA Farois présente {occurrences()} fois dans la base (essai {attempt})")
+    if len(mgr.databaseCAs()) != 2:
+        fail("tls", f"{len(mgr.databaseCAs())} CA en base, 2 attendues")
+    if mgr.certTrustPolicy(farois) != QgsAuthCertUtils.CertTrustPolicy.Trusted:
+        fail("tls", "CA Farois sans la politique Trusted")
+
+    # Config Basic jetable (son stockage exige un mot de passe maître).
+    if not mgr.setMasterPassword("smoke-master", True):
+        fail("tls", "mot de passe maître jetable refusé")
+        return
+    config = QgsAuthMethodConfig("Basic")
+    config.setName("smoke_tls")
+    config.setConfig("username", "smoke")
+    config.setConfig("password", "smoke")
+    if not bridge._stored(mgr.storeAuthenticationConfig(config)) or not config.id():
+        fail("tls", "config Basic jetable non enregistrée")
+        return
+    try:
+        items = ["dbname='smoke'", "host=127.0.0.1", "port=1", "sslmode=verify-full"]
+        result = mgr.updateDataSourceUriItems(items, config.id(), "postgres")
+        ok, items = result if isinstance(result, tuple) else (result, items)
+        roots = [i.split("=", 1)[1].strip("'") for i in items if i.startswith("sslrootcert=")]
+        if not ok or len(roots) != 1:
+            fail("tls", f"updateDataSourceUriItems sans sslrootcert : {ok} {items}")
+            return
+        try:
+            with open(roots[0], "rb") as f:
+                ders = [cert.toDer().data() for cert in QSslCertificate.fromData(f.read())]
+        finally:
+            os.remove(roots[0])
+        if farois_der not in ders:
+            fail("tls", f"CA Farois absente du sslrootcert produit par QGIS ({len(ders)} CA)")
+        else:
+            print(f"  ok CA Farois dans le sslrootcert verify-full de QGIS ({len(ders)} CA)")
+    finally:
+        mgr.removeAuthenticationConfig(config.id())
+
+
+print("== TLS nominatif (Bridge 1.8)")
+try:
+    check_bridge_tls()
+except Exception:
+    fail("tls", traceback.format_exc())
+
+# --- 4. scripts Processing ---------------------------------------------------
 print("== scripts Processing")
 for script in SCRIPTS:
     namespace = {"__name__": f"script_{script.stem}", "__file__": str(script)}

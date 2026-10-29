@@ -130,19 +130,7 @@ def test_auth_refused_after_reprompt_without_shared_password_is_an_error():
     assert bn.decide_after_probe_failure(bn.AUTH_REFUSED, bn.AUTH_MODE_NOMINAL, False, True) == "error"
 
 
-# --- root_crt_file_path ---------------------------------------------------------
-
-
-def test_root_crt_path_windows_uses_appdata(monkeypatch):
-    monkeypatch.setenv("APPDATA", "C:/Users/jdoe/AppData/Roaming")
-    assert bn.root_crt_file_path("nt") == Path("C:/Users/jdoe/AppData/Roaming") / "postgresql" / "root.crt"
-
-
-def test_root_crt_path_posix_uses_home():
-    assert bn.root_crt_file_path("posix") == Path.home() / ".postgresql" / "root.crt"
-
-
-# --- upsert_root_crt_pem --------------------------------------------------------
+# --- pem_blocks -------------------------------------------------------------------
 
 CA_A = (
     "-----BEGIN CERTIFICATE-----\n"
@@ -154,44 +142,6 @@ CA_B = (
     "MIIBbbbb\n"
     "-----END CERTIFICATE-----\n"
 )
-
-
-def test_upsert_into_empty_file_writes_all_blocks_once():
-    out = bn.upsert_root_crt_pem("", [CA_A, CA_B])
-    assert out.count("BEGIN CERTIFICATE") == 2
-    assert out.endswith("-----END CERTIFICATE-----\n")
-    assert not out.endswith("\n\n")
-
-
-def test_upsert_is_idempotent():
-    once = bn.upsert_root_crt_pem("", [CA_A, CA_B])
-    assert bn.upsert_root_crt_pem(once, [CA_A, CA_B]) == once
-
-
-def test_upsert_preserves_foreign_blocks_and_comments():
-    existing = "# corporate roots\n" + CA_B + "\n"
-    out = bn.upsert_root_crt_pem(existing, [CA_A])
-    assert out.startswith("# corporate roots\n")
-    assert "MIIBbbbb" in out
-    assert "MIIBaaaa" in out
-    assert out.count("BEGIN CERTIFICATE") == 2
-
-
-def test_upsert_matches_blocks_by_body_not_by_line_layout():
-    # Meme certificat, lignes base64 repliees differemment (ex. copie Windows).
-    rewrapped = "-----BEGIN CERTIFICATE-----\nMIIBaaaaBBBB\n-----END CERTIFICATE-----\n"
-    out = bn.upsert_root_crt_pem(CA_A, [rewrapped])
-    assert out.count("BEGIN CERTIFICATE") == 1
-
-
-def test_upsert_refuses_non_certificate_block():
-    with pytest.raises(ValueError):
-        bn.upsert_root_crt_pem("", ["-----BEGIN PRIVATE KEY-----\nxx\n-----END PRIVATE KEY-----\n"])
-
-
-def test_upsert_refuses_garbage_block():
-    with pytest.raises(ValueError):
-        bn.upsert_root_crt_pem("", ["not a pem at all"])
 
 
 def test_pem_blocks_extracts_normalized_certificates():

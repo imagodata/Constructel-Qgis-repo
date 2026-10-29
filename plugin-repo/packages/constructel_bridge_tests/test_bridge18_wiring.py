@@ -48,11 +48,15 @@ def test_import_without_wyre_password_disables_fallback_without_keyerror(load_bp
     assert bp.DEFAULT_USER == ""
 
 
-def test_wyre_sslmode_is_forced_to_verify_full(load_bp):
+def test_shared_sslmode_is_17x_and_nominal_is_verify_full(load_bp):
+    # Revue 29/10 (D-TLS-2) : identifiant partage = sslmode de
+    # credentials.json, require par defaut, comme 1.7.x.
+    bp = load_bp(CREDS_18)
+    assert bp.DEFAULT_SSLMODE == "require"
+    assert bp.NOMINAL_SSLMODE == "verify-full"
     creds = json.loads(json.dumps(CREDS_18))
-    creds["wyre"]["sslmode"] = "require"
-    bp = load_bp(creds)
-    assert bp.DEFAULT_SSLMODE == "verify-full"
+    creds["wyre"]["sslmode"] = "prefer"
+    assert load_bp(creds).DEFAULT_SSLMODE == "prefer"
 
 
 # --- C3 : be sans identifiant partage ----------------------------------------
@@ -62,7 +66,7 @@ def test_be_enabled_without_shared_credentials(load_bp):
     bp = load_bp(CREDS_18)
     assert bp.BE_ENABLED is True
     assert bp.BE_SHARED_AVAILABLE is False
-    assert bp.BE_SSLMODE == "verify-full"
+    assert bp.BE_SSLMODE == "require"  # identifiant partage be historique (1.7.x)
 
 
 def test_be_shared_available_on_17x_credentials(load_bp):
@@ -122,47 +126,3 @@ def test_stored_login_reads_username_of_fixed_config(bp):
     assert bp._stored_login("wyre") == ""
     bp._store_password_encrypted("ad-pw", "wyre", username="jdoe")
     assert bp._stored_login("wyre") == "jdoe"
-
-
-# --- B6 : root.crt --------------------------------------------------------------
-
-
-def test_ensure_root_crt_writes_both_cas_and_creates_parent(bp, tmp_path, monkeypatch):
-    target = tmp_path / "postgresql" / "root.crt"
-    monkeypatch.setattr(bp, "root_crt_file_path", lambda *a, **k: target)
-
-    assert bp._ensure_root_crt() is True
-
-    text = target.read_text(encoding="utf-8")
-    assert text.count("BEGIN CERTIFICATE") == 2
-    assert text.endswith("-----END CERTIFICATE-----\n")
-
-
-def test_ensure_root_crt_is_idempotent_and_preserves_foreign_roots(bp, tmp_path, monkeypatch):
-    target = tmp_path / "root.crt"
-    foreign = "-----BEGIN CERTIFICATE-----\nMIIBforeign\n-----END CERTIFICATE-----\n"
-    target.write_text("# corp roots\n" + foreign, encoding="utf-8")
-    monkeypatch.setattr(bp, "root_crt_file_path", lambda *a, **k: target)
-
-    assert bp._ensure_root_crt() is True
-    first = target.read_text(encoding="utf-8")
-    assert bp._ensure_root_crt() is True
-    assert target.read_text(encoding="utf-8") == first
-    assert first.startswith("# corp roots\n")
-    assert "MIIBforeign" in first
-    assert first.count("BEGIN CERTIFICATE") == 3
-
-
-def test_ensure_root_crt_unwritable_logs_blocking_error(bp, tmp_path, monkeypatch):
-    from qgis.core import Qgis
-
-    blocker = tmp_path / "not-a-dir"
-    blocker.write_text("x")
-    target = blocker / "root.crt"  # parent is a regular file: cannot be created
-    monkeypatch.setattr(bp, "root_crt_file_path", lambda *a, **k: target)
-
-    assert bp._ensure_root_crt() is False
-    assert any(
-        bp.tr("nominal.root_crt_failed", path=str(target)) in m
-        for m in _log_messages(level=Qgis.MessageLevel.Critical)
-    )

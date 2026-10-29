@@ -1,9 +1,10 @@
 """Bridge 1.8 volet B2 — CA embarquees dans le paquet du plugin.
 
-Le plugin ecrit ces deux certificats publics (non secrets) dans le root.crt
-libpq du poste pour que sslmode=verify-full valide le serveur Farois
-(CA Farois, spec §5.5) et un futur certificat emis par la PKI interne
-Constructel (racine AD, constructelbe-ca.pem).
+Ces deux certificats publics (non secrets) sont importes dans la base
+d'authentification QGIS (revue 29/10, D-TLS-1) et forment le bundle
+sslrootcert de la sonde psycopg2, pour que sslmode=verify-full valide le
+serveur Farois (CA Farois, spec §5.5) et un futur certificat emis par la
+PKI interne Constructel (racine AD, constructelbe-ca.pem).
 """
 import subprocess
 from pathlib import Path
@@ -46,11 +47,16 @@ def test_embedded_cas_are_exactly_one_certificate_block_each():
         assert len(blocks) == 1, path.name
 
 
-def test_embedded_cas_upsert_into_root_crt_without_duplication():
-    blocks = [p.read_text(encoding="utf-8") for p in bn.embedded_ca_paths(PLUGIN_DIR)]
-    once = bn.upsert_root_crt_pem("", blocks)
-    assert once.count("BEGIN CERTIFICATE") == 2
-    assert bn.upsert_root_crt_pem(once, blocks) == once
+def test_probe_bundle_is_exactly_the_two_embedded_cas():
+    # Revue 29/10 (D-TLS-1) : sslrootcert de la sonde psycopg2, lu dans le
+    # paquet ; ne doit pas deriver des deux fichiers importes dans QGIS.
+    expected = []
+    for path in bn.embedded_ca_paths(PLUGIN_DIR):
+        expected += bn.pem_blocks(path.read_text(encoding="utf-8"))
+    bundle = bn.ca_bundle_path(PLUGIN_DIR)
+    assert bundle.is_file()
+    assert bn.pem_blocks(bundle.read_text(encoding="utf-8")) == expected
+    assert "Farois DB CA" in _subject(bundle)
 
 
 def test_no_private_key_material_ships_in_certs_dir():

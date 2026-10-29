@@ -682,7 +682,7 @@ def test_setup_inactive_matches_legacy_snapshot(bp):
         "port": "5432",
         "database": "test_db",
         "username": "test_user",
-        "sslmode": "5",  # Bridge 1.8 : verify-full partout (spec 2026-10-26 §5.5)
+        "sslmode": "3",
         "estimatedMetadata": True,
         "allowGeometrylessTables": False,
         "geometryColumnsOnly": True,
@@ -714,7 +714,7 @@ def test_setup_inactive_without_authcfg_stores_no_authcfg(bp):
     plugin._setup_qgis_pg_connection("s3cret", use_authcfg=False)
 
     base = _pg_base(bp)
-    assert QgsSettings().value(f"{base}/sslmode") == "5"  # Bridge 1.8 : verify-full partout
+    assert QgsSettings().value(f"{base}/sslmode") == "3"
     assert QgsSettings().value(f"{base}/authcfg", None) is None
 
 
@@ -725,7 +725,7 @@ def test_setup_not_configured_behaves_like_legacy(bp):
 
     plugin._setup_qgis_pg_connection("s3cret", use_authcfg=False)
 
-    assert QgsSettings().value(f"{_pg_base(bp)}/sslmode") == "5"  # Bridge 1.8 : verify-full partout
+    assert QgsSettings().value(f"{_pg_base(bp)}/sslmode") == "3"
     assert all("mtls." not in m for m in _log_messages())
 
 
@@ -775,8 +775,8 @@ def test_connect_inactive_uses_legacy_kwargs(bp, monkeypatch):
     assert calls[0]["sslmode"] == bp.DEFAULT_SSLMODE
     assert "sslcert" not in calls[0]
     assert "sslkey" not in calls[0]
-    assert calls[0]["sslrootcert"] == str(bp.root_crt_file_path())  # Bridge 1.8 : root.crt du poste
-    assert QgsSettings().value(f"{_pg_base(bp)}/sslmode") == "5"  # Bridge 1.8 : verify-full partout
+    assert "sslrootcert" not in calls[0]
+    assert QgsSettings().value(f"{_pg_base(bp)}/sslmode") == "3"
 
 
 def test_connect_configured_but_invalid_aborts_before_psycopg2(
