@@ -723,3 +723,26 @@ def test_plugin_rewrites_vr_sources_only_in_nominal_mode(bp18, monkeypatch, tmp_
     nominal = _nominal_plugin(bp18, monkeypatch, tmp_path)
     nominal._rewrite_value_relation_sources()
     assert calls == [(LOGIN, "9i19s56")]
+
+
+
+# --- revue 2 (M7) : hôte comparé exactement ------------------------------------------
+
+
+@pytest.mark.parametrize("nominal", [True, False])
+def test_strip_dom_ignores_a_host_that_only_contains_ours(bp18, monkeypatch, tmp_path, nominal):
+    plugin = (_nominal_plugin if nominal else _shared_plugin)(bp18, monkeypatch, tmp_path)
+    lookalike = _our_source(host=f"{HOST18}.evil.example.com", authcfg="old1234")
+    in_filter = ("dbname='o' host=other.example.com port=5432 user='x' authcfg=abc "
+                 f"table=\"s\".\"t\" sql=note = 'host={HOST18}'")
+    doc = _Doc([lookalike, in_filter])
+
+    plugin._strip_authcfg_from_dom(doc)
+
+    assert doc.datasources() == [lookalike, in_filter]
+
+
+def test_vr_source_on_a_lookalike_host_is_untouched(sk):
+    lookalike = QML_SOURCE.replace(f"host={HOST18}", f"host={HOST18}.evil.example.com")
+    ducts = _VrLayer([{"LayerSource": lookalike}])
+    assert sk.rewrite_value_relation_sources(_vr_project(ducts), LOGIN, "9i19s56", (HOST18,)) == 0

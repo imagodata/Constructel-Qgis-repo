@@ -362,3 +362,47 @@ def test_unrelated_commit_error_is_not_a_scope_refusal():
 def test_scope_refusal_kind_distinguishes_perimeter_and_right(message, kind):
     # Revue 29/10 (M7) : un droit manquant n'est pas presente comme « hors perimetre ».
     assert bn.scope_refusal_kind(message) == kind
+
+
+
+# --- revue 2 (I-7/I-8) -------------------------------------------------------------
+
+
+def test_strip_authcfg_keeps_everything_else():
+    out = bn.strip_datasource_authcfg(_DS_FILTERED)
+    assert bn.datasource_param(out, "authcfg") is None
+    assert bn.datasource_param(out, "password") == "pa'ss word"
+    assert out.endswith(" " + _SQL)
+
+
+_URI = "postgresql://192.168.160.31:5432?authcfg=9i19s56&sslmode=require&dbname=farois_ftth&schema=wyre&project=A%20b%2Bc"
+_IDS = ("9i19s56", "07254s7")
+
+
+def test_storage_uri_on_our_host_is_forced_to_verify_full():
+    out = bn.secure_project_storage_uri(_URI, ["192.168.160.31"], _IDS)
+    assert out.startswith("postgresql://192.168.160.31:5432?")
+    assert "sslmode=verify-full" in out and "sslmode=require" not in out
+    assert "authcfg=9i19s56" in out and "project=A%20b%2Bc" in out
+    assert bn.secure_project_storage_uri(out, ["192.168.160.31"], _IDS) == out
+
+
+def test_storage_uri_without_sslmode_gets_one():
+    uri = _URI.replace("&sslmode=require", "")
+    assert "sslmode=verify-full" in bn.secure_project_storage_uri(uri, ["192.168.160.31"], _IDS)
+
+
+def test_storage_uri_on_a_third_party_host_loses_our_authcfg():
+    out = bn.secure_project_storage_uri(_URI.replace("192.168.160.31", "other.example.com"),
+                                        ["192.168.160.31"], _IDS)
+    assert "authcfg" not in out and "sslmode=require" in out
+
+
+@pytest.mark.parametrize("uri", [
+    _URI.replace("9i19s56", "abc1234"),
+    "/home/jdoe/projet.qgz",
+    "geopackage:/home/jdoe/projets.gpkg?projectName=x",
+    "",
+])
+def test_other_project_uris_are_untouched(uri):
+    assert bn.secure_project_storage_uri(uri, ["192.168.160.31"], _IDS) == uri

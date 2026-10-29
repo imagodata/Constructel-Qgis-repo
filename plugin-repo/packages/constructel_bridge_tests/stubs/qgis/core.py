@@ -504,6 +504,26 @@ class QgsSettings:
     def sync(self):
         pass
 
+    # Groupes (revue 2, I-8 : projets recents UI/recentProjects/<n>/path).
+    # Seul childGroups() tient compte du groupe courant ; value()/setValue()
+    # sont appeles avec des cles absolues par le plugin.
+    def beginGroup(self, prefix):
+        self.__dict__.setdefault("_groups", []).append(prefix.strip("/"))
+
+    def endGroup(self):
+        self.__dict__.setdefault("_groups", []).pop()
+
+    def childGroups(self):
+        prefix = "/".join(self.__dict__.get("_groups", []))
+        children = set()
+        for key in QgsSettings._store:
+            if prefix and not key.startswith(prefix + "/"):
+                continue
+            rest = key[len(prefix) + 1:] if prefix else key
+            if "/" in rest:
+                children.add(rest.split("/", 1)[0])
+        return sorted(children)
+
 
 class QgsVectorLayer:
     # Constructible like the real one (source, name, provider) so code that

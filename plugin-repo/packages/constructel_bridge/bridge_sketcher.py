@@ -405,9 +405,9 @@ def rewrite_value_relation_sources(project, login: str, authcfg_id: str, hosts) 
     ``sslmode=verify-full user='<login>' authcfg=<id>``, sans mot de
     passe, serveurs tiers ignores. Retourne le nombre de widgets corriges.
     """
-    from .bridge_nominatif import rewrite_datasource_nominal
+    from .bridge_nominatif import datasource_param, rewrite_datasource_nominal
 
-    known_hosts = [h for h in hosts if h]
+    known_hosts = {h for h in hosts if h}
     patched = 0
     for layer in project.mapLayers().values():
         if not isinstance(layer, QgsVectorLayer):
@@ -419,9 +419,8 @@ def rewrite_value_relation_sources(project, login: str, authcfg_id: str, hosts) 
                 continue
             config = dict(setup.config())
             source = config.get("LayerSource", "")
-            if not source or not any(
-                f"host={h}" in source or f"host='{h}'" in source for h in known_hosts
-            ):
+            # Revue 2 (M7) : hote compare exactement, pas par sous-chaine.
+            if not source or datasource_param(source, "host") not in known_hosts:
                 continue
             new_source = rewrite_datasource_nominal(source, login, authcfg_id)
             if new_source == source:

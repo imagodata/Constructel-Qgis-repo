@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import unquote, urlsplit, urlunsplit
 from pathlib import Path
 from typing import Sequence
 
@@ -326,6 +327,47 @@ def rewrite_datasource_nominal(ds: str, login: str, authcfg_id: str) -> str:
 def force_datasource_sslmode(ds: str, sslmode: str) -> str:
     """*ds* avec ``sslmode=<sslmode>``, tout le reste inchangé."""
     return _rewrite_datasource(ds, {"sslmode"}, [f"sslmode={sslmode}"])
+
+
+def strip_datasource_authcfg(ds: str) -> str:
+    """*ds* sans ``authcfg=`` (revue 2, I-7 : jamais nos configs vers un
+    hôte tiers), tout le reste inchangé."""
+    return _rewrite_datasource(ds, {"authcfg"}, [])
+
+
+# --- URI de projet enregistré dans PostgreSQL (revue 2, I-8) -------------------
+#
+# QgsPostgresProjectStorage::encodeUri (3.28 -> master) :
+# ``postgresql://<host>:<port>?authcfg=<id>&sslmode=<mode>&dbname=…&schema=…
+# &project=…``. La connexion de stockage (lecture, enregistrement) en est
+# déduite sans passer par QgsPathResolver : le préprocesseur ne la voit pas.
+
+
+def secure_project_storage_uri(uri: str, hosts, authcfg_ids, sslmode: str = "verify-full") -> str:
+    """URI ``postgresql://`` d'un projet en base, rattachée à une de nos
+    configs fixes : ``sslmode`` forcé sur nos hôtes, ``authcfg`` retiré
+    sur un hôte tiers. Les autres éléments de la requête sont conservés
+    tels quels (encodage compris) ; toute autre URI est rendue inchangée."""
+    if not (uri or "").startswith("postgresql://"):
+        return uri
+    parts = urlsplit(uri)
+    items = parts.query.split("&") if parts.query else []
+
+    def _key(item):
+        return unquote(item.partition("=")[0])
+
+    values = {}
+    for item in items:
+        values.setdefault(_key(item), unquote(item.partition("=")[2]))
+    if values.get("authcfg") not in authcfg_ids:
+        return uri
+    if (parts.hostname or "") not in {h.lower() for h in hosts if h}:
+        items = [i for i in items if _key(i) != "authcfg"]
+    elif values.get("sslmode") != sslmode:
+        items = [i for i in items if _key(i) != "sslmode"] + [f"sslmode={sslmode}"]
+    else:
+        return uri
+    return urlunsplit(parts._replace(query="&".join(items)))
 
 
 # --- session scope (volet D) --------------------------------------------------
