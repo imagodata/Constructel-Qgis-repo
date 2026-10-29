@@ -55,6 +55,26 @@ from .bridge_mtls import (
     upsert_pgpass_entry,
     validate_client_certificate,
 )
+from .bridge_nominatif import (
+    AUTH_MODE_NOMINAL,
+    AUTH_MODE_SHARED,
+    AUTH_REFUSED,
+    LOGIN_DISABLED,
+    NOMINAL_SETTINGS_KEYS,
+    SCOPE_QUERY,
+    classify_auth_failure,
+    decide_after_probe_failure,
+    embedded_ca_paths,
+    is_scope_write_refusal,
+    parse_session_scope,
+    resolve_pg_login,
+    rewrite_datasource_nominal,
+    root_crt_file_path,
+    scope_kind,
+    scope_labels,
+    should_lock_layer,
+    upsert_root_crt_pem,
+)
 
 TAG = "Constructel Bridge"
 AUTH_CFG_NAME = "constructel_bridge_pw"
@@ -115,33 +135,47 @@ _BE_CREDS = _CREDS.get("be", {})
 DEFAULT_HOST = os.getenv("WYRE_DB_HOST", "") or _WYRE_CREDS["host"]
 DEFAULT_PORT = int(os.getenv("WYRE_DB_PORT", str(_WYRE_CREDS["port"])))
 DEFAULT_DBNAME = os.getenv("WYRE_DB_NAME", "") or _WYRE_CREDS["dbname"]
-DEFAULT_USER = _WYRE_CREDS["user"]
-_DEFAULT_PW = decode_password(_WYRE_CREDS["password"])
+# Bridge 1.8 : l'identifiant PARTAGE (ftth_editor) n'est plus que le repli
+# D7 de la transition. `user`/`password` deviennent optionnels dans
+# credentials.json : absents (cloture 1.8.x), le repli est simplement
+# indisponible -- jamais un KeyError qui empecherait le plugin de charger.
+DEFAULT_USER = _WYRE_CREDS.get("user", "")
+_DEFAULT_PW = decode_password(_WYRE_CREDS["password"]) if _WYRE_CREDS.get("password") else ""
+SHARED_FALLBACK_AVAILABLE = bool(DEFAULT_USER and _DEFAULT_PW)
 DEFAULT_SRID = _WYRE_CREDS.get("srid", 31370)
-DEFAULT_SSLMODE = _WYRE_CREDS.get("sslmode", "require")
+# verify-full OBLIGATOIRE (spec 2026-10-26 §5.1/§5.5) : le mot de passe AD
+# transite jusqu'au serveur, l'identite du serveur doit etre verifiee. La
+# valeur de credentials.json n'est plus consultee ; root.crt est ecrit par
+# le plugin (_ensure_root_crt) avant toute connexion.
+DEFAULT_SSLMODE = "verify-full"
 PG_SERVICE_NAME = _WYRE_CREDS.get("service_name", "constructel_bridge")
 EMAIL_DOMAIN = _WYRE_CREDS.get("email_domain", "constructel.be")
 
-# Connexion `be` (bureau d'etudes) — schema public uniquement, identifiant
-# PostgreSQL PARTAGE (pas de compte par personne). Absente des
-# credentials.json anterieurs a la v1.5.0 : toutes les constantes retombent
-# alors sur des valeurs vides et BE_ENABLED est False.
+# Connexion `be` (bureau d'etudes) — schema public uniquement. Depuis 1.8 :
+# login nominatif LDAPS (meme compte AD que `wyre`, authcfg 07254s7) ; le
+# bloc `be` de credentials.json ne porte plus que host/port/dbname. Un
+# ancien bloc avec user/password (1.5 -> 1.7) reste lu : identifiant
+# partage disponible pour reconnaitre les projets `be` historiques.
+# Absente des credentials.json anterieurs a la v1.5.0 : toutes les
+# constantes retombent alors sur des valeurs vides et BE_ENABLED est False.
 BE_HOST = os.getenv("BE_DB_HOST", "") or _BE_CREDS.get("host", "")
 BE_PORT = int(os.getenv("BE_DB_PORT", str(_BE_CREDS.get("port", 5432))))
 BE_DBNAME = os.getenv("BE_DB_NAME", "") or _BE_CREDS.get("dbname", "")
 BE_USER = _BE_CREDS.get("user", "")
 _BE_PW = decode_password(_BE_CREDS["password"]) if _BE_CREDS.get("password") else ""
-BE_SSLMODE = _BE_CREDS.get("sslmode", "require")
+BE_SSLMODE = "verify-full"
 
 # `wyre` et `be` pointent sur le MEME host et la MEME base : dans un realm
 # QgsCredentials, seul l'utilisateur les distingue (cf.
 # _precache_pg_credentials). Un bloc `be` qui reutiliserait
-# l'utilisateur de `wyre` rendrait la resolution ambigue et casserait
-# l'authentification de `wyre` — on refuse alors d'activer la connexion.
+# l'utilisateur partage de `wyre` rendrait la resolution ambigue et
+# casserait l'authentification de `wyre` — on refuse alors d'activer la
+# connexion.
 BE_ENABLED = (
-    bool(BE_HOST and BE_DBNAME and BE_USER and _BE_PW)
-    and BE_USER != DEFAULT_USER
+    bool(BE_HOST and BE_DBNAME)
+    and not (BE_USER and BE_USER == DEFAULT_USER)
 )
+BE_SHARED_AVAILABLE = BE_ENABLED and bool(BE_USER and _BE_PW)
 
 # Connexions PostgreSQL enregistrees dans les settings QGIS (panneau
 # Parcourir / Gestionnaire de sources de donnees).
@@ -210,15 +244,16 @@ def _precache_pg_credentials():
     re-remplit a chaque chargement de projet.
     """
     creds = QgsCredentials.instance()
-    for realm in (
-        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT}",
-        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT} sslmode={DEFAULT_SSLMODE}",
-        f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST}",
-        DEFAULT_HOST,
-    ):
-        creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
+    if SHARED_FALLBACK_AVAILABLE:
+        for realm in (
+            f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT}",
+            f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST} port={DEFAULT_PORT} sslmode={DEFAULT_SSLMODE}",
+            f"dbname='{DEFAULT_DBNAME}' host={DEFAULT_HOST}",
+            DEFAULT_HOST,
+        ):
+            creds.put(realm, DEFAULT_USER, _DEFAULT_PW)
 
-    if not BE_ENABLED:
+    if not BE_SHARED_AVAILABLE:
         return
     # `be` partage host + base avec `wyre` : SEULES les variantes de realm
     # qui portent user='...' sont pre-cachees. Pre-cacher une variante sans
@@ -334,12 +369,18 @@ def _stored(answer) -> bool:
     return bool(answer[0]) if isinstance(answer, tuple) else bool(answer)
 
 
-def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
+def _store_password_encrypted(password: str, conn: str = "wyre", username: str | None = None) -> bool:
     """Store the password in QGIS Auth Manager (encrypted SQLite DB).
 
     *conn* est une cle de ``_PG_CONNECTIONS`` : chaque connexion a sa
     propre configuration Auth Manager et sa propre cle de settings, sinon
     `be` ecraserait celle de `wyre` (et inversement).
+
+    *username* (Bridge 1.8) : login PostgreSQL nominatif porte par la
+    config a id FIXE (9i19s56 / 07254s7) -- l'id ne change pas, seul le
+    `username` varie d'un poste a l'autre : un projet `authcfg=9i19s56`
+    s'ouvre partout avec les identifiants DU poste (spec §5.7.2). Absent :
+    identifiant partage historique de la connexion.
 
     Returns True on success.
     """
@@ -351,6 +392,7 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
         return False
     auth_mgr = QgsApplication.authManager()
     settings_key = _AUTH_CFG_ID_KEYS[conn]
+    user = username or _PG_CONNECTIONS[conn]["user"]
     # ID FIXE (identique sur tous les postes) : on vise TOUJOURS cette
     # config. L'ancienne config a id aleatoire d'un poste deja installe
     # n'est pas supprimee (orpheline, inoffensive).
@@ -363,7 +405,7 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
         # Update existing config
         config = QgsAuthMethodConfig()
         auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
-        config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
+        config.setConfig("username", user)
         config.setConfig("password", password)
         ok = auth_mgr.updateAuthenticationConfig(config)
         if ok:
@@ -374,7 +416,7 @@ def _store_password_encrypted(password: str, conn: str = "wyre") -> bool:
         if fixed_id:
             config.setId(fixed_id)
         config.setName(_AUTH_CFG_NAMES[conn])
-        config.setConfig("username", _PG_CONNECTIONS[conn]["user"])
+        config.setConfig("username", user)
         config.setConfig("password", password)
         ok = _stored(auth_mgr.storeAuthenticationConfig(config))
         if ok:
@@ -418,6 +460,55 @@ def _retrieve_password_encrypted(conn: str = "wyre") -> str:
     config = QgsAuthMethodConfig()
     auth_mgr.loadAuthenticationConfig(cfg_id, config, True)
     return config.config("password", "")
+
+
+def _stored_login(conn: str = "wyre") -> str:
+    """Login PostgreSQL porte par la config Auth Manager a id FIXE de *conn*
+    ("" si absente ou Auth Manager indisponible). Sert a distinguer un
+    mot de passe nominatif deja saisi d'un mot de passe partage herite de
+    1.7.x (username=ftth_editor) : ne jamais sonder un login avec le mot de
+    passe d'un autre."""
+    try:
+        if not _ensure_auth_manager_ready():
+            return ""
+        auth_mgr = QgsApplication.authManager()
+        fixed_id = _FIXED_AUTH_CFG_IDS.get(conn, "")
+        if not fixed_id or fixed_id not in auth_mgr.configIds():
+            return ""
+        config = QgsAuthMethodConfig()
+        auth_mgr.loadAuthenticationConfig(fixed_id, config, True)
+        return config.config("username", "") or ""
+    except Exception:  # noqa: BLE001 -- lecture best-effort
+        return ""
+
+
+def _ensure_root_crt() -> bool:
+    """Ecrit les CA embarquees (CA Farois DB + racine AD Constructel) dans
+    le root.crt de libpq du poste, par upsert de blocs PEM : un root.crt
+    existant (racines d'entreprise) est conserve. Prerequis de
+    sslmode=verify-full pour TOUTES les connexions (psycopg2, couches,
+    projets). Echec -> False + journal Critical : l'appelant n'ouvre AUCUNE
+    connexion (pas de repli en `require`, spec §5.7.3)."""
+    path = root_crt_file_path()
+    try:
+        blocks = [p.read_text(encoding="utf-8") for p in embedded_ca_paths(os.path.dirname(__file__))]
+        os.makedirs(os.path.dirname(os.path.abspath(str(path))), exist_ok=True)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = f.read()
+        except FileNotFoundError:
+            existing = ""
+        text = upsert_root_crt_pem(existing, blocks)
+        if text != existing:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        return True
+    except (OSError, ValueError) as exc:
+        QgsMessageLog.logMessage(
+            f"{tr('nominal.root_crt_failed', path=str(path))} ({exc})",
+            TAG, level=Qgis.MessageLevel.Critical,
+        )
+        return False
 
 
 def _remove_stored_password(conn: str = "wyre"):
