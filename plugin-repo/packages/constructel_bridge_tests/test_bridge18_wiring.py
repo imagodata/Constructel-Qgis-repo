@@ -8,61 +8,21 @@ deployment shapes are covered: 1.7.x (shared wyre+be passwords), 1.8
 transition (shared wyre password kept for the D7 fallback, be without any
 secret) and 1.8.x closure (no secret at all).
 """
-import base64
-import importlib
 import json
-import sys
-import types
-from pathlib import Path
 
 import pytest
 
-STUBS_DIR = Path(__file__).resolve().parent / "stubs"
-PLUGIN_DIR = Path(__file__).resolve().parent.parent / "constructel_bridge"
-CREDENTIALS_PATH = PLUGIN_DIR / "credentials.json"
-
-HOST = "test-host.invalid"
-_B64 = base64.b64encode(b"shared-pw").decode()
-
-CREDS_17 = {
-    "wyre": {"host": HOST, "port": 5432, "dbname": "test_db", "user": "ftth_editor", "password": _B64},
-    "be": {"host": HOST, "port": 5432, "dbname": "test_db", "user": "bureau_etudes", "password": _B64},
-}
-CREDS_18 = {
-    "wyre": {"host": HOST, "port": 5432, "dbname": "test_db", "user": "ftth_editor", "password": _B64},
-    "be": {"host": HOST, "port": 5432, "dbname": "test_db"},
-}
-CREDS_18X = {
-    "wyre": {"host": HOST, "port": 5432, "dbname": "test_db"},
-    "be": {"host": HOST, "port": 5432, "dbname": "test_db"},
-}
+from constructel_bridge_tests.conftest import CREDS_17, CREDS_18, CREDS_18X
 
 
 @pytest.fixture
-def load_bp():
-    """Factory: load_bp(creds) -> fresh bridge_plugin module built on *creds*.
-    Never clobbers a pre-existing real credentials.json."""
-    if str(STUBS_DIR) not in sys.path:
-        sys.path.insert(0, str(STUBS_DIR))
-    pre_existing = CREDENTIALS_PATH.read_bytes() if CREDENTIALS_PATH.exists() else None
-
-    def _load(creds):
-        CREDENTIALS_PATH.write_text(json.dumps(creds))
-        for mod_name in list(sys.modules):
-            if mod_name == "constructel_bridge.bridge_plugin" or mod_name.startswith("qgis"):
-                del sys.modules[mod_name]
-        return importlib.import_module("constructel_bridge.bridge_plugin")
-
-    yield _load
-    if pre_existing is None:
-        CREDENTIALS_PATH.unlink(missing_ok=True)
-    else:
-        CREDENTIALS_PATH.write_bytes(pre_existing)
+def load_bp(load_bp18):
+    return load_bp18
 
 
 @pytest.fixture
-def bp(load_bp):
-    return load_bp(CREDS_18)
+def bp(bp18):
+    return bp18
 
 
 def _log_messages(level=None):
