@@ -177,24 +177,161 @@ def embedded_ca_paths(plugin_dir) -> list[Path]:
 
 
 # --- datasource rewriting -----------------------------------------------------
+#
+# Revue 29/10 (I12/M5) : une datasource postgres se termine souvent par
+# ``table="s"."t" (geom) sql=<filtre>`` et QgsDataSourceUri lit TOUT ce qui
+# suit ``sql=`` comme filtre. Ajouter des jetons en fin de chaîne corrompait
+# donc le filtre (et l'authcfg était perdu) ; des regex naïves rataient
+# aussi les valeurs à apostrophe échappée (``password='pa\'ss word'``). Le
+# découpage ci-dessous suit exactement QgsDataSourceUri::QgsDataSourceUri /
+# getValue (QGIS 3.28 -> 4.x) et ne touche jamais au texte après ``sql=``.
 
-_DS_AUTHCFG_RE = re.compile(r"\bauthcfg=\S+")
-_DS_USER_RE = re.compile(r"\buser=(?:'[^']*'|\S+)")
-_DS_PASSWORD_RE = re.compile(r"\bpassword=(?:'[^']*'|\S+)")
-_DS_SSLMODE_RE = re.compile(r"\bsslmode=\S+")
+_IDENTITY_KEYS = frozenset({"user", "password", "authcfg"})
+
+
+def _ds_skip_blanks(text: str, i: int) -> int:
+    while i < len(text) and text[i].isspace():
+        i += 1
+    return i
+
+
+def _ds_read_value(text: str, i: int) -> tuple[str, int]:
+    """Valeur commençant en *i* (règles de QgsDataSourceUri::getValue) :
+    (valeur déséchappée, position juste après la valeur, blancs exclus)."""
+    n = len(text)
+    out = []
+    if i < n and text[i] in ("'", '"'):
+        delim = text[i]
+        i += 1
+        while True:
+            if i >= n:
+                break  # chaîne non terminée : QGIS s'arrête aussi
+            if text[i] == "\\":
+                i += 1
+                if i >= n:
+                    continue
+                if text[i] not in (delim, "\\"):
+                    i -= 1
+            elif text[i] == delim:
+                i += 1
+                break
+            out.append(text[i])
+            i += 1
+    else:
+        while i < n and not text[i].isspace():
+            if text[i] == "\\":
+                i += 1
+                if i >= n:
+                    break
+                if text[i] not in ("\\", "'"):
+                    i -= 1
+            out.append(text[i])
+            i += 1
+    return "".join(out), i
+
+
+def parse_datasource(ds: str) -> tuple[list, int | None]:
+    """Paramètres d'une datasource postgres QGIS, dans l'ordre :
+    ``[(clé, valeur déséchappée, début, fin)]`` où ``ds[début:fin]`` est le
+    jeton brut (``table=`` englobe ``."table"`` et ``(geom)``), et la
+    position du ``sql=`` final (None s'il n'y en a pas)."""
+    text = ds or ""
+    n = len(text)
+    params = []
+    i = 0
+    while i < n:
+        i = _ds_skip_blanks(text, i)
+        if i >= n:
+            break
+        if text[i] == "=":
+            i += 1
+            continue
+        start = i
+        while i < n and text[i] != "=" and not text[i].isspace():
+            i += 1
+        name = text[start:i]
+        i = _ds_skip_blanks(text, i)
+        if i >= n or text[i] != "=":
+            continue  # mot sans « = » : ignoré, comme QGIS
+        i += 1
+        if name == "sql":
+            return params, start
+        value, end = _ds_read_value(text, i)
+        if name == "table":
+            j = _ds_skip_blanks(text, end)
+            if j < n and text[j] == ".":
+                table, end = _ds_read_value(text, j + 1)
+                value = f"{value}.{table}"
+            j = _ds_skip_blanks(text, end)
+            if j < n and text[j] == "(":
+                j += 1
+                while j < n and text[j] != ")":
+                    if text[j] == "\\":
+                        j += 1
+                    j += 1
+                end = min(j + 1, n)
+        params.append((name, value, start, end))
+        i = end
+    return params, None
+
+
+def datasource_param(ds: str, name: str) -> str | None:
+    """Valeur (déséchappée) du premier paramètre *name* avant ``sql=``,
+    None s'il est absent."""
+    for key, value, _start, _end in parse_datasource(ds)[0]:
+        if key == name:
+            return value
+    return None
+
+
+def _ds_quote(value: str) -> str:
+    # Même échappement que QgsDataSourceUri::escape.
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _rewrite_datasource(ds: str, drop, tokens) -> str:
+    """Retire les paramètres *drop* et insère *tokens* juste avant
+    ``table=`` (sinon avant ``sql=``, sinon en fin). Les autres jetons sont
+    conservés tels quels, le filtre ``sql=`` à l'octet près."""
+    text = ds or ""
+    params, sql_start = parse_datasource(text)
+    kept = [(name, text[start:end]) for (name, _value, start, end) in params if name not in drop]
+    names = [name for name, _raw in kept]
+    pos = names.index("table") if "table" in names else len(kept)
+    parts = [raw for _n, raw in kept[:pos]] + list(tokens) + [raw for _n, raw in kept[pos:]]
+    out = " ".join(parts)
+    if sql_start is not None:
+        out = f"{out} {text[sql_start:]}" if out else text[sql_start:]
+    return out
+
+
+def rewrite_datasource_identity(ds: str, user: str, *, password: str = "",
+                                authcfg: str = "", sslmode: str = "") -> str:
+    """Identité d'une datasource postgres : ``user``/``password``/``authcfg``
+    existants retirés puis remplacés (et ``sslmode`` quand il est fourni ;
+    sinon celui de la datasource est conservé). Idempotent."""
+    tokens = [f"user={_ds_quote(user)}"] if user else []
+    if password:
+        tokens.append(f"password={_ds_quote(password)}")
+    if sslmode:
+        tokens.append(f"sslmode={sslmode}")
+    if authcfg:
+        tokens.append(f"authcfg={authcfg}")
+    drop = _IDENTITY_KEYS | ({"sslmode"} if sslmode else set())
+    return _rewrite_datasource(ds, drop, tokens)
 
 
 def rewrite_datasource_nominal(ds: str, login: str, authcfg_id: str) -> str:
     """A QGIS postgres datasource string carrying the nominative identity:
-    ``sslmode=verify-full user='<login>' authcfg=<id>`` and never a
-    password. Every other token (table, key, srid, geometry...) is kept.
-    Idempotent."""
-    out = _DS_AUTHCFG_RE.sub("", ds or "")
-    out = _DS_USER_RE.sub("", out)
-    out = _DS_PASSWORD_RE.sub("", out)
-    out = _DS_SSLMODE_RE.sub("", out)
-    out = re.sub(r"\s{2,}", " ", out).strip()
-    return f"{out} sslmode=verify-full user='{login}' authcfg={authcfg_id}".strip()
+    ``user='<login>' sslmode=verify-full authcfg=<id>`` and never a
+    password. Every other token (table, key, srid, geometry, sql filter) is
+    kept. Idempotent."""
+    return rewrite_datasource_identity(ds, login, authcfg=authcfg_id, sslmode="verify-full")
+
+
+def force_datasource_sslmode(ds: str, sslmode: str) -> str:
+    """*ds* avec ``sslmode=<sslmode>``, tout le reste inchangé."""
+    return _rewrite_datasource(ds, {"sslmode"}, [f"sslmode={sslmode}"])
 
 
 # --- session scope (volet D) --------------------------------------------------

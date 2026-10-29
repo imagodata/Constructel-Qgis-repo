@@ -354,6 +354,36 @@ def test_strip_dom_nominal_keeps_be_authcfg(bp18, monkeypatch, tmp_path):
     assert "authcfg=07254s7" in ds and f"user='{LOGIN}'" in ds
 
 
+FILTER = "sql=\"owner\" = 'user=x' AND note = 'sslmode=require' AND  code <> 'a  b'"
+
+
+def test_strip_dom_nominal_keeps_sql_filter_and_authcfg(bp18, monkeypatch, tmp_path):
+    # Revue 29/10 (I12) : jetons ajoutes en fin de chaine = filtre corrompu.
+    plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
+    doc = _Doc([_our_source(authcfg="old1234") + " " + FILTER])
+
+    plugin._strip_authcfg_from_dom(doc)
+
+    ds = doc.datasources()[0]
+    assert ds.endswith(" " + FILTER)
+    assert bn.datasource_param(ds, "authcfg") == "9i19s56"
+    assert bn.datasource_param(ds, "user") == LOGIN
+
+
+def test_strip_dom_shared_keeps_sql_filter(bp18, monkeypatch, tmp_path):
+    # Meme faute dans le chemin partage 1.7.x : corrigee aussi.
+    plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
+    doc = _Doc([_our_source(user="alice", authcfg="old1234") + " " + FILTER])
+
+    plugin._strip_authcfg_from_dom(doc)
+
+    ds = doc.datasources()[0]
+    assert ds.endswith(" " + FILTER)
+    assert bn.datasource_param(ds, "user") == "ftth_editor"
+    assert bn.datasource_param(ds, "authcfg") == "9i19s56"
+    assert bn.datasource_param(ds, "sslmode") == "require"
+
+
 def test_strip_dom_nominal_leaves_third_party_datasource_alone(bp18, monkeypatch, tmp_path):
     plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
     source = "dbname='o' host=other.example.com user='x' password='y' authcfg=abc table=\"s\".\"t\""
@@ -410,6 +440,24 @@ def test_read_project_shared_mode_keeps_17x_plaintext_injection(bp18, monkeypatc
 
     assert "authcfg=" not in project.read_xml
     assert "user='ftth_editor' password='shared-pw'" in project.read_xml
+
+
+@pytest.mark.parametrize("nominal", [True, False])
+def test_read_project_keeps_xml_escaped_sql_filter(bp18, monkeypatch, tmp_path, nominal):
+    from xml.sax.saxutils import escape
+
+    from qgis.core import QgsProject
+
+    plugin = (_nominal_plugin if nominal else _shared_plugin)(bp18, monkeypatch, tmp_path)
+    source = _our_source(authcfg="zzz9999") + " " + FILTER
+    xml = "<qgis><maplayer><datasource>" + escape(source, {'"': "&quot;"}) + "</datasource></maplayer></qgis>"
+    plugin._conn = SimpleNamespace(cursor=lambda: _XmlCursor(xml), closed=False)
+    project = QgsProject.instance()
+
+    assert plugin._read_and_clean_project(project, "wyre", "proj") is True
+
+    assert escape(" " + FILTER) + "</datasource>" in project.read_xml
+    assert "&lt;&gt;" in project.read_xml
 
 
 # --- _ensure_ref_layers (couche cachee v_form_lists) -----------------------------------

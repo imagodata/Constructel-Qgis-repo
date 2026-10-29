@@ -239,6 +239,64 @@ def test_rewrite_is_idempotent():
     assert bn.rewrite_datasource_nominal(once, "jdoe", "9i19s56") == once
 
 
+# Revue 29/10 (I12/M5) : filtre sql= jamais touche, valeurs echappees comprises.
+_SQL = "sql=\"owner\" = 'user=x' AND note = 'sslmode=require password=''y''' AND  code <> 'a  b'"
+_DS_FILTERED = ("dbname='farois_ftth' host=192.168.160.31 port=5432 user='ftth_editor' "
+                "password='pa\\'ss word' sslmode=require authcfg=abc1234 key='id' srid=31370 "
+                "table=\"wyre\".\"ducts\" (geom) " + _SQL)
+
+
+def test_parse_datasource_follows_qgis_quoting_rules():
+    params, sql_start = bn.parse_datasource(_DS_FILTERED)
+    values = {name: value for (name, value, _s, _e) in params}
+    assert values["password"] == "pa'ss word"
+    assert values["table"] == "wyre.ducts"
+    assert "sql" not in values
+    assert _DS_FILTERED[sql_start:] == _SQL
+    raw = {name: _DS_FILTERED[s:e] for (name, _v, s, e) in params}
+    assert raw["table"] == 'table="wyre"."ducts" (geom)'
+    assert raw["password"] == "password='pa\\'ss word'"
+
+
+def test_datasource_param_ignores_the_filter():
+    ds = "host=h table=\"s\".\"t\" sql=user = 'bob' AND authcfg = 'x'"
+    assert bn.datasource_param(ds, "user") is None
+    assert bn.datasource_param(ds, "authcfg") is None
+    assert bn.datasource_param(ds, "host") == "h"
+
+
+def test_rewrite_nominal_inserts_before_table_and_keeps_filter_verbatim():
+    out = bn.rewrite_datasource_nominal(_DS_FILTERED, "jdoe", "9i19s56")
+    assert out.endswith(" " + _SQL)
+    head = out[: out.index(" sql=")]
+    assert head.index("authcfg=9i19s56") < head.index("table=")
+    assert "pa\\'ss" not in out and "ss word" not in head
+    assert head.count("user=") == 1 and head.count("sslmode=") == 1 and head.count("authcfg=") == 1
+    assert bn.datasource_param(out, "authcfg") == "9i19s56"
+    assert bn.rewrite_datasource_nominal(out, "jdoe", "9i19s56") == out
+
+
+def test_rewrite_identity_shared_plaintext_escapes_and_keeps_sslmode():
+    out = bn.rewrite_datasource_identity(_DS_FILTERED, "ftth_editor", password="s'h\\x")
+    assert bn.datasource_param(out, "password") == "s'h\\x"
+    assert bn.datasource_param(out, "authcfg") is None
+    assert bn.datasource_param(out, "sslmode") == "require"
+    assert out.endswith(" " + _SQL)
+
+
+def test_force_sslmode_touches_only_sslmode():
+    out = bn.force_datasource_sslmode(_DS_FILTERED, "verify-full")
+    assert bn.datasource_param(out, "sslmode") == "verify-full"
+    assert bn.datasource_param(out, "authcfg") == "abc1234"
+    assert bn.datasource_param(out, "password") == "pa'ss word"
+    assert out.endswith(" " + _SQL)
+
+
+def test_rewrite_datasource_without_table_appends_at_the_end():
+    out = bn.rewrite_datasource_nominal("dbname='d' host=h port=5432 user='x'", "jdoe", "9i19s56")
+    assert out == "dbname='d' host=h port=5432 user='jdoe' sslmode=verify-full authcfg=9i19s56"
+
+
 # --- SessionScope ---------------------------------------------------------------
 
 

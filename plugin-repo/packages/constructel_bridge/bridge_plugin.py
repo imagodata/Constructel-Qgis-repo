@@ -11,6 +11,7 @@ Responsabilites:
 
 import os
 from typing import Optional
+from xml.sax.saxutils import escape as xml_escape, unescape as xml_unescape
 
 from qgis.core import (
     Qgis,
@@ -63,11 +64,14 @@ from .bridge_nominatif import (
     NOMINAL_SETTINGS_KEYS,
     SCOPE_QUERY,
     classify_auth_failure,
+    datasource_param,
     decide_after_probe_failure,
     embedded_ca_paths,
+    force_datasource_sslmode,
     is_scope_write_refusal,
     parse_session_scope,
     resolve_pg_login,
+    rewrite_datasource_identity,
     rewrite_datasource_nominal,
     root_crt_file_path,
     scope_kind,
@@ -666,16 +670,6 @@ def _mtls_active() -> tuple[bool, str | None]:
     return (True, None)
 
 
-def _set_uri_verify_full(uri) -> None:
-    """Force sslmode=verify-full sur une QgsDataSourceUri. setSslMode()
-    manque a certaines versions de QGIS (cf. 1.7.2) : repli sur le
-    parametre brut, relu comme item de connexion a la re-analyse de l'URI."""
-    try:
-        uri.setSslMode(QgsDataSourceUri.SslMode.SslVerifyFull)
-    except AttributeError:
-        uri.setParam("sslmode", "verify-full")
-
-
 def _get_plugin_version() -> str:
     """Read current plugin version from metadata.txt."""
     meta_path = os.path.join(os.path.dirname(__file__), "metadata.txt")
@@ -1065,7 +1059,6 @@ class ConstructelBridgePlugin:
         attribut user= en double dans la datasource au lieu de remplacer
         le premier.
         """
-        import re
         password = getattr(self, "_password", None) or _DEFAULT_PW
         known_identities = {DEFAULT_USER: (DEFAULT_USER, password)}
         if BE_ENABLED and BE_USER and _BE_PW:
@@ -1093,7 +1086,8 @@ class ConstructelBridgePlugin:
                 if not any(h and h in ds for h in (DEFAULT_HOST, BE_HOST)):
                     continue
                 is_be = BE_ENABLED and (
-                    f"authcfg={be_fixed}" in ds or (bool(BE_USER) and f"user='{BE_USER}'" in ds)
+                    datasource_param(ds, "authcfg") == be_fixed
+                    or (bool(BE_USER) and datasource_param(ds, "user") == BE_USER)
                 )
                 new_ds = rewrite_datasource_nominal(ds, self._pg_login, be_fixed if is_be else wyre_fixed)
                 if new_ds == ds:
@@ -1103,7 +1097,7 @@ class ConstructelBridgePlugin:
                 ds_node.appendChild(doc.createTextNode(new_ds))
                 cleaned += 1
                 continue
-            if "authcfg=" not in ds:
+            if datasource_param(ds, "authcfg") is None:
                 continue
             # Ne jamais injecter nos identifiants dans la datasource d'un
             # serveur PG tiers. Filtre les hotes vides (BE_HOST == "" quand
@@ -1116,26 +1110,22 @@ class ConstructelBridgePlugin:
             # Determiner l'identite a preserver depuis le user='...'
             # existant AVANT de le retirer -- repli sur wyre si absent ou
             # inconnu (meme comportement que _fix_layer_credentials).
-            user_match = re.search(r"user='([^']*)'", ds)
-            current_user = user_match.group(1) if user_match else None
+            current_user = datasource_param(ds, "user")
             target_user, target_password = known_identities.get(
                 current_user, (DEFAULT_USER, password)
             )
 
-            # Retirer authcfg=xxx ainsi que tout user=/password= existant,
-            # puis reinjecter l'identite cible en clair -- evite toute
-            # duplication d'attribut.
-            ds = re.sub(r"\bauthcfg=\w+", "", ds)
-            ds = re.sub(r"\buser='[^']*'", "", ds)
-            ds = re.sub(r"\bpassword='[^']*'", "", ds)
+            # Remplacer authcfg/user/password existants par l'identite
+            # cible, AVANT table= : les ajouter en fin de chaine les
+            # versait dans le filtre sql= (revue 29/10, I12 -- faute deja
+            # presente en 1.7.x).
             fixed_cfg = _fixed_authcfg_for_user(target_user)
             if fixed_cfg:
                 # ID FIXE identique sur tous les postes : projet portable,
                 # sans mot de passe en clair.
-                ds += f" user='{target_user}' authcfg={fixed_cfg}"
+                ds = rewrite_datasource_identity(ds, target_user, authcfg=fixed_cfg)
             else:
-                ds += f" user='{target_user}' password='{target_password}'"
-            ds = re.sub(r"\s{2,}", " ", ds).strip()
+                ds = rewrite_datasource_identity(ds, target_user, password=target_password)
             # Remplacer le contenu du noeud
             while ds_node.hasChildNodes():
                 ds_node.removeChild(ds_node.firstChild())
@@ -1905,13 +1895,12 @@ class ConstructelBridgePlugin:
                     old_authcfg != target_cfg
                     or current_user != self._pg_login
                     or bool(uri.password())
-                    or "sslmode=verify-full" not in uri.uri(False)
+                    or datasource_param(uri.uri(False), "sslmode") != "verify-full"
                 )
                 if needs_fix:
                     uri.setAuthConfigId(target_cfg)
                     uri.setUsername(self._pg_login)
                     uri.setPassword("")
-                    _set_uri_verify_full(uri)
             else:
                 # Mode partage : un login nominatif d'un collegue (projet
                 # enregistre ailleurs) est une identite inconnue -> wyre,
@@ -1941,9 +1930,15 @@ class ConstructelBridgePlugin:
                         uri.setPassword(target_password)
 
             if needs_fix or not layer.isValid():
+                source = uri.uri(False)
+                if nominal and not (mtls_active or mtls_invalid):
+                    # verify-full par reecriture du texte : setSslMode()
+                    # n'existe pas en 3.28 et setParam("sslmode") y
+                    # doublait le jeton au lieu de le remplacer.
+                    source = force_datasource_sslmode(source, "verify-full")
                 options = QgsDataProvider.ProviderOptions()
                 layer.setDataSource(
-                    uri.uri(False),
+                    source,
                     layer.name(),
                     "postgres",
                     options,
@@ -3006,34 +3001,36 @@ class ConstructelBridgePlugin:
 
         def _fix_datasource(m):
             """Callback pour re.sub: nettoie une balise <datasource>."""
-            prefix, ds, suffix = m.group(1), m.group(2), m.group(3)
-            if not any(h in ds for h in known_hosts):
+            prefix, raw, suffix = m.group(1), m.group(2), m.group(3)
+            if not any(h in raw for h in known_hosts):
                 return m.group(0)
+            # Texte XML : entites decodees avant analyse, re-encodees apres
+            # (un filtre sql= peut contenir < > & ou des guillemets).
+            ds = xml_unescape(raw, {"&quot;": '"', "&apos;": "'"})
             if nominal:
                 # Session nominative : identite du poste via la config
                 # fixe (presente : la sonde l'a ecrite), aucun mot de passe.
                 is_be = BE_ENABLED and (
-                    f"authcfg={be_fixed}" in ds or (bool(BE_USER) and f"user='{BE_USER}'" in ds)
+                    datasource_param(ds, "authcfg") == be_fixed
+                    or (bool(BE_USER) and datasource_param(ds, "user") == BE_USER)
                 )
-                return prefix + rewrite_datasource_nominal(
+                new_ds = rewrite_datasource_nominal(
                     ds, self._pg_login, be_fixed if is_be else wyre_fixed,
-                ) + suffix
-            # Regression round 3 corrigee : le strip global d'authcfg sur
-            # tout le XML a ete retire au profit d'un traitement par
-            # datasource, mais le re.sub sur `ds` avait ete oublie -- plus
-            # aucun authcfg n'etait retire pour NOS datasources, cassant
-            # l'objectif meme de cette fonction (cf. docstring).
-            ds = re.sub(r"\bauthcfg=\w+", "", ds)
-            user_match = re.search(r"\buser='([^']*)'", ds)
-            current_user = user_match.group(1) if user_match else None
-            target_user, target_password = known_identities.get(
-                current_user, (DEFAULT_USER, password)
-            )
-            ds = re.sub(r"\buser='[^']*'", "", ds)
-            ds = re.sub(r"\bpassword='[^']*'", "", ds)
-            ds += f" user='{target_user}' password='{target_password}'"
-            ds = re.sub(r"\s{2,}", " ", ds).strip()
-            return prefix + ds + suffix
+                )
+            else:
+                # Regression round 3 corrigee : le strip global d'authcfg sur
+                # tout le XML a ete retire au profit d'un traitement par
+                # datasource. Identite cible injectee AVANT table= : en fin
+                # de chaine elle tombait dans le filtre sql= (revue 29/10,
+                # I12 -- faute deja presente en 1.7.x).
+                current_user = datasource_param(ds, "user")
+                target_user, target_password = known_identities.get(
+                    current_user, (DEFAULT_USER, password)
+                )
+                new_ds = rewrite_datasource_identity(ds, target_user, password=target_password)
+            if new_ds == ds:
+                return m.group(0)
+            return prefix + xml_escape(new_ds) + suffix
 
         xml = re.sub(
             r"(<datasource>)(.*?)(</datasource>)",
