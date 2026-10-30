@@ -4,10 +4,13 @@ the real API beyond what's needed for a clean module import — extend as
 needed if other constructel_bridge modules require more symbols; a
 failing import's traceback names exactly what's missing.
 """
+import hashlib
 import re
 
 
-_URI_TOKEN_RE = re.compile(r"(\w+)=('([^']*)'|\"([^\"]*)\"|(\S+))")
+# Tokens key='v', key="schema"."table" (kept WITH quotes so schema()/table()
+# can split them, as in a native QGIS postgres URI) or bare key=v.
+_URI_TOKEN_RE = re.compile(r"(\w+)=('([^']*)'|(\"[^\"]*\"(?:\.\"[^\"]*\")?)|(\S+))")
 _URI_BARE_RE = re.compile(r"^[\w.\-]+$")
 
 
@@ -103,6 +106,60 @@ class _StubAuthManager:
         _StubAuthManager._configs.pop(authcfg_id, None)
         return True
 
+    # --- Bridge 1.8 revue (D-TLS-1) : CA dans la base d'authentification.
+    # Semantique QGIS : id = QgsAuthCertUtils.shaHexForCert, store =
+    # remplace, trustedCaCerts() = caches reconstruits (rebuild*).
+    _cas = {}
+    _trust = {}
+    _cache_rebuilds = []
+    _ca_store_fails = False
+
+    def certAuthority(self, cert_id):
+        from qgis.PyQt.QtNetwork import QSslCertificate
+
+        return _StubAuthManager._cas.get(cert_id) or QSslCertificate()
+
+    def storeCertAuthority(self, cert):
+        if _StubAuthManager._ca_store_fails or cert.isNull():
+            return False
+        _StubAuthManager._cas[QgsAuthCertUtils.shaHexForCert(cert)] = cert
+        return True
+
+    def certTrustPolicy(self, cert):
+        return _StubAuthManager._trust.get(
+            QgsAuthCertUtils.shaHexForCert(cert), QgsAuthCertUtils.CertTrustPolicy.DefaultTrust
+        )
+
+    def storeCertTrustPolicy(self, cert, policy):
+        if _StubAuthManager._ca_store_fails or cert.isNull():
+            return False
+        _StubAuthManager._trust[QgsAuthCertUtils.shaHexForCert(cert)] = policy
+        return True
+
+    def rebuildCaCertsCache(self):
+        _StubAuthManager._cache_rebuilds.append("ca")
+        return True
+
+    def rebuildCertTrustCache(self):
+        _StubAuthManager._cache_rebuilds.append("trust")
+        return True
+
+    def rebuildTrustedCaCertsCache(self):
+        _StubAuthManager._cache_rebuilds.append("trusted")
+        return True
+
+
+class QgsAuthCertUtils:
+    class CertTrustPolicy:
+        DefaultTrust = 0
+        Trusted = 1
+        Untrusted = 2
+        NoPolicy = 3
+
+    @staticmethod
+    def shaHexForCert(cert, formatted=False):
+        return hashlib.sha1(cert.toPem()).hexdigest()
+
 
 class QgsApplication:
     _instance = None
@@ -156,13 +213,18 @@ class QgsCredentials:
 
     def __init__(self):
         QgsCredentials._instance = self
+        # Test-double : realms pre-caches (revue 29/10, M13).
+        self.puts = []
 
     @classmethod
     def instance(cls):
+        # Comme QGIS : toujours une instance (QgsCredentialsNone par defaut).
+        if cls._instance is None:
+            cls._instance = cls()
         return cls._instance
 
     def put(self, realm, username, password):
-        pass
+        self.puts.append((realm, username, password))
 
     def get(self, realm, username, password, message=""):
         return False, username, password
@@ -187,6 +249,18 @@ class QgsDataSourceUri:
     implemented; other tokens round-trip verbatim. Anything beyond that
     (table/key/sql clauses, service= connections) is out of scope."""
 
+    class SslMode:
+        # Same numeric values as QgsDataSourceUri::SslMode (settings key
+        # "sslmode" of a PG connection stores the number as a string).
+        SslPrefer = 0
+        SslDisable = 1
+        SslAllow = 2
+        SslRequire = 3
+        SslVerifyCa = 4
+        SslVerifyFull = 5
+
+    _SSL_NAMES = {0: "prefer", 1: "disable", 2: "allow", 3: "require", 4: "verify-ca", 5: "verify-full"}
+
     def __init__(self, uri=""):
         self._params = {}
         if uri:
@@ -199,11 +273,57 @@ class QgsDataSourceUri:
                     value = match.group(5)
                 self._params[key] = value
 
-    def setConnection(self, *args, **kwargs):
-        pass
+    def setConnection(self, host, port, database, username, password, sslmode=None, authcfg=None):
+        # Bridge 1.8 tests: a faithful-enough setConnection (the real one
+        # stores every item; sslmode is an SslMode enum value).
+        self._params["host"] = str(host)
+        self._params["port"] = str(port)
+        self._params["dbname"] = database
+        if username:
+            self._params["user"] = username
+        else:
+            self._params.pop("user", None)
+        self.setPassword(password)
+        if sslmode is not None:
+            self.setSslMode(sslmode)
+        self.setAuthConfigId(authcfg or "")
 
-    def setDataSource(self, *args, **kwargs):
-        pass
+    def setDataSource(self, schema, table, geometry_column=None, sql="", key_column=""):
+        self._params["table"] = f'"{schema}"."{table}"' if schema else f'"{table}"'
+        if geometry_column:
+            self._params["geom"] = geometry_column
+        else:
+            self._params.pop("geom", None)
+        if key_column:
+            self._params["key"] = key_column
+
+    def setParam(self, key, value):
+        self._params[key] = str(value)
+
+    def param(self, key):
+        return self._params.get(key, "")
+
+    def setSslMode(self, mode):
+        self._params["sslmode"] = self._SSL_NAMES.get(int(mode), str(mode))
+
+    def sslMode(self):
+        names = {v: k for k, v in self._SSL_NAMES.items()}
+        return names.get(self._params.get("sslmode", "prefer"), 0)
+
+    def schema(self):
+        table = self._params.get("table", "")
+        if table.startswith('"') and '"."' in table:
+            return table.split('"."')[0].strip('"')
+        return ""
+
+    def table(self):
+        table = self._params.get("table", "")
+        if '"."' in table:
+            return table.split('"."')[1].strip('"')
+        return table.strip('"')
+
+    def geometryColumn(self):
+        return self._params.get("geom", "")
 
     def host(self):
         return self._params.get("host", "")
@@ -242,6 +362,30 @@ class QgsDataSourceUri:
         return " ".join(parts)
 
 
+class QgsPathResolver:
+    """Preprocesseurs de chemins/datasources (QGIS >= 3.22 : id rendu,
+    removePathPreprocessor). Test-double : liste ordonnee inspectable."""
+    _preprocessors = {}
+    _next_id = 1
+
+    @staticmethod
+    def setPathPreprocessor(processor):
+        pid = f"stub-preprocessor-{QgsPathResolver._next_id}"
+        QgsPathResolver._next_id += 1
+        QgsPathResolver._preprocessors[pid] = processor
+        return pid
+
+    @staticmethod
+    def removePathPreprocessor(pid):
+        return QgsPathResolver._preprocessors.pop(pid, None) is not None
+
+    @staticmethod
+    def apply(path):
+        for processor in list(QgsPathResolver._preprocessors.values()):
+            path = processor(path)
+        return path
+
+
 class QgsMessageLog:
     # Test-double introspection: real code never reads this; wiring tests
     # assert diagnostics through it. Reset by a fresh module import.
@@ -255,11 +399,26 @@ class QgsMessageLog:
 
 
 class _StubSignal:
-    def connect(self, *_args, **_kwargs):
-        pass
+    """Signal enregistreur : connect/disconnect comme PyQt (disconnect d'un
+    slot non connecte -> TypeError), emit synchrone pour les tests."""
 
-    def disconnect(self, *_args, **_kwargs):
-        pass
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot, *_args, **_kwargs):
+        self._slots.append(slot)
+
+    def disconnect(self, slot=None):
+        if slot is None:
+            self._slots = []
+        elif slot in self._slots:
+            self._slots.remove(slot)
+        else:
+            raise TypeError("disconnect() failed: not connected")
+
+    def emit(self, *args):
+        for slot in list(self._slots):
+            slot(*args)
 
 
 class QgsProject:
@@ -268,6 +427,11 @@ class QgsProject:
     def __init__(self):
         self._layers = {}
         self._next_layer_id = 1
+        # Signaux utilises par le plugin (initGui/unload, hooks, perimetre).
+        self.layersAdded = _StubSignal()
+        self.readProject = _StubSignal()
+        self.writeProject = _StubSignal()
+        self.layerLoaded = _StubSignal()
 
     @classmethod
     def instance(cls):
@@ -279,14 +443,42 @@ class QgsProject:
         return dict(self._layers)
 
     def addMapLayer(self, layer, add_to_legend=True):
-        layer_id = f"stub-layer-{self._next_layer_id}"
+        # Comme QGIS : la cle est l'id de la couche.
+        layer_id = layer.id() if hasattr(layer, "id") else f"stub-layer-{self._next_layer_id}"
         self._next_layer_id += 1
         self._layers[layer_id] = layer
         return layer
 
-    @property
-    def layersAdded(self):
-        return _StubSignal()
+    def mapLayer(self, layer_id):
+        return self._layers.get(layer_id)
+
+    def fileName(self):
+        return getattr(self, "file_name", "")
+
+    def isDirty(self):
+        return getattr(self, "dirty", False)
+
+    def setBadLayerHandler(self, handler):
+        self.bad_layer_handler = handler
+
+    # Bridge 1.8 tests (_read_and_clean_project): the XML handed to
+    # project.read() is kept for inspection; nothing is parsed.
+    def read(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            self.read_xml = f.read()
+        return True
+
+    def setTitle(self, title):
+        self.title = title
+
+    def setFileName(self, name):
+        self.file_name = name
+
+    def setDirty(self, dirty):
+        self.dirty = dirty
+
+    def error(self):
+        return ""
 
 
 class QgsProjectBadLayerHandler:
@@ -312,9 +504,66 @@ class QgsSettings:
     def sync(self):
         pass
 
+    # Groupes (revue 2, I-8 : projets recents UI/recentProjects/<n>/path).
+    # Seul childGroups() tient compte du groupe courant ; value()/setValue()
+    # sont appeles avec des cles absolues par le plugin.
+    def beginGroup(self, prefix):
+        self.__dict__.setdefault("_groups", []).append(prefix.strip("/"))
+
+    def endGroup(self):
+        self.__dict__.setdefault("_groups", []).pop()
+
+    def childGroups(self):
+        prefix = "/".join(self.__dict__.get("_groups", []))
+        children = set()
+        for key in QgsSettings._store:
+            if prefix and not key.startswith(prefix + "/"):
+                continue
+            rest = key[len(prefix) + 1:] if prefix else key
+            if "/" in rest:
+                children.add(rest.split("/", 1)[0])
+        return sorted(children)
+
 
 class QgsVectorLayer:
-    pass
+    # Constructible like the real one (source, name, provider) so code that
+    # creates layers (_ensure_ref_layers) runs under the stub; subclasses in
+    # tests override whatever they need.
+    def __init__(self, source="", name="", provider=""):
+        self._source = source
+        self._name = name
+        self._provider_type = provider
+
+    def source(self):
+        return self._source
+
+    def name(self):
+        return self._name
+
+    def id(self):
+        # Les doublures de test sous-classent sans appeler __init__.
+        return getattr(self, "_layer_id", None) or f"layer-{id(self)}"
+
+    # Proprietes personnalisees (revue 2, I-1/I-2 : marqueur du verrou D2).
+    def _custom(self):
+        if "_custom_properties" not in self.__dict__:
+            self._custom_properties = {}
+        return self._custom_properties
+
+    def customProperty(self, key, default=None):
+        return self._custom().get(key, default)
+
+    def setCustomProperty(self, key, value):
+        self._custom()[key] = value
+
+    def removeCustomProperty(self, key):
+        self._custom().pop(key, None)
+
+    def providerType(self):
+        return self._provider_type
+
+    def isValid(self):
+        return True
 
 
 class QgsWkbTypes:

@@ -61,6 +61,8 @@ def _layer(import_result):
         dataProvider=lambda: SimpleNamespace(uri=lambda: uri),
         importNamedStyle=Mock(return_value=import_result),
         triggerRepaint=Mock(),
+        isReadOnly=lambda: False,
+        setReadOnly=Mock(),
     )
 
 

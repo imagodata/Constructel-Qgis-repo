@@ -927,23 +927,37 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 # Helpers
 # =====================================================================
 
+_SSL_MODES = {
+    "require": "SslRequire",
+    "verify-ca": "SslVerifyCa",
+    "verify-full": "SslVerifyFull",
+}
+
+
 def _build_uri(conn_params, password, schema, table, geom_col, pk):
     # Mode SSL passe a setConnection() : setSslMode() n'existe qu'a partir de
     # QGIS 3.42 environ (AttributeError -> init projet en echec avant).
-    sslmode = (
-        QgsDataSourceUri.SslMode.SslRequire
-        if conn_params.get("sslmode", "require") == "require"
-        else QgsDataSourceUri.SslMode.SslPrefer
+    sslmode = getattr(
+        QgsDataSourceUri.SslMode,
+        _SSL_MODES.get(conn_params.get("sslmode", "require"), "SslPrefer"),
+        QgsDataSourceUri.SslMode.SslPrefer,
     )
+    # Bridge 1.8 : session nominative = config Auth Manager a id fixe
+    # (authcfg) et AUCUN mot de passe dans la datasource ; sans authcfg,
+    # chemin 1.7.x (identifiant partage en clair, appel inchange).
+    authcfg = conn_params.get("authcfg", "")
     uri = QgsDataSourceUri()
-    uri.setConnection(
+    connection = [
         conn_params.get("host", "localhost"),
         str(conn_params.get("port", 5432)),
         conn_params.get("dbname", "farois_ftth"),
         conn_params.get("user", "ftth_editor"),
-        password,
+        "" if authcfg else password,
         sslmode,
-    )
+    ]
+    if authcfg:
+        connection.append(authcfg)
+    uri.setConnection(*connection)
     uri.setDataSource(schema, table, geom_col, "", pk)
     uri.setParam("estimatedmetadata", "true")
     uri.setParam("checkPrimaryKeyUnicity", "0")
@@ -1058,6 +1072,14 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
         _log("psycopg2 indisponible — styles non appliques", Qgis.MessageLevel.Warning)
         return styled_keys
 
+    # Bridge 1.8 : session nominative = verify-full avec les CA du paquet
+    # (sslrootcert fourni par l'appelant) ; identifiant partage = connexion
+    # 1.7.x a l'identique, defaut libpq (revue 29/10, D-TLS-2).
+    ssl_kwargs = {}
+    if conn_params.get("sslrootcert"):
+        ssl_kwargs["sslmode"] = conn_params.get("sslmode", "verify-full")
+        ssl_kwargs["sslrootcert"] = conn_params["sslrootcert"]
+
     conn = None
     try:
         conn = psycopg2.connect(
@@ -1066,6 +1088,7 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             dbname=conn_params.get("dbname", "farois_ftth"),
             user=conn_params.get("user", "ftth_editor"),
             password=password,
+            **ssl_kwargs,
         )
         cur = conn.cursor()
 
@@ -1096,7 +1119,14 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             try:
                 doc = QDomDocument()
                 doc.setContent(row[0])
+                was_read_only = layer.isReadOnly()
                 ok, _error = layer.importNamedStyle(doc)  # (succes, message)
+                if not was_read_only and layer.isReadOnly():
+                    # Bridge 1.8, revue 2 (I-2) : readOnly="1" d'un style par
+                    # defaut n'est pas une regle de style (verrou de session
+                    # enregistre par megarde) -> ignore.
+                    layer.setReadOnly(False)
+                    _log(f"Style {key} : readOnly=1 ignore", Qgis.MessageLevel.Warning)
                 if ok:
                     layer.triggerRepaint()
                     styled_keys.add(key)

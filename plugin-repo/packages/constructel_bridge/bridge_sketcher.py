@@ -392,6 +392,67 @@ def _sync_value_relation_layer_names(project):
     return patched
 
 
+def rewrite_value_relation_sources(project, login: str, authcfg_id: str, hosts) -> int:
+    """Rattache le ``LayerSource`` des ValueRelation pointant sur nos
+    serveurs a l'identite nominative du poste (Bridge 1.8, B9).
+
+    Les QML Farois (embarques et en base) figent ``user='ftth_editor'
+    sslmode=require`` dans LayerSource. QGIS ne consulte cette source que
+    si la couche cible n'est ni dans le projet (Layer) ni resolvable par
+    LayerName ; il ouvrirait alors une connexion avec un identifiant dont
+    un poste nominatif n'a plus le mot de passe (invite bloquante, ou
+    identifiant partage apres la cloture). Reecriture :
+    ``sslmode=verify-full user='<login>' authcfg=<id>``, sans mot de
+    passe, serveurs tiers ignores. Retourne le nombre de widgets corriges.
+    """
+    from .bridge_nominatif import datasource_param, rewrite_datasource_nominal
+
+    known_hosts = {h for h in hosts if h}
+    patched = 0
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        fields = layer.fields()
+        for i in range(fields.count()):
+            setup = layer.editorWidgetSetup(i)
+            if setup.type() != "ValueRelation":
+                continue
+            config = dict(setup.config())
+            source = config.get("LayerSource", "")
+            # Revue 2 (M7) : hote compare exactement, pas par sous-chaine.
+            if not source or datasource_param(source, "host") not in known_hosts:
+                continue
+            new_source = rewrite_datasource_nominal(source, login, authcfg_id)
+            if new_source == source:
+                continue
+            config["LayerSource"] = new_source
+            layer.setEditorWidgetSetup(i, QgsEditorWidgetSetup("ValueRelation", config))
+            patched += 1
+    return patched
+
+
+def value_relations_use_form_lists(project) -> bool:
+    """True si au moins une liste de valeurs du projet cible
+    ``ref.v_form_lists`` (par LayerName ou par LayerSource) -- seule raison
+    de charger cette couche cachee (revue 29/10, I7)."""
+    from .bridge_nominatif import datasource_param
+
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        fields = layer.fields()
+        for i in range(fields.count()):
+            setup = layer.editorWidgetSetup(i)
+            if setup.type() != "ValueRelation":
+                continue
+            config = setup.config()
+            if config.get("LayerName") == "v_form_lists":
+                return True
+            if datasource_param(config.get("LayerSource") or "", "table") == "ref.v_form_lists":
+                return True
+    return False
+
+
 # =====================================================================
 # API publique — applique tout
 # =====================================================================
