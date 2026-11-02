@@ -60,6 +60,16 @@ class _StubAuthManager:
     def configIds(self):
         return list(_StubAuthManager._configs)
 
+    def availableAuthMethodConfigs(self, dataprovider=""):
+        # Real API: {id: QgsAuthMethodConfig} (name/id only are guaranteed).
+        out = {}
+        for cid, stored in _StubAuthManager._configs.items():
+            cfg = QgsAuthMethodConfig()
+            cfg.setId(cid)
+            cfg.setName(stored["name"])
+            out[cid] = cfg
+        return out
+
     def loadAuthenticationConfig(self, authcfg_id, config, full=False):
         # NOTE: `full` accepted for signature fidelity; the stub stores
         # plaintext and ignores decryption depth. The return is ignored by

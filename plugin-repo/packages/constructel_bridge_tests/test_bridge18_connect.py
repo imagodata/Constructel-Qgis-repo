@@ -1079,3 +1079,90 @@ def test_unexpected_exception_during_the_probe_falls_back(bp18, monkeypatch, tmp
     assert [c["user"] for c in calls] == [LOGIN, "ftth_editor"]
     assert plugin._auth_mode == bn.AUTH_MODE_SHARED
     assert _banner_texts(plugin) == [_expected_banner(bp18, "unavailable")]
+
+
+# --- backlog 1.8.1 : M8, M13, M14 ------------------------------------------------
+
+
+def test_no_fallback_startup_failure_leaves_a_persistent_error_in_the_message_bar(load_bp18, monkeypatch, tmp_path):
+    # M13 (cloture 1.8.x) : un echec silencieux au demarrage n'etait visible que
+    # dans le journal ; il reste maintenant affiche, sans expiration.
+    from qgis.core import Qgis
+
+    bp = load_bp18(CREDS_18X)
+    plugin, _calls, _asked, _cur = _make_plugin(
+        bp, monkeypatch, tmp_path, [_not_permitted(), None], stored_ad_pw="ad-pw")
+    plugin._auto_connect()
+    assert plugin.iface.messageBar().items == []  # interface pas prete : differe
+
+    plugin._startup_interactive()
+
+    items = plugin.iface.messageBar().items
+    assert len(items) == 1
+    assert items[0].level == Qgis.MessageLevel.Critical and items[0].duration == 0
+    assert bp.tr("nominal.reason_login_disabled") in items[0].text
+
+
+def test_error_in_the_message_bar_is_replaced_not_stacked_and_cleared_on_nominal_success(
+        load_bp18, monkeypatch, tmp_path):
+    bp = load_bp18(CREDS_18X)
+    plugin, _calls, _asked, _cur = _make_plugin(
+        bp, monkeypatch, tmp_path, [_not_permitted(), None], stored_ad_pw="ad-pw")
+    plugin._auto_connect()
+    plugin._startup_interactive()
+    plugin._show_blocking_error()
+    assert len(plugin.iface.messageBar().items) == 1
+
+    plugin._set_banner(None)  # session nominative etablie
+
+    assert plugin.iface.messageBar().items == []
+    assert plugin._blocking_error is None
+
+
+def test_language_change_reposts_the_fallback_banner(bp18, monkeypatch, tmp_path):
+    # M14 : le bandeau suit la langue au lieu de rester dans l'ancienne.
+    from constructel_bridge.i18n import get_language, set_language
+
+    plugin, _calls, _asked, _cur = _make_plugin(
+        bp18, monkeypatch, tmp_path, [_not_permitted(), None], stored_ad_pw="ad-pw")
+    _start(plugin)
+    plugin._actions = []
+    before = get_language()
+    try:
+        set_language("en" if before != "en" else "fr")
+        plugin._refresh_action_labels()
+        assert _banner_texts(plugin) == [_expected_banner(bp18, bn.LOGIN_DISABLED)]
+    finally:
+        set_language(before)
+    assert _banner_texts(plugin) != [_expected_banner(bp18, bn.LOGIN_DISABLED)]
+
+
+def _stale_be_config(bp, password, username=None):
+    from qgis.core import QgsApplication, QgsAuthMethodConfig
+
+    cfg = QgsAuthMethodConfig()
+    cfg.setName(bp._AUTH_CFG_NAMES["be"])
+    if username is not None:
+        cfg.setConfig("username", username)
+    cfg.setConfig("password", password)
+    ok, cfg = QgsApplication.authManager().storeAuthenticationConfig(cfg)
+    assert ok
+    return cfg.id()
+
+
+def test_stale_be_config_without_identity_is_not_migrated(load_bp18, monkeypatch, tmp_path):
+    # M8 : bloc `be` sans identifiant partage (BE_USER vide) + ancienne config
+    # sans username : son mot de passe ne repart pas dans la config fixe.
+    bp = load_bp18(CREDS_18X)
+    assert bp.BE_USER == ""
+    _stale_be_config(bp, "legacy-be-pw")
+    bp._check_fixed_authcfgs()
+    assert not _has_config("07254s7") or _config("07254s7").config("password") != "legacy-be-pw"
+
+
+def test_stale_be_config_keeps_its_own_username_when_migrated(load_bp18, monkeypatch, tmp_path):
+    bp = load_bp18(CREDS_18X)
+    _stale_be_config(bp, "legacy-be-pw", username="bureau_etudes")
+    bp._check_fixed_authcfgs()
+    assert _config("07254s7").config("username") == "bureau_etudes"
+    assert _config("07254s7").config("password") == "legacy-be-pw"
