@@ -354,8 +354,14 @@ def _check_fixed_authcfgs() -> str:
                 old = QgsAuthMethodConfig()
                 auth_mgr.loadAuthenticationConfig(stale[0], old, True)
                 old_pw = old.config("password", "")
-                if old_pw:
-                    _store_password_encrypted(old_pw, conn)
+                # M8 : l'identifiant suit le mot de passe. Une ancienne config
+                # sans username, sur une connexion sans identifiant partage
+                # connu (BE_USER vide, bloc `be` 1.8), n'est pas reprise : un
+                # mot de passe sans identite serait rejoue plus tard contre
+                # le bind AD avec le login nominatif (refus compte).
+                old_user = old.config("username", "") or _PG_CONNECTIONS.get(conn, {}).get("user", "")
+                if old_pw and old_user:
+                    _store_password_encrypted(old_pw, conn, username=old_user)
             removed = 0
             if fixed_id in auth_mgr.configIds():
                 for cid in stale:
@@ -903,6 +909,8 @@ class ConstructelBridgePlugin:
         self._pending_login = ""
         self._pending_onboarding = None
         self._banner = None  # (motif, login) du bandeau de repli D7
+        self._blocking_error = None  # message d'erreur bloquant (cloture 1.8.x)
+        self._error_item = None
         self._banner_item = None
         self._action_retry = None
         # Revue 29/10 (M6) : slots raiseError par id de couche. Le verrou
@@ -1104,6 +1112,7 @@ class ConstructelBridgePlugin:
             self._path_preprocessor_id = None
         self._cancel_startup_connection()
         self._remove_banner()
+        self._remove_blocking_error()
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
@@ -1512,6 +1521,7 @@ class ConstructelBridgePlugin:
                 silent=False, login=self._pending_login or None, reprompt=prompt == "reprompt",
             )
         self._show_banner()
+        self._show_blocking_error()
         self._update_mode_indicator()
         if self._pending_onboarding is not None:
             is_new_user, self._pending_onboarding = self._pending_onboarding, None
@@ -1757,6 +1767,10 @@ class ConstructelBridgePlugin:
                 error=error,
             )
             self._log(message, Qgis.MessageLevel.Critical)
+            # M13 : visible meme au demarrage silencieux (barre de messages
+            # persistante) ; la boite modale reste reservee aux actions.
+            self._blocking_error = message
+            self._show_blocking_error()
             if not silent:
                 QMessageBox.critical(self.iface.mainWindow(), "Constructel Bridge", message)
             return False
@@ -1801,6 +1815,9 @@ class ConstructelBridgePlugin:
         """Bandeau persistant du repli D7 (None = aucun) : journalise tout de
         suite, affiche des que l'interface est prete."""
         self._banner = (kind, login) if kind else None
+        if not kind:
+            self._blocking_error = None
+            self._remove_blocking_error()
         if self._banner:
             self._log(tr("nominal.banner", reason=self._reason_text(kind, login)), Qgis.MessageLevel.Warning)
         if self._ui_ready:
@@ -1815,6 +1832,28 @@ class ConstructelBridgePlugin:
         except (RuntimeError, AttributeError):
             pass  # deja ferme par l'utilisateur (objet C++ detruit)
         self._banner_item = None
+
+    def _show_blocking_error(self):
+        """Erreur bloquante (acces nominatif impossible, aucun repli partage)
+        dans la barre de messages, sans expiration. Differee tant que
+        l'interface n'est pas prete ; remplace la precedente."""
+        self._remove_blocking_error()
+        if self._blocking_error is None or not self._ui_ready:
+            return
+        item = QgsMessageBarItem(
+            "Constructel Bridge", self._blocking_error, Qgis.MessageLevel.Critical, 0,
+        )
+        self.iface.messageBar().pushItem(item)
+        self._error_item = item
+
+    def _remove_blocking_error(self):
+        if self._error_item is None:
+            return
+        try:
+            self.iface.messageBar().popWidget(self._error_item)
+        except (RuntimeError, AttributeError):
+            pass  # deja ferme par l'utilisateur (objet C++ detruit)
+        self._error_item = None
 
     def _show_banner(self):
         """Message SANS expiration (duree 0) dans la barre de messages ;
@@ -1875,6 +1914,9 @@ class ConstructelBridgePlugin:
         for action, key in zip(self._actions, keys):
             action.setText(tr(key))
         self._update_mode_indicator()
+        # M14 : le bandeau de repli suit la langue (il est re-poste).
+        self._show_banner()
+        self._show_blocking_error()
 
     # =====================================================================
     # Connexion
