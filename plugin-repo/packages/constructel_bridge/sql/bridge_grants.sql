@@ -1,19 +1,23 @@
 -- ============================================================================
--- constructel_bridge - Grants specifiques pour le plugin QGIS Constructel Bridge
+-- constructel_bridge - Grants de reference du plugin QGIS Constructel Bridge
 -- ============================================================================
--- A executer avec un role admin (ftth_admin ou postgres) si les grants
--- du schema ref ne sont pas suffisants.
--- En principe, 080_security_hardening.sql donne deja INSERT/UPDATE sur ref.*
--- a ftth_editor. Ce fichier sert de reference et de secours.
+-- OBSOLÈTE (03/11/2026) — NE PAS EXÉCUTER.
+--
+-- Ce fichier donnait des droits au role partage ftth_editor. Depuis les
+-- logins nominatifs (Bridge 1.8) et avec le lot Farois 537, ftth_editor
+-- devient le simple groupe des logins nominatifs et perd les schemas
+-- operateurs (wyre compris) : les droits reseau passent aux roles
+-- ftth_op_<op>, accordes selon le scope operateur de chaque login, et un
+-- compte de secours distinct voit tout le reseau.
+--
+-- Source de verite des droits : les migrations SQL du depot Farois
+-- (sql/80_security/080_security_hardening.sql et sql/migrations/), jamais
+-- ce fichier. Il n'est conserve que pour l'historique ; il n'applique plus
+-- rien.
+--
+-- Ancien contenu (pour memoire, inactif) :
+--   GRANT SELECT, INSERT, UPDATE ON ref.users TO ftth_editor;
+--   -- GRANT SELECT ON audit.status_history TO ftth_editor;
 -- ============================================================================
 
--- ftth_editor doit pouvoir s'enregistrer dans ref.users
-GRANT SELECT, INSERT, UPDATE ON ref.users TO ftth_editor;
-
--- Sequences pour les colonnes serial (ref.users utilise UUID, pas de sequence)
--- Rien a ajouter.
-
--- Lecture audit.status_history pour consultation (deja OK via 080)
--- GRANT SELECT ON audit.status_history TO ftth_editor;
-
-\echo '  constructel_bridge grants OK'
+\echo '  bridge_grants.sql est obsolete (lot Farois 537) : aucun droit applique'
