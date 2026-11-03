@@ -28,6 +28,11 @@ extraction OSM via l'API Overpass (stdlib ``urllib``, lecture seule) et
 localisation en Python pur (:func:`locate_on_ways`). Chaque point est rangé
 d'un côté de la route ; les segments sont appariés par côté et dessinés
 décalés selon le type de voie (:data:`HIGHWAY_OFFSET_M`).
+
+Styles : source de vérité = Farois depuis la migration 538 (03/11/2026). Le
+script n'écrit aucun style en base et la collection ne livre plus de ``.qml`` :
+les couches ajoutées au projet prennent le style par défaut de la base, publié
+par ``farois styles init`` (cf. :data:`STYLES_FROM_FAROIS_MESSAGE`).
 """
 
 import csv
@@ -63,7 +68,6 @@ try:
     from qgis.core import (
         Qgis,
         QgsApplication,
-        QgsCategorizedSymbolRenderer,
         QgsCoordinateReferenceSystem,
         QgsCoordinateTransform,
         QgsDataSourceUri,
@@ -81,17 +85,11 @@ try:
         QgsProcessingParameterFile,
         QgsProcessingParameterString,
         QgsProject,
-        QgsProperty,
         QgsProviderRegistry,
-        QgsRendererCategory,
-        QgsSymbol,
-        QgsSymbolLayer,
-        QgsUnitTypes,
         QgsVectorLayer,
         QgsWkbTypes,
     )
     from qgis.PyQt.QtCore import QCoreApplication, QDateTime
-    from qgis.PyQt.QtGui import QColor
 
     HAS_QGIS = True
 except ImportError:  # pragma: no cover - branche prise uniquement hors QGIS
@@ -116,12 +114,9 @@ THRESHOLD_MISSING_CM = 10.0
 THRESHOLD_ORANGE_CM = 50.0
 THRESHOLD_VERT_CM = 55.0
 
-# Palette « feu tricolore » + gris pour la catégorie « manquante ».
-# SOURCE DE VÉRITÉ du rendu = le fichier ``style/depth_category.qml`` livré à côté
-# du script (chargé via ``loadNamedStyle``, cf. _apply_depth_style). Cette palette
-# ne sert plus QUE de FILET ULTIME (rendu Python construit par _build_depth_renderer)
-# quand le .qml est absent/illisible — d'où une teinte pouvant légèrement différer
-# du .qml sur ce chemin de repli.
+# Palette « feu tricolore » + gris pour la catégorie « manquante » : référence
+# des quatre catégories. Le RENDU des couches n'en dépend plus : il vient du
+# style par défaut de la base, géré par Farois (cf. STYLES_FROM_FAROIS_MESSAGE).
 DEPTH_COLORS = {
     "manquante": "#999999",
     "rouge": "#D7263D",
@@ -129,10 +124,8 @@ DEPTH_COLORS = {
     "vert": "#2A9D3D",
 }
 
-# Libellés lisibles de chaque catégorie (bornés par les seuils fixes ci-dessus).
-# Source UNIQUE des libellés du rendu de repli (_build_depth_renderer /
-# _apply_segments_style). Le .qml livré (style/depth_category.qml) porte
-# directement ces mêmes libellés en dur — plus de réalignement à l'exécution.
+# Libellés lisibles de chaque catégorie (bornés par les seuils fixes ci-dessus),
+# identiques à ceux des styles As-Built de Farois.
 DEPTH_CATEGORY_LABELS = {
     "manquante": "Manquante — non mesurée",
     "rouge": f"Rouge — non conforme (< {THRESHOLD_ORANGE_CM:g} cm)",
@@ -1202,135 +1195,32 @@ def geocode_with_dedup_fallback(
     return None, query, False
 
 
-def _style_save_error_message(result) -> str:
-    """Interprète le retour de ``saveStyleToDatabase[V2]`` -> message d'erreur.
-
-    Deux variantes de l'API QGIS coexistent selon la version :
-
-    * ``QgsVectorLayer.saveStyleToDatabase`` (dépréciée depuis QGIS ~3.44) —
-      binding Python : renvoie la chaîne ``msgError`` (vide = succès) ;
-    * ``QgsVectorLayer.saveStyleToDatabaseV2`` (QGIS ~3.44+) — renvoie un tuple
-      ``(QgsMapLayer.SaveStyleResults, msgError)``.
-
-    On considère l'enregistrement réussi si le message d'erreur (la DERNIÈRE
-    chaîne du retour, quelle que soit la forme) est vide. ``None`` (méthode
-    ``void`` mappée sans sortie par SIP) est traité comme un succès. Fonction
-    PURE — aucune dépendance PyQGIS, couverte par pytest.
-    """
-    if result is None:
-        return ""
-    if isinstance(result, str):
-        return result.strip()
-    if isinstance(result, tuple):
-        for item in reversed(result):
-            if isinstance(item, str):
-                return item.strip()
-    return ""
+# Styles des couches As-Built : SOURCE DE VÉRITÉ = Farois depuis la migration
+# 538 (03/11/2026). ``bureau_etudes`` y est en lecture seule sur layer_styles ;
+# les styles par défaut des tables ``geofiber_asbuilt_*`` sont livrés dans le
+# dépôt Farois (``styles/asbuilt_depth_{points,segments,connectors}.qml``) et
+# publiés en base par ``farois styles init``. La collection ne livre plus de
+# ``.qml`` et le script n'écrit plus aucun style : les couches qu'il ajoute au
+# projet prennent le style par défaut de la base.
+STYLES_FROM_FAROIS_MESSAGE = (
+    "Styles : les styles par défaut des tables geofiber_asbuilt_* sont gérés "
+    "par Farois (dépôt Farois, styles/asbuilt_depth_*.qml, publiés en base par "
+    "« farois styles init »). Ce script n'écrit plus dans layer_styles (lecture "
+    "seule pour le bureau d'études depuis la migration 538). Pour changer un "
+    "style : livrer le QML modifié dans styles/ du dépôt Farois."
+)
+STYLES_MISSING_HINT = (
+    "demandez à l'équipe Farois de publier les styles As-Built "
+    "(« farois styles init », styles/asbuilt_depth_*.qml)."
+)
 
 
-# Nom du fichier de style livré dans la collection Resource Sharing. Le script
-# (``processing/geocode_asbuilt_depth.py``) et le style (``style/<ce nom>``) sont
-# frères sous ``collections/<id>/`` : ce ``.qml`` est la SOURCE DE VÉRITÉ UNIQUE du
-# rendu profondeur, appliquée par le script lui-même (couche de la base 'be'
-# ajoutée au projet ET style par défaut synchronisé en base), et applicable à
-# la main comme filet.
-_DEPTH_STYLE_QML_NAME = "depth_category.qml"
-
-
-def _resource_sharing_style_dirs(profile_dir: Optional[str]) -> list[str]:
-    """Sous-dossiers ``style/`` sous ``resource_sharing/collections/*/style/``.
-
-    QGIS Resource Sharing copie les scripts Processing À PLAT dans
-    ``processing/scripts/`` (sans le dossier ``style/`` frère), tandis que le
-    ``.qml`` reste dans son propre cache de collection sous
-    ``<profil QGIS>/resource_sharing/collections/<nom>/style/``. ``<nom>`` est
-    le nom donné au DÉPÔT par l'utilisateur dans le plugin (pas une constante
-    reconstructible) — on scanne donc par glob plutôt que de le deviner.
-    Fonction PURE (os.path/glob) : ``profile_dir`` est injecté (au lieu d'un
-    appel à ``QgsApplication.qgisSettingsDirPath()`` ici) pour rester testable
-    via pytest sans dépendance PyQGIS.
-    """
-    if not profile_dir:
-        return []
-    pattern = os.path.join(profile_dir, "resource_sharing", "collections", "*", "style")
-    return sorted(p for p in glob.glob(pattern) if os.path.isdir(p))
-
-
-def _depth_style_qml_path(profile_dir: Optional[str] = None) -> Optional[str]:
-    """Chemin absolu du ``.qml`` de profondeur, ou ``None`` si introuvable.
-
-    Deux emplacements possibles, dans cet ordre :
-
-    1. Sibling de CE module sous ``../style/`` — valable quand le script est
-       exécuté depuis une structure de collection intacte (``processing/`` +
-       ``style/`` frères, ex. dépôt source, tests).
-    2. Cache Resource Sharing du profil QGIS actif (:func:`_resource_sharing_style_dirs`)
-       — c'est l'emplacement réel en usage normal, le script étant copié à plat
-       dans ``processing/scripts/`` par le plugin (cf. ce module docstring).
-
-    Renvoie ``None`` si ``__file__`` est indisponible pour (1) et qu'aucun
-    candidat de (2) n'existe — l'appelant replie alors sur le rendu Python.
-    Fonction PURE (os.path/glob) — couverte par pytest.
-    """
-    candidates: list[str] = []
-    try:
-        module_dir = os.path.dirname(os.path.abspath(__file__))
-        candidates.append(
-            os.path.normpath(os.path.join(module_dir, "..", "style", _DEPTH_STYLE_QML_NAME))
-        )
-    except NameError:  # pragma: no cover - __file__ absent (exec sans fichier)
-        pass
-    candidates.extend(
-        os.path.join(style_dir, _DEPTH_STYLE_QML_NAME)
-        for style_dir in _resource_sharing_style_dirs(profile_dir)
-    )
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-# Nom du fichier de style des segments d'axe de rue, frère de _DEPTH_STYLE_QML_NAME
-# sous ``style/`` — même statut de SOURCE DE VÉRITÉ UNIQUE, cf. _apply_segments_style.
-_DEPTH_SEGMENTS_STYLE_QML_NAME = "depth_segments.qml"
-# Échelle de la carte rendue (canevas ou page atlas), pas celle de la vue Desktop.
-_SEGMENTS_WIDTH_EXPRESSION = "clamp(0.15, 0.6 * sqrt(greatest(@map_scale, 1) / 1000), 3)"
-
-
-def _depth_segments_style_qml_path(profile_dir: Optional[str] = None) -> Optional[str]:
-    """Chemin absolu du ``.qml`` de segments, ou ``None`` si introuvable.
-
-    Même mécanisme de résolution que :func:`_depth_style_qml_path` (sibling
-    ``../style/`` du module, puis cache Resource Sharing du profil QGIS actif
-    via :func:`_resource_sharing_style_dirs`), appliqué au fichier voisin
-    ``depth_segments.qml``. Fonction PURE (os.path/glob) — couverte par pytest.
-    """
-    candidates: list[str] = []
-    try:
-        module_dir = os.path.dirname(os.path.abspath(__file__))
-        candidates.append(
-            os.path.normpath(
-                os.path.join(module_dir, "..", "style", _DEPTH_SEGMENTS_STYLE_QML_NAME)
-            )
-        )
-    except NameError:  # pragma: no cover - __file__ absent (exec sans fichier)
-        pass
-    candidates.extend(
-        os.path.join(style_dir, _DEPTH_SEGMENTS_STYLE_QML_NAME)
-        for style_dir in _resource_sharing_style_dirs(profile_dir)
-    )
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def _named_style_loaded_ok(result) -> bool:
-    """Interprète le retour de ``QgsVectorLayer.loadNamedStyle`` -> succès booléen.
+def _style_loaded_ok(result) -> bool:
+    """Interprète le retour de ``QgsMapLayer.loadDefaultStyle`` -> succès booléen.
 
     Le binding Python renvoie usuellement un tuple ``(message, result_flag)`` où
-    ``result_flag`` (booléen) indique si le style a été chargé ; certaines versions
-    renvoient un booléen simple. On considère le chargement réussi si un booléen
+    ``result_flag`` (booléen) indique si un style a été chargé ; certaines
+    versions renvoient un booléen simple. Chargement réussi si un booléen
     ``True`` figure dans le retour. Fonction PURE — aucune dépendance PyQGIS,
     couverte par pytest.
     """
@@ -2402,26 +2292,6 @@ def plan_connector_sync(fresh, existing, scope_ids=None, eligible_ids=None) -> C
         )
     )
     return ConnectorSyncPlan(to_insert, to_update, to_delete, unchanged)
-
-
-_DEPTH_CONNECTORS_STYLE_QML_NAME = "depth_connectors.qml"
-
-
-def _collection_style_qml_path(file_name, profile_dir: Optional[str] = None) -> Optional[str]:
-    """Chemin d'un ``.qml`` de la collection (sibling ``../style/`` puis cache Resource Sharing)."""
-    candidates: list[str] = []
-    try:
-        module_dir = os.path.dirname(os.path.abspath(__file__))
-        candidates.append(os.path.normpath(os.path.join(module_dir, "..", "style", file_name)))
-    except NameError:  # pragma: no cover - __file__ absent (exec sans fichier)
-        pass
-    candidates.extend(
-        os.path.join(style_dir, file_name) for style_dir in _resource_sharing_style_dirs(profile_dir)
-    )
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    return None
 
 
 def count_zero_length_pairs(halves) -> int:
@@ -5031,163 +4901,6 @@ if HAS_QGIS:
             "service": ds_uri.service(),
         }
 
-    def _build_depth_renderer() -> "QgsCategorizedSymbolRenderer":
-        """Rendu catégorisé de REPLI, construit en Python depuis ``DEPTH_COLORS``.
-
-        La source de vérité du rendu est le ``.qml`` livré (cf.
-        :func:`_apply_depth_style`) ; cette fonction n'est utilisée que comme filet
-        ultime quand le ``.qml`` est absent/illisible, pour ne jamais laisser la
-        couche sans symbologie.
-        """
-        categories = []
-        for value in ("manquante", "rouge", "orange", "vert"):
-            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.GeometryType.PointGeometry)
-            symbol.setColor(QColor(DEPTH_COLORS[value]))
-            categories.append(
-                QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS[value])
-            )
-        return QgsCategorizedSymbolRenderer("depth_category", categories)
-
-    def _apply_depth_style(layer, feedback=None) -> bool:
-        """Applique le style profondeur à ``layer``. SOURCE DE VÉRITÉ = le ``.qml``.
-
-        Charge ``style/depth_category.qml`` (livré à côté du script) via
-        ``loadNamedStyle``. Si le ``.qml`` est absent/illisible, replie sur le
-        rendu Python :func:`_build_depth_renderer` (filet ultime) plutôt que de
-        laisser la couche sans style. Best-effort et NON bloquant : journalise
-        via ``feedback`` (si fourni) sans jamais lever. Retourne ``True`` si le
-        ``.qml`` a été appliqué, ``False`` sur repli Python.
-
-        Utilisée aux DEUX points de style (couche de la base 'be' ajoutée au
-        projet ET style par défaut synchronisé dans ``layer_styles``, cf.
-        :func:`_sync_style_to_db`) : ils partagent donc exactement la même source.
-        """
-        try:
-            profile_dir = QgsApplication.qgisSettingsDirPath()
-        except Exception:  # pragma: no cover - défensif (résolution best-effort)
-            profile_dir = None
-        qml_path = _depth_style_qml_path(profile_dir)
-        if qml_path is not None:
-            loaded = False
-            try:
-                result = layer.loadNamedStyle(qml_path)
-                loaded = _named_style_loaded_ok(result)
-            except Exception as exc:  # pragma: no cover - défensif
-                if feedback is not None:
-                    feedback.pushInfo(
-                        f"Style .qml non chargé ({exc}) — repli sur le rendu Python."
-                    )
-            if loaded:
-                return True
-            if feedback is not None:
-                feedback.pushInfo(
-                    f"Style .qml non appliqué ({qml_path}) — repli sur le rendu Python."
-                )
-        elif feedback is not None:
-            feedback.pushInfo(
-                "Style .qml introuvable à côté du script — repli sur le rendu Python."
-            )
-        layer.setRenderer(_build_depth_renderer())
-        return False
-
-    def _apply_segments_style(layer, feedback=None) -> bool:
-        """Applique le style segments à ``layer``. SOURCE DE VÉRITÉ = le ``.qml``.
-
-        Même patron que :func:`_apply_depth_style`, appliqué à
-        ``style/depth_segments.qml`` (livré à côté du script). Best-effort et
-        NON bloquant. Retourne ``True`` si le ``.qml`` a été appliqué,
-        ``False`` sur repli Python (renderer catégorisé minimal, sans la
-        distinction plein/pointillé par ``is_long`` — c'est le ``.qml`` qui
-        porte cette distinction, cf. RuleRenderer).
-        """
-        try:
-            profile_dir = QgsApplication.qgisSettingsDirPath()
-        except Exception:  # pragma: no cover - défensif (résolution best-effort)
-            profile_dir = None
-        qml_path = _depth_segments_style_qml_path(profile_dir)
-        if qml_path is not None:
-            loaded = False
-            try:
-                result = layer.loadNamedStyle(qml_path)
-                loaded = _named_style_loaded_ok(result)
-            except Exception as exc:  # pragma: no cover - défensif
-                if feedback is not None:
-                    feedback.pushInfo(
-                        f"Style segments non chargé ({exc}) — repli sur un "
-                        "renderer categorise minimal."
-                    )
-            if loaded:
-                return True
-            if feedback is not None:
-                feedback.pushInfo(
-                    f"Style segments non appliqué ({qml_path}) — repli sur un "
-                    "renderer categorise minimal."
-                )
-        elif feedback is not None:
-            feedback.pushInfo(
-                "Style segments introuvable à côté du script — repli sur un "
-                "renderer categorise minimal."
-            )
-        # Pas de catégorie « manquante » : les points gris ne produisent aucun
-        # segment (comme dans style/depth_segments.qml).
-        categories = []
-        for value in ("vert", "orange", "rouge"):
-            color = DEPTH_COLORS[value]
-            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.GeometryType.LineGeometry)
-            symbol.setColor(QColor(color))
-            symbol.setWidth(0.6)
-            symbol.setWidthUnit(QgsUnitTypes.RenderUnit.RenderMillimeters)
-            for symbol_layer in symbol.symbolLayers():
-                symbol_layer.setDataDefinedProperty(
-                    QgsSymbolLayer.Property.PropertyStrokeWidth,
-                    QgsProperty.fromExpression(_SEGMENTS_WIDTH_EXPRESSION),
-                )
-            categories.append(
-                QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS.get(value, value))
-            )
-        layer.setRenderer(QgsCategorizedSymbolRenderer("depth_category", categories))
-        return False
-
-    def _save_style_to_db(layer, name: str, description: str) -> str:
-        """Enregistre le style courant de ``layer`` en base (useAsDefault=True).
-
-        Retourne le message d'erreur (chaîne vide = succès), interprété par
-        :func:`_style_save_error_message` quelle que soit la variante de l'API.
-        saveStyleToDatabaseV2 (QGIS ~3.44+) est préféré quand présent ; repli
-        sur saveStyleToDatabase (dépréciée mais disponible sur les QGIS plus
-        anciens, dont le binding renvoie une chaîne seule — PAS un tuple).
-        uiFileContent="" : pas d'interface Qt embarquée. Les exceptions (provider
-        sans stockage de style, verrou…) remontent : à l'appelant de décider.
-        """
-        if hasattr(layer, "saveStyleToDatabaseV2"):
-            result = layer.saveStyleToDatabaseV2(name, description, True, "")
-        else:
-            result = layer.saveStyleToDatabase(name, description, True, "")
-        return _style_save_error_message(result)
-
-    def _sync_style_to_db(layer, name: str, description: str, feedback) -> bool:
-        """Ecrit le style courant de ``layer`` dans layer_styles (useAsDefault=True).
-
-        Best-effort, non bloquant (meme politique que _apply_depth_style et
-        _upsert_geocoded_records) : un echec loggue une info sans jamais faire
-        echouer le run. Ne fonctionne que si layer est connectee en direct sur
-        postgres (c'est le cas pour les couches upsertees via 'be', cf.
-        _upsert_geocoded_records / _sync_segments). Appel + interpretation du
-        retour : cf. _save_style_to_db.
-        """
-        try:
-            error = _save_style_to_db(layer, name, description)
-        except Exception as exc:  # provider sans stockage de style en base…
-            feedback.pushInfo(f"Style non synchronise en base pour « {name} » ({exc}).")
-            return False
-        if error:
-            feedback.pushInfo(f"Style non synchronise en base pour « {name} » ({error}).")
-            return False
-        feedback.pushInfo(
-            f"Style « {name} » synchronise en base (layer_styles, style par defaut)."
-        )
-        return True
-
     def lambert_transforms(transform_context=None):
         """Transformations (WGS84 -> Lambert 72, Lambert 72 -> WGS84), créées une fois par run.
 
@@ -5253,97 +4966,43 @@ if HAS_QGIS:
             feedback.pushInfo(f"Couche {label} : SCR {BELGIAN_LAMBERT_AUTHID} (forcé).")
         return authid
 
-    def _apply_connectors_style(layer, feedback=None) -> bool:
-        """Style connecteurs (``style/depth_connectors.qml`` ; repli : fin pointillé catégorisé)."""
-        try:
-            profile_dir = QgsApplication.qgisSettingsDirPath()
-        except Exception:  # pragma: no cover - défensif
-            profile_dir = None
-        qml_path = _collection_style_qml_path(_DEPTH_CONNECTORS_STYLE_QML_NAME, profile_dir)
-        if qml_path is not None:
-            try:
-                if _named_style_loaded_ok(layer.loadNamedStyle(qml_path)):
-                    return True
-            except Exception:  # pragma: no cover - défensif
-                pass
-        if feedback is not None:
-            feedback.pushInfo("Style connecteurs non appliqué — repli sur un rendu minimal.")
-        categories = []
-        for value in ("vert", "orange", "rouge"):
-            symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.GeometryType.LineGeometry)
-            symbol.setColor(QColor(DEPTH_COLORS[value]))
-            symbol.setWidth(0.35)
-            categories.append(QgsRendererCategory(value, symbol, DEPTH_CATEGORY_LABELS[value]))
-        layer.setRenderer(QgsCategorizedSymbolRenderer("depth_category", categories))
-        return False
+    class _BeLayerPostProcessor(QgsProcessingLayerPostProcessorInterface):
+        """Post-traitement d'une couche de la base 'be' ajoutée au projet.
 
-    class _ConnectorsLayerStyler(QgsProcessingLayerPostProcessorInterface):
-        """Post-traitement de la couche connecteurs chargée : SCR 31370 forcé puis style."""
-
-        def __init__(self):
-            super().__init__()
-
-        def postProcessLayer(self, layer, context, feedback):  # noqa: N802
-            try:
-                _force_target_crs(layer, feedback, layer.name(), always_log=True)
-                _apply_connectors_style(layer, feedback)
-                layer.triggerRepaint()
-            except Exception:  # pragma: no cover - défensif (rendu non bloquant)
-                pass
-
-    class _SegmentsLayerStyler(QgsProcessingLayerPostProcessorInterface):
-        """Applique le style segments (source : ``style/depth_segments.qml``).
-
-        Pendant de :class:`_DepthLayerStyler` pour la couche
-        ``public.geofiber_asbuilt_depth_segments`` : post-traitement de la couche
-        ajoutée au projet en fin d'exécution (cf. _load_be_layers_in_project),
-        délégué à :func:`_apply_segments_style` (même source de vérité que le
-        style synchronisé en base).
+        SCR 31370 re-vérifié APRÈS l'ajout au projet (Processing peut
+        réassigner un SCR au chargement), puis style par défaut de la base
+        RECHARGÉ : c'est celui de Farois (``farois styles init``,
+        ``styles/asbuilt_depth_*.qml``), seule source de vérité du rendu depuis
+        la migration 538. Le recharger après l'ajout lui donne le dernier mot
+        sur un éventuel style de sortie appliqué par l'interface Processing.
+        Lecture seule : rien n'est écrit en base. Best-effort, NON bloquant.
         """
 
         def __init__(self):
             super().__init__()
 
         def postProcessLayer(self, layer, context, feedback):  # noqa: N802
-            # SCR re-vérifié APRÈS l'ajout au projet (Processing peut réassigner
-            # un SCR au chargement), puis style.
             try:
                 _force_target_crs(layer, feedback, layer.name(), always_log=True)
             except Exception:  # pragma: no cover - défensif
                 pass
             try:
-                _apply_segments_style(layer, feedback)
+                loaded = _style_loaded_ok(layer.loadDefaultStyle())
+                if feedback is not None:
+                    if loaded:
+                        feedback.pushInfo(
+                            f"Couche « {layer.name()} » : style par défaut de la "
+                            "base appliqué (Farois)."
+                        )
+                    else:
+                        feedback.pushWarning(
+                            f"Couche « {layer.name()} » : aucun style par défaut "
+                            f"en base — {STYLES_MISSING_HINT}"
+                        )
                 layer.triggerRepaint()
             except Exception:  # pragma: no cover - défensif (rendu non bloquant)
                 pass
 
-    class _DepthLayerStyler(QgsProcessingLayerPostProcessorInterface):
-        """Applique le style profondeur (source : ``style/depth_category.qml``).
-
-        Post-traitement de la couche ``public.geofiber_asbuilt_depth_points``
-        ajoutée au projet en fin d'exécution (cf. _load_be_layers_in_project).
-        Délègue à :func:`_apply_depth_style` — donc la MÊME source de vérité (le
-        ``.qml``) que le style par défaut synchronisé en base, garantissant un
-        rendu identique entre l'affichage immédiat et les ouvertures ultérieures.
-        Ré-appliqué APRÈS l'ajout au projet par l'interface Processing, pour
-        avoir le dernier mot sur tout style par défaut qu'elle appliquerait.
-        """
-
-        def __init__(self):
-            super().__init__()
-
-        def postProcessLayer(self, layer, context, feedback):  # noqa: N802
-            # SCR re-vérifié APRÈS l'ajout au projet (Processing peut réassigner
-            # un SCR au chargement), puis style.
-            try:
-                _force_target_crs(layer, feedback, layer.name(), always_log=True)
-            except Exception:  # pragma: no cover - défensif
-                pass
-            try:
-                _apply_depth_style(layer, feedback)
-                layer.triggerRepaint()
-            except Exception:  # pragma: no cover - défensif (rendu non bloquant)
-                pass
 
     def _import_extract_msg(feedback=None):
         try:
@@ -5742,11 +5401,13 @@ if HAS_QGIS:
                 "vers 31370 (contrôle croisé avec une formule de référence), et "
                 "toute coordonnée hors de la plage belge est signalée. Le SCR du projet "
                 "n'est jamais modifié.\n\n"
-                "STYLES — source de vérité : les .qml livrés "
-                "(style/depth_category.qml, style/depth_segments.qml). Ils sont "
-                "réécrits à chaque run comme style par défaut des deux tables (layer_styles de la base 'be') : une "
-                "retouche enregistrée comme style par défaut dans QGIS sera "
-                "perdue — modifiez plutôt les .qml.\n\n"
+                "STYLES — source de vérité : Farois (dépôt Farois, "
+                "styles/asbuilt_depth_*.qml, publiés en base par « farois styles "
+                "init »). Le script n'écrit plus aucun style (layer_styles en "
+                "lecture seule pour le bureau d'études depuis la migration 538) : "
+                "les couches qu'il ajoute au projet prennent le style par défaut "
+                "de la base. Pour changer un style, livrez le QML modifié dans "
+                "styles/ du dépôt Farois.\n\n"
                 "NOMINATIM — requête STRUCTURÉE (rue, code postal, localité, "
                 "Belgique) puis texte libre ; résultat hors Belgique = échec. "
                 "1 requête/s ; renseignez CONTACT_EMAIL. Chaque run "
@@ -6126,7 +5787,7 @@ if HAS_QGIS:
             if not feedback.isCanceled():
                 depth_updates = depth_plan.updates if depth_plan is not None else []
                 feedback.pushInfo(
-                    f"Étape 1/4 — points : {len(depth_updates)} profondeur(s) plus "
+                    f"Étape 1/3 — points : {len(depth_updates)} profondeur(s) plus "
                     f"récente(s) puis upsert de {len(geocoded_for_db)} "
                     f"intervention(s) géocodée(s) dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} "
                     f"et de {len(ungeocoded)} non géocodée(s) dans "
@@ -6180,7 +5841,7 @@ if HAS_QGIS:
                 ungeocoded = self._persist_ungeocoded(ungeocoded, feedback)
 
                 feedback.pushInfo(
-                    f"Étape 2/4 — segments : régénération de "
+                    f"Étape 2/3 — segments : régénération de "
                     f"{SEGMENTS_TABLE_SCHEMA}.{SEGMENTS_TABLE_NAME} ("
                     + ("reconstruction complète demandée" if full_rebuild
                        else "incrémentale : routes impactées seulement")
@@ -6197,15 +5858,12 @@ if HAS_QGIS:
                         f"Segments : erreur inattendue lors de la régénération ({exc})."
                     )
 
-                feedback.pushInfo("Étape 3/4 — styles par défaut en base (layer_styles).")
-                try:
-                    self._sync_styles_to_db(feedback)
-                except Exception as exc:
-                    feedback.pushWarning(
-                        f"Styles : erreur inattendue lors de la synchronisation ({exc})."
-                    )
+                # Plus d'etape « styles par defaut en base » depuis la mig 538 :
+                # bureau_etudes est en lecture seule sur layer_styles, les
+                # styles viennent de Farois (farois styles init).
+                feedback.pushInfo(STYLES_FROM_FAROIS_MESSAGE)
 
-                feedback.pushInfo("Étape 4/4 — couches de la base dans le projet.")
+                feedback.pushInfo("Étape 3/3 — couches de la base dans le projet.")
                 try:
                     self._load_be_layers_in_project(context, feedback)
                 except Exception as exc:
@@ -6248,45 +5906,6 @@ if HAS_QGIS:
                     f"Table {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} inutilisable via la "
                     "connexion 'be' (injoignable, invalide, non spatiale ou sans clé "
                     "primaire — cf. journal). Rien n'a été géocodé ni écrit : arrêt."
-                )
-
-        def _sync_styles_to_db(self, feedback):
-            """Reecrit les styles par defaut des tables points et segments (etape 3).
-
-            Source : les .qml livres (_apply_depth_style / _apply_segments_style),
-            enregistres dans layer_styles (useAsDefault=True) via
-            _sync_style_to_db. Best-effort : table non ouvrable -> avertissement
-            deja emis par _open_be_layer, style suivant tente quand meme.
-            """
-            points_layer = self._open_be_points_layer(feedback)
-            if points_layer is not None:
-                _apply_depth_style(points_layer, feedback)
-                _sync_style_to_db(
-                    points_layer, "depth_category",
-                    "Style profondeur As-Built (points) — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
-                    feedback,
-                )
-            segments_layer = self._open_be_layer(
-                SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
-                BE_GEOM_COLUMN,
-                QgsWkbTypes.Type.MultiLineString if self._segments_is_multi(feedback)
-                else QgsWkbTypes.Type.LineString,
-                feedback,
-            )
-            if segments_layer is not None:
-                _apply_segments_style(segments_layer, feedback)
-                _sync_style_to_db(
-                    segments_layer, "depth_segments",
-                    "Style segments d'axe de rue As-Built — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
-                    feedback,
-                )
-            connectors = self._read_connectors(feedback)
-            if connectors is not None:
-                _apply_connectors_style(connectors[0], feedback)
-                _sync_style_to_db(
-                    connectors[0], "depth_connectors",
-                    "Style connecteurs As-Built — géré par geocode_asbuilt_depth, ne pas éditer manuellement.",
-                    feedback,
                 )
 
         def _open_be_layer(self, schema: str, table: str, geom_column: str, wkb_type, feedback):
@@ -8604,10 +8223,12 @@ if HAS_QGIS:
             incohérentes).
 
             Chargement via le mécanisme Processing de fin d'exécution
-            (``addLayerToLoadOnCompletion``) : le style ``.qml`` est appliqué avant
-            remise au projet, puis ré-appliqué par post-traitement
-            (:class:`_DepthLayerStyler` / :class:`_SegmentsLayerStyler`) une fois
-            la couche ajoutée. Best-effort et NON bloquant.
+            (``addLayerToLoadOnCompletion``). Style : celui par défaut de la base,
+            géré par Farois (``farois styles init``) et chargé par QGIS à
+            l'ouverture de la couche, puis rechargé par post-traitement
+            (:class:`_BeLayerPostProcessor`) une fois la couche ajoutée. Le script
+            n'applique ni n'écrit aucun style (mig 538). Best-effort et NON
+            bloquant.
             """
             project = context.project()
             if project is None:
@@ -8630,22 +8251,21 @@ if HAS_QGIS:
             # (cle de tri : plus grande = au-dessus).
             specs = [
                 (BE_TABLE_SCHEMA, BE_TABLE_NAME, QgsWkbTypes.Type.Point,
-                 BE_POINTS_LAYER_NAME, _apply_depth_style, _DepthLayerStyler, 3),
+                 BE_POINTS_LAYER_NAME, 3),
                 (SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
                  QgsWkbTypes.Type.MultiLineString if self._segments_is_multi(feedback)
                  else QgsWkbTypes.Type.LineString,
-                 BE_SEGMENTS_LAYER_NAME, _apply_segments_style, _SegmentsLayerStyler, 2),
+                 BE_SEGMENTS_LAYER_NAME, 2),
             ]
             if self._read_connectors(feedback) is not None:
                 specs.append(
                     (CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, QgsWkbTypes.Type.LineString,
-                     BE_CONNECTORS_LAYER_NAME, _apply_connectors_style,
-                     _ConnectorsLayerStyler, 1)
+                     BE_CONNECTORS_LAYER_NAME, 1)
                 )
             # Références conservées sur l'instance : setPostProcessor ne prend
-            # pas la propriété, le styler doit survivre jusqu'au chargement.
+            # pas la propriété, le post-traitement doit survivre jusqu'au chargement.
             self._be_layer_stylers = []
-            for schema, table, wkb_type, layer_name, apply_style, styler_cls, sort_key in specs:
+            for schema, table, wkb_type, layer_name, sort_key in specs:
                 layer = self._open_be_layer(
                     schema, table, BE_GEOM_COLUMN, wkb_type, feedback
                 )
@@ -8693,12 +8313,11 @@ if HAS_QGIS:
                     f"Couche « {layer_name} » : SCR {layer.crs().authid() or BELGIAN_LAMBERT_AUTHID} "
                     "(forcé)."
                 )
-                apply_style(layer, feedback)
                 context.temporaryLayerStore().addMapLayer(layer)
                 details = QgsProcessingContext.LayerDetails(layer_name, project, "")
                 if hasattr(details, "layerSortKey"):  # QGIS >= 3.32
                     details.layerSortKey = sort_key
-                styler = styler_cls()
+                styler = _BeLayerPostProcessor()
                 self._be_layer_stylers.append(styler)
                 details.setPostProcessor(styler)
                 context.addLayerToLoadOnCompletion(layer.id(), details)
