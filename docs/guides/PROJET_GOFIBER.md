@@ -40,5 +40,5 @@ D'ici là, un administrateur Farois fait ces trois étapes à la main :
 
 | Date | Fichier (serveur Farois) |
 |---|---|
-| 05/10/2026 | `/home/sdadmin/qgis_projects_Gofiber_backup_20261005_133718.qgz`, `…_133802.qgz` |
-| 03/11/2026 | export en lecture seule avant la mise en place de ce mode de travail (voir le rapport du chantier) |
+| 05/10/2026 13:37–13:38 | `/home/sdadmin/qgis_projects_Gofiber_backup_20261005_133718.qgz`, `…_133802.qgz` : **antérieures** à la version en base (enregistrée le 05/10 à 13:57) |
+| 03/11/2026 | `/home/sdadmin/qgis_projects_Gofiber_backup_20261103_154839.qgz` : export en lecture seule, md5 `ac01e961aa8599cf9a72628c33b1204c`, **identique** à la version en base (05/10 13:57). Point de départ du bureau d'études. |
