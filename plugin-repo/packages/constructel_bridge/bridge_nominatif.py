@@ -424,6 +424,20 @@ def scope_kind(scope: SessionScope) -> str:
     return "none"
 
 
+def write_scope_kind(scope: SessionScope) -> str:
+    """Perimetre d'ECRITURE (migration Farois 536) : "all" (ADMIN/MANAGER
+    avec network.write), "scoped" (network.write et au moins un MRO ou une
+    POP coche « ecriture », can_write) ou "none" (role sans network.write,
+    ou aucun MRO/POP coche : toute ecriture reseau sera refusee)."""
+    if not scope.network_write:
+        return "none"
+    if scope.bypass:
+        return "all"
+    if scope.mro_write_ids or scope.pop_write_ids:
+        return "scoped"
+    return "none"
+
+
 def scope_labels(ids: Sequence[str], names: dict) -> list[str]:
     """Human labels for scope ids: the name when known, else the first
     block of the UUID. Sorted for a stable display."""

@@ -86,6 +86,7 @@ from .bridge_nominatif import (
     should_lock_layer,
     should_reprompt,
     strip_datasource_authcfg,
+    write_scope_kind,
 )
 
 TAG = "Constructel Bridge"
@@ -2168,6 +2169,10 @@ class ConstructelBridgePlugin:
                 "Constructel Bridge",
                 tr("conn.connected_nominal", login=login, scope=self._scope_text()),
             )
+            try:
+                self._warn_if_no_write_perimeter()
+            except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+                self._log(f"Write perimeter check failed: {exc}", Qgis.MessageLevel.Warning)
         else:
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
@@ -2386,7 +2391,33 @@ class ConstructelBridgePlugin:
             )
         if not scope.network_write:
             text = f"{text} / {tr('scope.readonly')}"
+        elif write_scope_kind(scope) == "none":
+            # Migration Farois 536 : network.write ne suffit plus, il faut
+            # aussi un MRO ou une POP coche « ecriture » (can_write).
+            text = f"{text} / {tr('scope.write_none_short')}"
+        elif write_scope_kind(scope) == "scoped":
+            mro_names, pop_names = self._scope_names
+            text = f"{text} / " + tr(
+                "scope.write_scoped",
+                mro=", ".join(scope_labels(scope.mro_write_ids, mro_names)) or "-",
+                pop=", ".join(scope_labels(scope.pop_write_ids, pop_names)) or "-",
+            )
         return text
+
+    def _warn_if_no_write_perimeter(self) -> bool:
+        """Migration Farois 536 : session nominative avec network.write mais
+        aucun MRO/POP coche « ecriture » -> toute ecriture reseau sera
+        refusee par le serveur. Le dire des la connexion, avec ce qu'il faut
+        demander. Un role sans network.write est deja signale par le verrou
+        lecture seule (scope.layers_locked). Retourne True si affiche."""
+        if self._auth_mode != AUTH_MODE_NOMINAL or self._scope is None:
+            return False
+        if not self._scope.network_write or write_scope_kind(self._scope) != "none":
+            return False
+        text = tr("scope.write_none")
+        self._log(text, Qgis.MessageLevel.Warning)
+        self.iface.messageBar().pushWarning("Constructel Bridge", text)
+        return True
 
     def _setup_be_connection(self, password: str, login: Optional[str]):
         """Connexion `be` (bureau d'etudes, schema public) : nominative avec
