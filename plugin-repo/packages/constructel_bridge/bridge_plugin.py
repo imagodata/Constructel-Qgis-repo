@@ -2391,7 +2391,7 @@ class ConstructelBridgePlugin:
             )
         if not scope.network_write:
             text = f"{text} / {tr('scope.readonly')}"
-        elif write_scope_kind(scope) == "none":
+        elif write_scope_kind(scope) == "none" and kind != "none":
             # Migration Farois 536 : network.write ne suffit plus, il faut
             # aussi un MRO ou une POP coche « ecriture » (can_write).
             text = f"{text} / {tr('scope.write_none_short')}"
@@ -2409,14 +2409,22 @@ class ConstructelBridgePlugin:
         aucun MRO/POP coche « ecriture » -> toute ecriture reseau sera
         refusee par le serveur. Le dire des la connexion, avec ce qu'il faut
         demander. Un role sans network.write est deja signale par le verrou
-        lecture seule (scope.layers_locked). Retourne True si affiche."""
+        lecture seule (scope.layers_locked), un login sans aucun MRO/POP par
+        le texte de session (scope.none). Retourne True si affiche."""
         if self._auth_mode != AUTH_MODE_NOMINAL or self._scope is None:
             return False
         if not self._scope.network_write or write_scope_kind(self._scope) != "none":
             return False
+        if scope_kind(self._scope) == "none":
+            # Aucun MRO/POP attribue : rien a cocher.
+            return False
         text = tr("scope.write_none")
         self._log(text, Qgis.MessageLevel.Warning)
-        self.iface.messageBar().pushWarning("Constructel Bridge", text)
+        # Persistant (duration=0) : ne doit pas etre recouvert par le
+        # message de connexion reussie (ou « Reessayer ») qui suit.
+        self.iface.messageBar().pushMessage(
+            "Constructel Bridge", text, level=Qgis.MessageLevel.Warning, duration=0,
+        )
         return True
 
     def _setup_be_connection(self, password: str, login: Optional[str]):

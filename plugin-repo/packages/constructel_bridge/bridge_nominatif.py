@@ -382,6 +382,9 @@ class SessionScope:
     mro_write_ids: list = field(default_factory=list)
     pop_ids: list = field(default_factory=list)
     pop_write_ids: list = field(default_factory=list)
+    # Mig 536 : NULL côté ECRITURE (current_gis_*_ids(true)) = tout en
+    # écriture sur cette dimension, distinct d'un tableau vide (rien coché).
+    write_bypass: bool = False
 
 
 SCOPE_QUERY = (
@@ -411,6 +414,7 @@ def parse_session_scope(row: Sequence) -> SessionScope:
         mro_write_ids=_ids(mro_write),
         pop_ids=_ids(pop_all),
         pop_write_ids=_ids(pop_write),
+        write_bypass=mro_write is None or pop_write is None,
     )
 
 
@@ -425,13 +429,15 @@ def scope_kind(scope: SessionScope) -> str:
 
 
 def write_scope_kind(scope: SessionScope) -> str:
-    """Perimetre d'ECRITURE (migration Farois 536) : "all" (ADMIN/MANAGER
-    avec network.write), "scoped" (network.write et au moins un MRO ou une
-    POP coche « ecriture », can_write) ou "none" (role sans network.write,
-    ou aucun MRO/POP coche : toute ecriture reseau sera refusee)."""
+    """Perimetre d'ECRITURE (migration Farois 536) : "all" (network.write et
+    tableau d'ecriture NULL = tout, ADMIN/MANAGER), "scoped" (network.write
+    et au moins un MRO ou une POP coche « ecriture », can_write) ou "none"
+    (role sans network.write, ou aucun MRO/POP coche : toute ecriture
+    reseau sera refusee). Decide sur les tableaux d'ECRITURE, jamais sur
+    ceux de lecture (bypass)."""
     if not scope.network_write:
         return "none"
-    if scope.bypass:
+    if scope.write_bypass:
         return "all"
     if scope.mro_write_ids or scope.pop_write_ids:
         return "scoped"
