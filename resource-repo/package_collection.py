@@ -68,4 +68,6 @@ def main(name: str = DEFAULT_COLLECTION):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:2])
+    if len(sys.argv) > 2:
+        sys.exit(f"Usage: {sys.argv[0]} [collection]")
+    main(*sys.argv[1:])

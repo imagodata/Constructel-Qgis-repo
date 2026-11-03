@@ -49,7 +49,9 @@ def test_pas_de_sql_interdit_depuis_la_538():
     forbidden = [
         r"\bCREATE\s+(GLOBAL\s+|LOCAL\s+)?TEMP(ORARY)?\b",
         r"\bpg_temp\b",
-        r"\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(public\.)?(layer_styles|qgis_projects|map_themes)\b",
+        r"\bINTO\s+(TEMP|TEMPORARY)\b",
+        # Toute forme qualifiée : public., "public"., {schema}., wyre.
+        r"\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+[^\s;]*?(layer_styles|qgis_projects|map_themes)\b",
         r"\besb\.",
     ]
     for pattern in forbidden:
@@ -61,3 +63,28 @@ def test_message_styles_farois():
     assert "farois styles init" in message
     assert "styles/" in message
     assert "layer_styles" in message
+
+
+def test_le_garde_sql_attrape_les_formes_qualifiees():
+    pattern = r"\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+[^\s;]*?(layer_styles|qgis_projects|map_themes)\b"
+    for sql in ('UPDATE {schema}.qgis_projects SET', 'INSERT INTO "public"."layer_styles"',
+                "DELETE FROM wyre.qgis_projects", "UPDATE map_themes SET"):
+        assert re.search(pattern, sql, re.IGNORECASE), sql
+    assert re.search(r"\bINTO\s+(TEMP|TEMPORARY)\b", "SELECT 1 INTO TEMP t", re.IGNORECASE)
+
+
+def test_style_loaded_ok():
+    assert mod._style_loaded_ok(("", True)) is True
+    assert mod._style_loaded_ok(("Style chargé", True)) is True
+    assert mod._style_loaded_ok(("", False)) is False
+    assert mod._style_loaded_ok(True) is True
+    assert mod._style_loaded_ok(None) is False
+    assert mod._style_loaded_ok(1) is False
+
+
+def test_style_load_message():
+    assert mod._style_load_message(("Cannot apply style with symbology", False)) == (
+        "Cannot apply style with symbology"
+    )
+    assert mod._style_load_message(("  ", False)) == ""
+    assert mod._style_load_message(None) == ""

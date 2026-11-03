@@ -1231,6 +1231,19 @@ def _style_loaded_ok(result) -> bool:
     return False
 
 
+def _style_load_message(result) -> str:
+    """Message renvoyé par ``loadDefaultStyle`` (cause d'un échec), ou ``""``.
+
+    Retour usuel ``(message, result_flag)`` : la première chaîne non vide.
+    Fonction PURE, couverte par pytest.
+    """
+    if isinstance(result, tuple):
+        for item in result:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return ""
+
+
 def build_ungeocoded_message(entries) -> str:
     """Message compact, pret a copier-coller, listant les adresses non geocodees.
 
@@ -4987,21 +5000,27 @@ if HAS_QGIS:
             except Exception:  # pragma: no cover - défensif
                 pass
             try:
-                loaded = _style_loaded_ok(layer.loadDefaultStyle())
+                result = layer.loadDefaultStyle()
                 if feedback is not None:
-                    if loaded:
+                    if _style_loaded_ok(result):
                         feedback.pushInfo(
                             f"Couche « {layer.name()} » : style par défaut de la "
                             "base appliqué (Farois)."
                         )
                     else:
+                        detail = _style_load_message(result)
                         feedback.pushWarning(
-                            f"Couche « {layer.name()} » : aucun style par défaut "
-                            f"en base — {STYLES_MISSING_HINT}"
+                            f"Couche « {layer.name()} » : style par défaut de la base "
+                            f"non appliqué ({detail or 'aucun style par défaut trouvé'}) "
+                            f"— {STYLES_MISSING_HINT}"
                         )
                 layer.triggerRepaint()
-            except Exception:  # pragma: no cover - défensif (rendu non bloquant)
-                pass
+            except Exception as exc:  # pragma: no cover - défensif (rendu non bloquant)
+                if feedback is not None:
+                    feedback.pushWarning(
+                        f"Couche « {layer.name()} » : style par défaut de la base "
+                        f"non appliqué ({exc})."
+                    )
 
 
     def _import_extract_msg(feedback=None):
@@ -5243,18 +5262,18 @@ if HAS_QGIS:
                 "est conservé). Leur liste et un email prêt à envoyer sont aussi "
                 "affichés dans le journal ; 2) les segments des routes "
                 "impactées sont régénérés à partir des points de la table (cf. "
-                "SEGMENTS) ; 3) les styles sont "
-                "réécrits en base ; 4) les couches points et segments de la base "
-                "sont ajoutées au projet, stylées, UNIQUEMENT si elles n'y sont "
+                "SEGMENTS) ; 3) les couches points, segments et connecteurs de la "
+                "base sont ajoutées au projet, avec le style par défaut de la base "
+                "(géré par Farois, cf. STYLES), UNIQUEMENT si elles n'y sont "
                 "pas déjà (comparaison sur la source de données, pas sur le nom : "
                 "un projet qui les contient déjà n'est pas modifié). Un échec "
-                "partiel en cours de route (une étape, Overpass, un style) est "
+                "partiel en cours de route (une étape, Overpass, une couche) est "
                 "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
                 "MODE SEUL « RE-GÉOCODER LES NON GÉOCODÉES » — case décochée par "
                 "défaut. Cochée : le dossier est ignoré (facultatif), aucun fichier "
                 "n'est lu ; seules les adresses de public.geofiber_asbuilt_ungeocoded "
                 "sont re-soumises à Nominatim. Celles trouvées suivent le flux "
-                "normal (point, retrait de la table, segments, styles), les autres "
+                "normal (point, retrait de la table, segments), les autres "
                 "restent dans la table.\n\n"
                 "ADRESSES DÉJÀ EN BASE — par défaut (case avancée « Recalculer » décochée), "
                 "une intervention déjà présente avec un point géocodé dans "
@@ -5778,8 +5797,8 @@ if HAS_QGIS:
             # --- base 'be' : ORDRE GARANTI --------------------------------
             # 1) points (+ non geocodees), 2) PUIS regeneration COMPLETE des
             # segments depuis TOUS les points de la table (pas seulement ce
-            # run : les points de CE run n'y sont qu'apres l'etape 1), 3) styles
-            # en base, 4) couches du projet. Chaque etape a son propre garde :
+            # run : les points de CE run n'y sont qu'apres l'etape 1), 3) couches
+            # du projet (plus aucun style ecrit : mig 538). Chaque etape a son propre garde :
             # un echec (avertissement) n'empeche pas les suivantes -- en
             # particulier, un upsert en echec n'empeche pas de regenerer les
             # segments a partir des points deja en base. Annulation : rien
@@ -5891,7 +5910,7 @@ if HAS_QGIS:
             public.geofiber_asbuilt_depth_points non ouvrable (invalide, non
             spatiale, sans cle primaire) -> QgsProcessingException, AVANT toute
             lecture de fichier ou requete Nominatim. Les echecs partiels
-            ulterieurs (segments, Overpass, styles) restent des avertissements.
+            ulterieurs (segments, Overpass, couches du projet) restent des avertissements.
             """
             md = QgsProviderRegistry.instance().providerMetadata("postgres")
             if md is None or md.findConnection(BE_CONNECTION_NAME) is None:
