@@ -223,12 +223,12 @@ EMBEDDED_STYLES = {
 
 # Couches infra de base (reutilise dans les templates)
 # NB: subducts est volontairement exclu — decoche par defaut dans tous les profils
-# NB: trench_segments aussi — couche de suivi du genie civil, cochee seulement
-#     dans les profils "Infrastructure + Chantier" et "Projet complet"
-# NB: duct_progress de meme — suivi de construction, superposee aux conduites
+# NB: trench_segments est cochee dans tous les profils (demande Simon 04/11)
+# NB: duct_progress, suivi de construction superpose aux conduites, n'est
+#     cochee que dans les profils "Infrastructure + Chantier" et "Projet complet"
 _INFRA_BASE = {
     "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-    "structures", "ducts", "cables",
+    "structures", "ducts", "cables", "trench_segments",
     "demand_points", "topo_violations",
     "docs_elements", "v_form_lists",
 }
@@ -236,7 +236,7 @@ _INFRA_BASE = {
 TEMPLATES = {
     "infra": {
         "label": "Infrastructure",
-        "description": "Couches infra : zones, structures, cables, conduites, DP, topologie",
+        "description": "Couches infra : zones, structures, cables, conduites, segments de tranchee, DP, topologie",
         "layers": _INFRA_BASE,
         "basemap": True,
     },
