@@ -140,9 +140,9 @@ def test_trench_segments_layer_in_catalog(project_init):
     assert ("zone_pop", "trench_segments", "zone_pop_id", "trench_segments_to_pop") in (
         project_init.RELATION_DEFS
     )
-    # Couche de suivi du génie civil : décochée sauf profils chantier et complet
+    # Segments de tranchée cochés par défaut dans tous les profils (Simon 04/11)
     profiles = {k for k, t in project_init.TEMPLATES.items() if "trench_segments" in t["layers"]}
-    assert profiles == {"infra_chantier", "complet"}
+    assert profiles == set(project_init.TEMPLATES)
 
 
 def test_trench_segments_fr_aliases_match_embedded_qml(project_init):
@@ -220,7 +220,7 @@ def test_duct_progress_layer_in_catalog(project_init):
         project_init.RELATION_DEFS
     )
     # Suivi de construction, superposé aux conduites : décochée sauf profils
-    # chantier et complet (comme trench_segments).
+    # chantier et complet.
     profiles = {k for k, t in project_init.TEMPLATES.items() if "duct_progress" in t["layers"]}
     assert profiles == {"infra_chantier", "complet"}
 
