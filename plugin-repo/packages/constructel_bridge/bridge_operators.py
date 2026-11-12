@@ -1,6 +1,8 @@
 """Pure logic for the operator choice of the home screen (Bridge 1.9, plan
-2026-11-12 task 1, spec § 6.2), and for the operator catalogue, the layer
-keys and the project identity (task 2, spec § 6.3, § 6.4, § 7).
+2026-11-12 task 1, spec § 6.2), for the operator catalogue, the layer keys
+and the project identity (task 2, spec § 6.3, § 6.4, § 7), and for the
+same-operator targeting of styles, value relations and ``get_feature``
+(task 4, spec § 7, § 9.3).
 
 Side-effect-free: no qgis, no psycopg2, no file IO. bridge_plugin.py consumes
 these functions; this module never imports it. Everything here is unit-tested
@@ -22,6 +24,8 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional, Sequence
+
+from .bridge_nominatif import parse_datasource
 
 # LAYER_CATALOG keeps ``wyre`` as the template schema of the operator entries;
 # later tasks substitute the chosen operator schema at load time.
@@ -226,3 +230,54 @@ def split_operator_suffix(name: str) -> tuple[str, Optional[str]]:
     if sep and base and label:
         return base, label
     return name, None
+
+
+# --- Same-operator targeting (task 4, spec § 7, § 9.3, plan D4) -----------------
+
+def style_sources(schema: str, table: str) -> list[tuple[str, str]]:
+    """``(f_table_schema, f_table_name)`` pairs to try in ``public.layer_styles``,
+    in order: the layer's own source, then the ``wyre`` style of the same table
+    for an operator table of another schema (spec § 9.3). No fallback for
+    ``wyre`` itself nor for a common table."""
+    sources = [(schema, table)]
+    if table in OPERATOR_TABLES and schema != OPERATOR_TEMPLATE_SCHEMA:
+        sources.append((OPERATOR_TEMPLATE_SCHEMA, table))
+    return sources
+
+
+def _expr_literal(text: str) -> str:
+    # QGIS expression string literal content: ' is written ''.
+    return text.replace("'", "''")
+
+
+def retarget_get_feature(expr: str, targets: Mapping[str, str]) -> str:
+    """Rewrites the first argument of ``get_feature('REF', ...)`` when REF is a
+    key of *targets* (layer name, table or id -> layer id). Only a first
+    argument between apostrophes is touched; longest keys are tried first."""
+    literals = {_expr_literal(key): value for key, value in targets.items() if key}
+    if not expr or not literals:
+        return expr
+    alternation = "|".join(re.escape(key) for key in sorted(literals, key=len, reverse=True))
+    pattern = re.compile(r"get_feature\(\s*'(" + alternation + r")'\s*,")
+    return pattern.sub(lambda m: f"get_feature('{_expr_literal(literals[m.group(1)])}',", expr)
+
+
+_TABLE_TOKEN_RE = re.compile(r'table\s*=\s*"([^"]*)"(\s*\.\s*)"([^"]*)"')
+
+
+def retarget_layer_source(ds: str, schema: str) -> str:
+    """``LayerSource`` of a value relation pointed at *schema*: the schema of
+    the ``table="s"."t"`` token is replaced when ``t`` is an operator table.
+    Anything else (other tokens, ``(geom)``, ``sql=`` filter) is kept byte for
+    byte; a common table, an unparsable source or an unsafe schema name leave
+    the source unchanged."""
+    if not ds or not is_safe_schema(schema):
+        return ds
+    for name, _value, start, end in parse_datasource(ds)[0]:
+        if name != "table":
+            continue
+        match = _TABLE_TOKEN_RE.match(ds, start, end)
+        if not match or match.group(3) not in OPERATOR_TABLES or match.group(1) == schema:
+            return ds
+        return f'{ds[:start]}table="{schema}"{match.group(2)}"{match.group(3)}"{ds[match.end():]}'
+    return ds
