@@ -41,7 +41,8 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsSettings
-from qgis.utils import available_plugins, active_plugins, loadPlugin, startPlugin
+import qgis.utils as qu
+from qgis.utils import loadPlugin, startPlugin
 
 from .i18n import tr
 
@@ -108,7 +109,28 @@ class PluginInstallerUnavailable(ImportError):
     """pyplugin_installer (installeur de QGIS) est introuvable."""
 
 
-def install_or_activate_plugin(pid: str, upgrade: bool = False) -> str:
+class PluginInstallerSession:
+    """Installeur de QGIS partage par un lot de plugins : le cache des depots
+    (``fetchAvailablePlugins(False)``) est charge paresseusement, AU PLUS UNE
+    FOIS, au premier besoin (T7-I1). Hors Internet ou avec un depot en erreur,
+    N plugins absents ne coutent donc qu'un seul fetch bloquant."""
+
+    def __init__(self):
+        self._installer = None
+
+    def installer(self):
+        if self._installer is None:
+            try:
+                from pyplugin_installer import instance as plugin_installer_instance
+            except ImportError as exc:
+                raise PluginInstallerUnavailable(str(exc)) from exc
+            installer = plugin_installer_instance()
+            installer.fetchAvailablePlugins(False)
+            self._installer = installer
+        return self._installer
+
+
+def install_or_activate_plugin(pid: str, upgrade: bool = False, session=None) -> str:
     """Rend le plugin *pid* disponible et actif ; leve en cas d'echec.
 
     Retour : "active" (deja actif), "activated" (installe mais inactif :
@@ -116,25 +138,26 @@ def install_or_activate_plugin(pid: str, upgrade: bool = False) -> str:
     "updated" (installe, reinstalle car *upgrade*).
 
     Seul chemin d'installation du plugin : ``_install_selected_plugins`` et le
-    Diagnostic l'appellent. Le cache de l'installeur QGIS
-    (``fetchAvailablePlugins(False)``) est charge juste avant installPlugin ;
-    un plugin deja present n'a pas besoin de l'installeur (donc pas de reseau).
+    Diagnostic l'appellent. *session* (``PluginInstallerSession``) partage le
+    fetch du cache de l'installeur entre les plugins d'un meme lot ; sans
+    session, un fetch par appel. Un plugin deja present n'a pas besoin de
+    l'installeur (donc ni fetch ni reseau).
+
+    installPlugin signale souvent son echec par une boite de dialogue sans
+    lever : le plugin doit ensuite figurer dans qgis.utils.available_plugins
+    (relu a chaud), sinon RuntimeError.
     """
-    installed = pid in available_plugins
+    installed = pid in qu.available_plugins
     if installed and not upgrade:
-        if pid in active_plugins:
+        if pid in qu.active_plugins:
             return "active"
         loadPlugin(pid)
         startPlugin(pid)
         return "activated"
 
-    try:
-        from pyplugin_installer import instance as plugin_installer_instance
-    except ImportError as exc:
-        raise PluginInstallerUnavailable(str(exc)) from exc
-    installer = plugin_installer_instance()
-    installer.fetchAvailablePlugins(False)
-    installer.installPlugin(pid)
+    (session or PluginInstallerSession()).installer().installPlugin(pid)
+    if pid not in qu.available_plugins:
+        raise RuntimeError(f"installation non confirmee : {pid} absent des extensions disponibles")
     return "updated" if installed else "installed"
 
 
@@ -257,12 +280,12 @@ class PluginBundlePage(QWizardPage):
         layout.setSpacing(4)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        installed = set(available_plugins)
+        installed = set(qu.available_plugins)
 
         for plugin in RECOMMENDED_PLUGINS:
             pid = plugin["id"]
             already = pid in installed
-            active = pid in active_plugins
+            active = pid in qu.active_plugins
 
             group = QGroupBox()
             group_layout = QVBoxLayout(group)
@@ -314,7 +337,7 @@ class ResourceSharingPage(QWizardPage):
 
         layout = QVBoxLayout(self)
 
-        self._rs_installed = "qgis_resource_sharing" in available_plugins
+        self._rs_installed = "qgis_resource_sharing" in qu.available_plugins
 
         if self._rs_installed:
             info = QLabel(tr("onboard.rs.installed"))
@@ -362,7 +385,7 @@ class FilterMateSharingPage(QWizardPage):
 
         layout = QVBoxLayout(self)
 
-        self._fm_installed = "filter_mate" in available_plugins
+        self._fm_installed = "filter_mate" in qu.available_plugins
         info = QLabel(
             tr("onboard.fm.installed") if self._fm_installed
             else tr("onboard.fm.not_installed")
@@ -626,9 +649,10 @@ class OnboardingWizard(QWizard):
             return
 
         installer_reported = False
+        session = PluginInstallerSession()
         for pid in selected:
             try:
-                outcome = install_or_activate_plugin(pid)
+                outcome = install_or_activate_plugin(pid, session=session)
             except PluginInstallerUnavailable as exc:
                 # Installeur de QGIS indisponible : un seul message, les
                 # plugins deja installes continuent d'etre actives.
@@ -651,8 +675,8 @@ class OnboardingWizard(QWizard):
 
     def _configure_resource_sharing(self):
         rs_available = (
-            "qgis_resource_sharing" in available_plugins
-            or "qgis_resource_sharing" in active_plugins
+            "qgis_resource_sharing" in qu.available_plugins
+            or "qgis_resource_sharing" in qu.active_plugins
         )
         if not rs_available:
             self._actions_done.append(tr("onboard.action.rs_not_installed"))
@@ -762,7 +786,7 @@ class OnboardingWizard(QWizard):
             QApplication.restoreOverrideCursor()
 
     def _configure_filtermate_sharing(self):
-        if "filter_mate" not in available_plugins and "filter_mate" not in active_plugins:
+        if "filter_mate" not in qu.available_plugins and "filter_mate" not in qu.active_plugins:
             self._actions_done.append(tr("onboard.action.fm_not_installed"))
             return
 

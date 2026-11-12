@@ -99,9 +99,15 @@ class _Boom:
 
 
 class _FakeInstaller:
-    def __init__(self, calls, fail=()):
+    """installPlugin ajoute le plugin a qgis.utils.available_plugins, comme QGIS
+    quand l'installation reussit ; ``fail`` leve, ``silent`` ne fait rien et ne
+    leve pas (echec signale par une boite de dialogue, T7-I3)."""
+
+    def __init__(self, calls, utils, fail=(), silent=()):
         self.calls = calls
+        self.utils = utils
         self.fail = set(fail)
+        self.silent = set(silent)
 
     def fetchAvailablePlugins(self, reload_mode):
         self.calls.append(("fetch", reload_mode))
@@ -110,6 +116,8 @@ class _FakeInstaller:
         self.calls.append(("install", pid))
         if pid in self.fail:
             raise RuntimeError(f"echec {pid}")
+        if pid not in self.silent and pid not in self.utils.available_plugins:
+            self.utils.available_plugins = self.utils.available_plugins + [pid]
 
 
 @pytest.fixture
@@ -139,7 +147,7 @@ def onb(bp18, monkeypatch):
     utils.startPlugin = lambda pid: started.append(pid) or True
     monkeypatch.setitem(sys.modules, "qgis.utils", utils)
 
-    installer = _FakeInstaller(calls)
+    installer = _FakeInstaller(calls, utils)
     installer_module = types.ModuleType("pyplugin_installer")
     installer_module.instance = lambda: installer
     monkeypatch.setitem(sys.modules, "pyplugin_installer", installer_module)
@@ -149,7 +157,7 @@ def onb(bp18, monkeypatch):
     for cls in ("UserProfilePage", "PluginBundlePage", "ResourceSharingPage",
                 "FilterMateSharingPage", "ExternalServicesPage", "SummaryPage"):
         monkeypatch.setattr(module, cls, lambda *a, **k: _Page())
-    module.calls, module.started, module.installer = calls, started, installer
+    module.calls, module.started, module.installer, module.utils = calls, started, installer, utils
     yield module
     sys.modules.pop("constructel_bridge.bridge_onboarding", None)
 
@@ -268,7 +276,7 @@ def test_selected_plugins_go_through_install_or_activate(onb, monkeypatch):
     seen = []
     results = {"a": "active", "b": "activated", "c": "installed"}
     monkeypatch.setattr(onb, "install_or_activate_plugin",
-                        lambda pid, upgrade=False: seen.append(pid) or results[pid])
+                        lambda pid, upgrade=False, session=None: seen.append(pid) or results[pid])
     w = onb.OnboardingWizard(None, "", "", False, include_profile=False)
     w._page_plugins = _Page(["a", "b", "c"])
 
@@ -414,3 +422,53 @@ def test_import_error_of_a_broken_plugin_is_not_an_unavailable_installer(onb, mo
     w._install_selected_plugins()
 
     assert w._actions_done == [onb.tr("onboard.action.plugin_error", pid="b", error="No module named 'dep'")]
+
+
+# --- Corrections tour 1 (T7-I1, T7-I2, T7-I3) -------------------------------------
+
+def test_three_missing_plugins_cost_one_fetch(onb):
+    w = onb.OnboardingWizard(None, "", "", False, include_profile=False)
+    w._page_plugins = _Page(["c", "d", "e"])
+
+    w._install_selected_plugins()
+
+    assert [c for c in onb.calls if c[0] == "fetch"] == [("fetch", False)]
+    assert [c for c in onb.calls if c[0] == "install"] == [("install", "c"), ("install", "d"), ("install", "e")]
+    assert onb.calls[0] == ("fetch", False)  # avant le premier installPlugin
+
+
+def test_shared_session_serves_direct_calls_with_one_fetch(onb):
+    session = onb.PluginInstallerSession()
+    onb.install_or_activate_plugin("c", session=session)
+    onb.install_or_activate_plugin("a", upgrade=True, session=session)
+    assert [c for c in onb.calls if c[0] == "fetch"] == [("fetch", False)]
+
+
+def test_all_installed_plugins_cost_no_fetch(onb):
+    w = onb.OnboardingWizard(None, "", "", False, include_profile=False)
+    w._page_plugins = _Page(["a", "b"])  # a actif, b installe inactif
+
+    w._install_selected_plugins()
+
+    assert onb.calls == []
+
+
+def test_availability_is_read_at_call_time(onb):
+    assert onb.install_or_activate_plugin("a") == "active"
+    onb.utils.available_plugins = ["z"]  # QGIS reassigne la liste
+    onb.utils.active_plugins = ["z"]
+    assert onb.install_or_activate_plugin("z") == "active"
+    assert onb.install_or_activate_plugin("a") == "installed"  # a n'est plus disponible
+
+
+def test_silent_install_failure_is_an_error_not_an_installed_plugin(onb):
+    onb.installer.silent.add("c")
+    with pytest.raises(RuntimeError, match="installation non confirmee"):
+        onb.install_or_activate_plugin("c")
+
+    w = onb.OnboardingWizard(None, "", "", False, include_profile=False)
+    w._page_plugins = _Page(["c"])
+    w._install_selected_plugins()
+    assert len(w._actions_done) == 1
+    assert w._actions_done[0].startswith(onb.tr("onboard.action.plugin_error", pid="c", error="")[:12])
+    assert onb.tr("onboard.action.plugin_installed", pid="c") not in w._actions_done
