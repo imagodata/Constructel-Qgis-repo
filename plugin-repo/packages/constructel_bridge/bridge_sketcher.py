@@ -7,6 +7,8 @@ Applique dynamiquement les traductions multilingues sur les couches QGIS:
   2. Noms de couches dans le Layer Tree
   3. Noms de groupes dans le Layer Tree
   4. Colonnes Value des widgets ValueRelation (label_fr / label_en / label_pt)
+  5. Couches cibles des ValueRelation, infobulles et expressions d'affichage :
+     toujours celles du meme operateur (Bridge 1.9, retarget_operator_references)
 
 Aucune dependance locale (styles, QML) — tout passe par l'API QGIS.
 Compatible avec les projets stockes en base PostgreSQL.
@@ -30,11 +32,16 @@ from .bridge_operators import (
     GROUP_KIND_PROPERTY,
     GROUP_SCHEMA_PROPERTY,
     OPERATOR_TABLES,
+    OPERATOR_TEMPLATE_SCHEMA,
     canonical_group,
+    get_feature_refs,
+    layer_id_table,
     operator_layer_name,
     parse_operator_labels,
     parse_project_operators,
     parse_suffix_flag,
+    retarget_get_feature,
+    retarget_layer_source,
     split_operator_suffix,
     suffix_applies,
 )
@@ -57,18 +64,25 @@ def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, TAG, level=level)
 
 
+def _pg_uri(layer: QgsVectorLayer):
+    """QgsDataSourceUri de la source d'une couche PostgreSQL, None pour une
+    autre source."""
+    provider = layer.dataProvider()
+    if provider and provider.name() == "postgres":
+        return QgsDataSourceUri(layer.source())
+    return None
+
+
 def _resolve_table_key(layer: QgsVectorLayer) -> str | None:
     """Identifie la cle dans FIELD_ALIASES a partir du data source.
 
     Priorite: URI PostgreSQL table name > layer name > LAYER_NAME_MAP.
     """
     # 1. Depuis l'URI PostgreSQL
-    provider = layer.dataProvider()
-    if provider and provider.name() == "postgres":
-        uri = QgsDataSourceUri(layer.source())
-        table = uri.table()
-        if table and table in FIELD_ALIASES:
-            return table
+    uri = _pg_uri(layer)
+    table = uri.table() if uri is not None else None
+    if table and table in FIELD_ALIASES:
+        return table
 
     # 2. Depuis le nom de la couche
     name = layer.name()
@@ -166,10 +180,8 @@ def project_operator_naming(project) -> tuple[dict[str, str], bool]:
 
 def _layer_schema(layer: QgsVectorLayer) -> str:
     """Schema PostgreSQL de la source de la couche, "" pour une autre source."""
-    provider = layer.dataProvider()
-    if provider and provider.name() == "postgres":
-        return QgsDataSourceUri(layer.source()).schema()
-    return ""
+    uri = _pg_uri(layer)
+    return uri.schema() if uri is not None else ""
 
 
 def apply_layer_name(layer: QgsVectorLayer, lang: str | None = None, naming=None):
@@ -335,12 +347,10 @@ def apply_form_containers(layer: QgsVectorLayer, lang: str | None = None):
         lookup.update(FORM_CONTAINERS_PER_LAYER[table_key])
 
     # Aussi ajouter le lookup via le nom PG de la table
-    provider = layer.dataProvider()
-    if provider and provider.name() == "postgres":
-        uri = QgsDataSourceUri(layer.source())
-        pg_table = uri.table()
-        if pg_table and pg_table in FORM_CONTAINERS_PER_LAYER:
-            lookup.update(FORM_CONTAINERS_PER_LAYER[pg_table])
+    uri = _pg_uri(layer)
+    pg_table = uri.table() if uri is not None else None
+    if pg_table and pg_table in FORM_CONTAINERS_PER_LAYER:
+        lookup.update(FORM_CONTAINERS_PER_LAYER[pg_table])
 
     if not lookup:
         return False
@@ -366,99 +376,340 @@ def apply_form_containers(layer: QgsVectorLayer, lang: str | None = None):
 
 
 # =====================================================================
-# ValueRelation LayerName sync — garde les FK resolvables apres renommage
+# ValueRelation et get_feature — meme operateur (Bridge 1.9, plan D4)
 # =====================================================================
+# Les styles Farois designent la couche cible par son nom de table
+# (LayerName "zone_pop", get_feature('zone_pop', ...)) et figent le schema
+# modele wyre dans LayerSource. Avec plusieurs operateurs, chaque couche doit
+# viser la couche de SON operateur : la cible est cherchee par (schema de la
+# source, table) et designee par son identifiant, jamais par son nom affiche.
 
-def _sync_value_relation_layer_names(project):
-    """Met a jour LayerName et expressions get_feature() des ValueRelation.
-
-    Apres apply_layer_name(), les couches sont renommees (ex: zone_pop →
-    "Zones POP") mais les widgets ValueRelation referencent encore l'ancien
-    nom de table dans:
-      - le champ ``LayerName`` (lookup du dropdown)
-      - les expressions ``Value`` contenant get_feature('table_name', ...)
-
-    Cette passe construit un mapping table→nom_actuel et corrige les deux
-    pour que QGIS affiche le nom/code au lieu du UUID brut. Un LayerName deja
-    remappe sur un nom traduit (ex: "POP Zones" avant une bascule EN→FR) est
-    reconnu via LAYER_DISPLAY_NAMES et remappe sur le nom actuel.
-    """
-    import re
-
-    # Construire le mapping table_name -> nom actuel de la couche
-    table_to_layer_name: dict[str, str] = {}
-    for layer in project.mapLayers().values():
-        if not isinstance(layer, QgsVectorLayer):
-            continue
-        provider = layer.dataProvider()
-        if provider and provider.name() == "postgres":
-            uri = QgsDataSourceUri(layer.source())
-            table = uri.table()
-            if table:
-                table_to_layer_name[table] = layer.name()
-
-    if not table_to_layer_name:
-        return 0
-
-    # Noms traduits connus -> table (LayerName perime apres changement de langue).
-    # Un nom partage par deux tables est ignore plutot que devine.
-    name_to_table: dict[str, str] = {}
+def _display_name_tables() -> dict[str, str]:
+    """Nom traduit (FR/EN/PT) -> table. Un nom partage par deux tables est
+    ignore plutot que devine."""
+    names: dict[str, str] = {}
     ambiguous: set[str] = set()
-    for table in table_to_layer_name:
-        for translated in LAYER_DISPLAY_NAMES.get(table, {}).values():
-            if name_to_table.setdefault(translated, table) != table:
+    for table, translations in LAYER_DISPLAY_NAMES.items():
+        for translated in translations.values():
+            if names.setdefault(translated, table) != table:
                 ambiguous.add(translated)
     for translated in ambiguous:
-        name_to_table.pop(translated, None)
+        names.pop(translated, None)
+    return names
 
-    # Regex pour get_feature('table_name', ...) — capture le nom entre quotes
-    gf_pattern = re.compile(
-        r"get_feature\(\s*'(" + "|".join(re.escape(t) for t in table_to_layer_name) + r")'\s*,"
-    )
 
-    patched = 0
-    for layer in project.mapLayers().values():
-        if not isinstance(layer, QgsVectorLayer):
-            continue
-        fields = layer.fields()
-        for i in range(fields.count()):
-            setup = layer.editorWidgetSetup(i)
-            if setup.type() != "ValueRelation":
+_DISPLAY_NAME_TABLES = _display_name_tables()
+
+
+class _ProjectLayers:
+    """Couches vectorielles du projet, indexees par identifiant, par nom et
+    par source PostgreSQL (schema, table). ``project.mapLayers()`` est trie
+    par identifiant (QMap) : son ordre ne decide jamais d'une cible
+    (voir ``ranked``)."""
+
+    def __init__(self, project):
+        self._project = project
+        self.layers = [ly for ly in project.mapLayers().values() if isinstance(ly, QgsVectorLayer)]
+        self.by_id: dict = {}
+        self.by_name: dict = {}
+        self.by_source: dict = {}
+        self._sources: dict = {}
+        for layer in self.layers:
+            self.by_id[layer.id()] = layer
+            self.by_name.setdefault(layer.name(), []).append(layer)
+            uri = _pg_uri(layer)
+            table = uri.table() if uri is not None else ""
+            if table:
+                key = (uri.schema(), table)
+                self._sources[layer.id()] = key
+                self.by_source.setdefault(key, []).append(layer)
+        self.tables = {table for _schema, table in self.by_source}
+        self.labels = project_operator_naming(project)[0]
+        # Schemas operateur de l'identite du projet (bridge/operator).
+        self.operators = parse_project_operators(project.readEntry("bridge", "operator", "")[0])
+        self._tree_rank = None
+        self._targets: dict = {}
+
+    def source(self, layer):
+        """(schema, table) de la source PostgreSQL, None pour une autre source."""
+        return self._sources.get(layer.id())
+
+    def _table_of(self, layer):
+        source = self.source(layer)
+        return source[1] if source else None
+
+    def ranked(self, layers) -> list:
+        """Couches VALIDES de *layers*, les meilleures cibles d'abord : sans
+        filtre (subsetString) avant une copie filtree, puis ordre de l'arbre
+        de couches (une couche hors de l'arbre apres), puis identifiant."""
+        valid = [ly for ly in layers if ly.isValid()]
+        if len(valid) < 2:
+            return valid
+        if self._tree_rank is None:
+            nodes = self._project.layerTreeRoot().findLayers()
+            self._tree_rank = {node.layerId(): rank for rank, node in enumerate(nodes)}
+        last = len(self._tree_rank)
+        return sorted(valid, key=lambda ly: (bool(ly.subsetString()), self._tree_rank.get(ly.id(), last), ly.id()))
+
+    def target(self, schema: str, table: str, *, unique_fallback: bool = False):
+        """Couche cible de (*schema*, *table*) : la meilleure de ``ranked``.
+        Aucune : None, sauf avec *unique_fallback* (couche commune) quand les
+        couches VALIDES de la table, parmi les schemas operateur de
+        l'identite du projet (``bridge/operator``), sont toutes dans un seul
+        schema : la meilleure de ce schema. Reparties sur plusieurs schemas,
+        ou hors de l'identite (public...) : None."""
+        candidates = self.ranked(self.by_source.get((schema, table), []))
+        if candidates:
+            return candidates[0]
+        if unique_fallback:
+            schemas = {
+                layer_schema for (layer_schema, t), layers in self.by_source.items()
+                if t == table and layer_schema in self.operators and any(ly.isValid() for ly in layers)
+            }
+            if len(schemas) == 1:
+                return self.ranked(self.by_source[(schemas.pop(), table)])[0]
+        return None
+
+    def designated(self, config):
+        """``(table, couches)`` qu'une ValueRelation designe : ``Layer``
+        (identifiant d'une couche du projet), sinon ``LayerName`` (nom exact
+        d'une couche du projet, nom de table, nom traduit avec ou sans
+        suffixe). Le suffixe ne sert qu'a retrouver la table, jamais
+        l'operateur. *couches* : celles que la reference designe deja
+        (toutes les homonymes ; vide pour un nom de table ou un nom perime).
+        Pour un nom exact, la table est lue sur la premiere homonyme qui a
+        une source PostgreSQL (une couche memoire homonyme ne la masque pas)."""
+        layer = self.by_id.get(config.get("Layer") or "")
+        if layer is not None:
+            return self._table_of(layer), [layer]
+        name = config.get("LayerName") or ""
+        if not name:
+            return None, []
+        named = self.by_name.get(name)
+        if named:
+            return next((self._table_of(ly) for ly in named if self.source(ly)), None), named
+        if name in self.tables or name in OPERATOR_TABLES:
+            return name, []
+        table = _DISPLAY_NAME_TABLES.get(name) or _DISPLAY_NAME_TABLES.get(split_operator_suffix(name)[0])
+        return table, []
+
+    def targets(self, schema: str, *, unique_fallback: bool = False) -> dict:
+        """Premier argument de get_feature -> identifiant de la cible
+        (``target``) de chaque table operateur chargee : la table, ses noms
+        traduits avec et sans chaque suffixe connu (``bridge/operator_labels``),
+        noms et identifiants des couches de la table des autres schemas. Une
+        cle qui designerait deux tables est ignoree."""
+        cache_key = (schema, unique_fallback)
+        if cache_key in self._targets:
+            return self._targets[cache_key]
+        targets: dict = {}
+        ambiguous: set = set()
+        for table in sorted(self.tables & OPERATOR_TABLES):
+            target = self.target(schema, table, unique_fallback=unique_fallback)
+            if target is None:
                 continue
-            config = dict(setup.config())
-            dirty = False
+            target_schema = self.source(target)[0]
+            keys = {table}
+            for translated in LAYER_DISPLAY_NAMES.get(table, {}).values():
+                keys.add(translated)
+                keys.update(operator_layer_name(translated, label) for label in self.labels.values())
+            for (other_schema, other_table), others in self.by_source.items():
+                if other_table == table and other_schema != target_schema:
+                    for other in others:
+                        keys.update((other.name(), other.id()))
+            if not target.subsetString():
+                # Copie filtree du meme schema citee par identifiant : vers
+                # l'original non filtre (meme regle que les ValueRelation).
+                keys.update(ly.id() for ly in self.by_source[(target_schema, table)]
+                            if ly is not target and ly.subsetString())
+            for key in keys:
+                if targets.setdefault(key, target.id()) != target.id():
+                    ambiguous.add(key)
+        for key in ambiguous:
+            targets.pop(key, None)
+        self._targets[cache_key] = targets
+        return targets
 
-            # 1. Corriger LayerName, seulement si la liste ne se resout pas : une
-            # couche qui porte deja ce nom est la bonne (copie filtree de la meme
-            # table, couche personnelle homonyme d'un nom traduit)
-            ref_name = config.get("LayerName", "")
-            if ref_name and not project.mapLayersByName(ref_name):
-                # Un nom perime peut porter le suffixe de l'operateur
-                # (« POP Zones · Wyre ») : repli sur le nom sans suffixe.
-                ref_table = (
-                    ref_name if ref_name in table_to_layer_name
-                    else name_to_table.get(ref_name) or name_to_table.get(split_operator_suffix(ref_name)[0])
-                )
-                actual_name = table_to_layer_name.get(ref_table)
-                if actual_name:
-                    config["LayerName"] = actual_name
-                    dirty = True
+    def retarget_expression(self, expr: str, targets: dict) -> str:
+        """``retarget_get_feature`` avec *targets*, plus les identifiants
+        perimes : un premier argument absent du projet (ni identifiant ni
+        nom) de la forme ``<table>_<suffixe>`` (identifiant cree par le
+        Bridge, ``layer_id_table``) va vers la cible courante de cette table
+        (couche supprimee puis rechargee)."""
+        stale = {}
+        for ref in get_feature_refs(expr):
+            if ref in targets or ref in self.by_id or ref in self.by_name:
+                continue
+            table = layer_id_table(ref)
+            if table is not None and table in targets:
+                stale[ref] = targets[table]
+        return retarget_get_feature(expr, {**targets, **stale} if stale else targets)
 
-            # 2. Corriger get_feature() dans l'expression Value
-            value_expr = config.get("Value", "")
-            if value_expr and gf_pattern.search(value_expr):
-                new_expr = gf_pattern.sub(
-                    lambda m: f"get_feature('{table_to_layer_name[m.group(1)]}',",
-                    value_expr,
-                )
-                if new_expr != value_expr:
-                    config["Value"] = new_expr
-                    dirty = True
 
+def _value_relations(layer):
+    """(index du champ, copie de la configuration) de chaque ValueRelation."""
+    fields = layer.fields()
+    for i in range(fields.count()):
+        setup = layer.editorWidgetSetup(i)
+        if setup.type() == "ValueRelation":
+            yield i, dict(setup.config())
+
+
+def _retarget_value_relation(config: dict, schema: str, index: _ProjectLayers, *,
+                             unique_fallback: bool = False) -> bool:
+    """Oriente la ValueRelation *config* (modifiee en place) vers la couche de
+    (*schema*, t). Table t non operateur : rien. Couches valides de (schema, t)
+    deja designees (identifiant ou homonymes) : la meilleure selon
+    ``index.ranked``, ``Layer`` et ``LayerName`` resynchronises sur elle ; une
+    copie filtree n'est jamais gardee face a un original non filtre de
+    (schema, t) (apply_layer_name rend copie et original homonymes) ; sinon
+    ``index.target`` ; aucune : rien, jamais la couche d'un autre operateur
+    (sauf *unique_fallback*, couche commune). ``LayerSource`` (s'il existe)
+    passe dans le schema de la cible. True si *config* a change."""
+    table, designated = index.designated(config)
+    if table not in OPERATOR_TABLES:
+        return False
+    best = index.target(schema, table, unique_fallback=unique_fallback)
+    chosen = index.ranked([ly for ly in designated if index.source(ly) == (schema, table)])
+    target = chosen[0] if chosen else best
+    if target is not None and best is not None and target.subsetString() and not best.subsetString():
+        target = best
+    if target is None:
+        return False
+    wanted = {"Layer": target.id(), "LayerName": target.name()}
+    layer_source = config.get("LayerSource") or ""
+    if layer_source:
+        wanted["LayerSource"] = retarget_layer_source(layer_source, index.source(target)[0])
+    changed = {key: value for key, value in wanted.items() if config.get(key) != value}
+    config.update(changed)
+    return bool(changed)
+
+
+def _style_schema(config: dict, labels: dict):
+    """Schema d'une ValueRelation de couche commune : celui que son
+    ``LayerSource`` designe, tel que le style l'a defini. Sans source
+    lisible, le schema modele des QML Farois (wyre), mais seulement si
+    ``LayerName`` est sans suffixe ou porte le libelle de wyre ; sinon None :
+    aucune reecriture (le suffixe sert a refuser, jamais a cibler)."""
+    from .bridge_nominatif import datasource_param
+
+    table = datasource_param(config.get("LayerSource") or "", "table") or ""
+    schema, sep, _table = table.partition(".")
+    if sep and schema:
+        return schema
+    label = split_operator_suffix(config.get("LayerName") or "")[1]
+    if label is None or label == labels.get(OPERATOR_TEMPLATE_SCHEMA):
+        return OPERATOR_TEMPLATE_SCHEMA
+    return None
+
+
+def _retarget_operator_layers(index: _ProjectLayers) -> int:
+    """Corps de retarget_operator_references sur un index deja construit."""
+    modified = 0
+    for layer in index.layers:
+        source = index.source(layer)
+        if source is None or source[1] not in OPERATOR_TABLES:
+            continue
+        schema = source[0]
+        targets = index.targets(schema)
+        changed = False
+        for i, config in _value_relations(layer):
+            dirty = _retarget_value_relation(config, schema, index)
+            value = config.get("Value") or ""
+            new_value = index.retarget_expression(value, targets)
+            if new_value != value:
+                config["Value"] = new_value
+                dirty = True
             if dirty:
-                layer.setEditorWidgetSetup(
-                    i, QgsEditorWidgetSetup("ValueRelation", config)
-                )
+                layer.setEditorWidgetSetup(i, QgsEditorWidgetSetup("ValueRelation", config))
+                changed = True
+        tip = layer.mapTipTemplate()
+        new_tip = index.retarget_expression(tip, targets)
+        if new_tip != tip:
+            layer.setMapTipTemplate(new_tip)
+            changed = True
+        display = layer.displayExpression()
+        new_display = index.retarget_expression(display, targets)
+        if new_display != display:
+            layer.setDisplayExpression(new_display)
+            changed = True
+        modified += changed
+    return modified
+
+
+def retarget_operator_references(project) -> int:
+    """Chaque couche operateur (QgsVectorLayer PostgreSQL d'une table de
+    OPERATOR_TABLES ; operateur = schema de sa source) vise les couches de
+    son propre operateur :
+
+    - ses ValueRelation vers une table operateur : ``Layer`` (identifiant),
+      ``LayerName`` (nom courant) et ``LayerSource`` (schema reecrit) de la
+      meilleure couche valide du meme schema (sans filtre, puis ordre de
+      l'arbre, puis identifiant), une couche deja designee etant gardee ;
+      cible absente de ce schema : rien, jamais un autre operateur ;
+    - le premier argument de get_feature dans le ``Value`` de ses
+      ValueRelation, son infobulle (``mapTipTemplate``) et son expression
+      d'affichage (``displayExpression``) : identifiant de la cible du meme
+      schema (voir ``_ProjectLayers.targets``), identifiants perimes compris
+      (``_ProjectLayers.retarget_expression``).
+
+    Idempotent. Retourne le nombre de couches modifiees."""
+    return _retarget_operator_layers(_ProjectLayers(project))
+
+
+def _sync_value_relation_layer_names(project):
+    """Recible les ValueRelation (LayerName, Layer, LayerSource) et les
+    get_feature() apres renommage des couches (traduction, suffixe de
+    l'operateur) ou rechargement des styles, qui designent la couche cible
+    par son nom de table (zone_pop -> « Zones POP · Orange »).
+
+    - Couche operateur -> table operateur : retarget_operator_references
+      (meme schema que la couche source, par identifiant).
+    - Couche commune (chantier...) -> table operateur : la couche de
+      (schema du LayerSource de la liste, table) si elle est chargee
+      (``_style_schema`` : sans LayerSource, wyre seulement pour un nom sans
+      suffixe ou suffixe wyre) ; sinon, si toutes les couches chargees de la
+      table sont dans un seul schema, la meilleure de ce schema (valide, sans
+      filtre, ordre de l'arbre) ; sinon rien. Jamais « dernier gagnant ».
+    - Toute couche -> table commune : LayerName remappe sur le nom courant
+      seulement s'il ne se resout pas (une couche qui porte deja ce nom est
+      la bonne : copie filtree, couche personnelle homonyme), get_feature
+      sur le nom courant.
+
+    Retourne le nombre de couches operateur et de widgets modifies.
+    """
+    index = _ProjectLayers(project)
+    if not index.by_source:
+        return 0
+    patched = _retarget_operator_layers(index)
+
+    # Tables communes : chargees une fois (la meilleure couche l'emporte).
+    common_names: dict[str, str] = {}
+    for (_schema, table), layers in index.by_source.items():
+        best = index.ranked(layers) if table not in OPERATOR_TABLES else []
+        if best:
+            common_names.setdefault(table, best[0].name())
+
+    for layer in index.layers:
+        source = index.source(layer)
+        operator_layer = source is not None and source[1] in OPERATOR_TABLES
+        for i, config in _value_relations(layer):
+            dirty = False
+            value = config.get("Value") or ""
+            schema = None if operator_layer else _style_schema(config, index.labels)
+            if schema is not None:
+                dirty = _retarget_value_relation(config, schema, index, unique_fallback=True)
+                value = index.retarget_expression(value, index.targets(schema, unique_fallback=True))
+            ref_name = config.get("LayerName") or ""
+            if ref_name in common_names and ref_name not in index.by_name:
+                config["LayerName"] = common_names[ref_name]
+                dirty = True
+            value = retarget_get_feature(value, common_names)
+            if value != (config.get("Value") or ""):
+                config["Value"] = value
+                dirty = True
+            if dirty:
+                layer.setEditorWidgetSetup(i, QgsEditorWidgetSetup("ValueRelation", config))
                 patched += 1
 
     return patched
@@ -556,8 +807,9 @@ def apply_all_translations(lang: str | None = None):
             labels_switched += 1
         apply_layer_name(layer, lang, naming)
 
-    # Apres renommage des couches, synchroniser les LayerName dans les
-    # widgets ValueRelation pour que les FK affichent nom/code, pas UUID
+    # Apres renommage des couches, recibler les ValueRelation (et les
+    # get_feature) sur les couches du meme operateur pour que les FK
+    # affichent nom/code, pas UUID
     vr_synced = _sync_value_relation_layer_names(project)
 
     groups_renamed = apply_group_names(lang)
@@ -570,7 +822,7 @@ def apply_all_translations(lang: str | None = None):
     _log(
         f"i18n [{lang}]: {layers_translated} couche(s) traduites, "
         f"{vr_switched} ValueRelation basculee(s), "
-        f"{vr_synced} LayerName(s) synchronisee(s), "
+        f"{vr_synced} reference(s) de couche synchronisee(s), "
         f"{forms_translated} formulaire(s) traduit(s), "
         f"{labels_switched} etiquette(s) basculee(s), "
         f"{groups_renamed} groupe(s) renomme(s)"

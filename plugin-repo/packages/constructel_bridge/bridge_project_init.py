@@ -53,6 +53,7 @@ from .bridge_operators import (
     parse_operator_labels,
     parse_project_operators,
     relation_id,
+    style_sources,
 )
 from .i18n import tr
 from .i18n.layer_translations import GROUP_NAMES
@@ -1271,6 +1272,11 @@ def _add_basemaps(root, selected_keys: set[str]):
 def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set[str]:
     """Charge les styles QML par defaut depuis public.layer_styles.
 
+    Sources essayees dans l'ordre de style_sources : le style de la table
+    dans le schema de la couche, puis, pour une table operateur d'un autre
+    schema, le style wyre de la meme table (spec § 9.3) ; la premiere ligne
+    trouvee l'emporte.
+
     Returns
     -------
     set[str]
@@ -1308,19 +1314,23 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             if not provider:
                 continue
             src_uri = QgsDataSourceUri(provider.uri().uri())
-            schema = src_uri.schema() or "wyre"
+            schema = src_uri.schema() or OPERATOR_TEMPLATE_SCHEMA
             table = src_uri.table()
             geom_col = src_uri.geometryColumn() or ""
 
+            row = None
             try:
-                cur.execute(
-                    'SELECT styleqml::text FROM public.layer_styles '
-                    "WHERE f_table_schema = %s AND f_table_name = %s "
-                    "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
-                    "AND stylename = 'default' LIMIT 1",
-                    (schema, table, geom_col),
-                )
-                row = cur.fetchone()
+                for style_schema, style_table in style_sources(schema, table):
+                    cur.execute(
+                        'SELECT styleqml::text FROM public.layer_styles '
+                        "WHERE f_table_schema = %s AND f_table_name = %s "
+                        "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
+                        "AND stylename = 'default' LIMIT 1",
+                        (style_schema, style_table, geom_col),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        break
             except psycopg2.Error:
                 continue
 

@@ -70,6 +70,7 @@ from .bridge_operators import (
     OperatorInfo,
     parse_operator_rows,
     preselect_operator,
+    style_sources,
     usable_operators,
 )
 from .bridge_nominatif import (
@@ -2786,6 +2787,10 @@ class ConstructelBridgePlugin:
 
         Pour chaque couche PG valide du projet, verifie si un style par
         defaut existe dans la base et l'applique s'il n'est pas deja charge.
+        Sources essayees dans l'ordre de style_sources (style de la table
+        dans le schema de la couche, puis style wyre de la meme table pour
+        une table operateur d'un autre schema, spec § 9.3) ; la premiere
+        ligne trouvee l'emporte.
         """
         conn = self._conn
         if not conn:
@@ -2809,14 +2814,18 @@ class ConstructelBridgePlugin:
                 if not schema or not table:
                     continue
                 try:
-                    cur.execute(
-                        'SELECT styleqml::text FROM public.layer_styles '
-                        "WHERE f_table_schema = %s AND f_table_name = %s "
-                        'AND f_geometry_column = %s AND useasdefault = true '
-                        "AND stylename = 'default' LIMIT 1",
-                        (schema, table, geom_col),
-                    )
-                    row = cur.fetchone()
+                    row = None
+                    for style_schema, style_table in style_sources(schema, table):
+                        cur.execute(
+                            'SELECT styleqml::text FROM public.layer_styles '
+                            "WHERE f_table_schema = %s AND f_table_name = %s "
+                            'AND f_geometry_column = %s AND useasdefault = true '
+                            "AND stylename = 'default' LIMIT 1",
+                            (style_schema, style_table, geom_col),
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            break
                     if not row or not row[0]:
                         continue
                 except (Exception, ) as _style_err:

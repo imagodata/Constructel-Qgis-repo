@@ -9,6 +9,7 @@ affiche (traduit) de la couche. Constats de revue du 2026-10-26 :
   projet, Bridge ou non : LayerName revient au nom de table et doit etre
   resynchronise aussitot.
 """
+from __future__ import annotations
 
 import importlib
 import re
@@ -33,23 +34,48 @@ class FakeSetup:
 
 class FakeUri:
     def __init__(self, source):
-        match = re.search(r'table="[^"]+"\."([^"]+)"', source)
-        self._table = match.group(1) if match else ""
+        match = re.search(r'table="([^"]+)"\."([^"]+)"', source)
+        self._schema, self._table = match.groups() if match else ("", "")
+
+    def schema(self):
+        return self._schema
 
     def table(self):
         return self._table
 
 
 class FakeLayer:
-    def __init__(self, name, table=None, value_relations=()):
-        self._name, self._table = name, table
+    def __init__(self, name, table=None, value_relations=(), schema="wyre"):
+        self._name, self._table, self._schema = name, table, schema
         self._setups = [FakeSetup("ValueRelation", cfg) for cfg in value_relations]
+        self._map_tip = self._display_expression = ""
+
+    def id(self):
+        return f"{self._name}@{self._table}"
+
+    def isValid(self):
+        return True
+
+    def subsetString(self):
+        return ""
 
     def name(self):
         return self._name
 
     def source(self):
-        return f'dbname=x table="wyre"."{self._table}" (geom)' if self._table else "memory"
+        return f'dbname=x table="{self._schema}"."{self._table}" (geom)' if self._table else "memory"
+
+    def mapTipTemplate(self):
+        return self._map_tip
+
+    def setMapTipTemplate(self, template):
+        self._map_tip = template
+
+    def displayExpression(self):
+        return self._display_expression
+
+    def setDisplayExpression(self, expression):
+        self._display_expression = expression
 
     def dataProvider(self):
         return SimpleNamespace(name=lambda: "postgres" if self._table else "memory")
@@ -80,6 +106,9 @@ def _project(*layers):
     return SimpleNamespace(
         mapLayers=lambda: {str(i): layer for i, layer in enumerate(layers)},
         mapLayersByName=lambda name: [layer for layer in layers if layer.name() == name],
+        readEntry=lambda scope, key, default="": (default, False),
+        layerTreeRoot=lambda: SimpleNamespace(
+            findLayers=lambda: [SimpleNamespace(layerId=layer.id) for layer in layers]),
     )
 
 
