@@ -148,6 +148,13 @@ On veut un **écran d'accueil** derrière le clic principal, qui :
 - **Langue** : l'action existante (`_on_change_language`).
 - **Ouverture** : au clic seulement.
 
+### 6.7 Navigateur QGIS et projets enregistrés
+
+Ajout du 12/11, décision Simon :
+- la connexion `wyre` du navigateur QGIS, aujourd'hui restreinte aux schémas `wyre,osiris`, expose les schémas des **opérateurs utilisables** (§ 6.2), plus `osiris` ;
+- « Projet enregistré » liste les tables `qgis_projects` des schémas des opérateurs utilisables, plus `public`, au lieu de `wyre` et `public` seulement ;
+- sans liste d'opérateurs (échec de lecture), on garde le comportement 1.8 (`wyre,osiris` ; `wyre` et `public`).
+
 ## 7. Points techniques à traiter (pistes, pas une solution imposée)
 
 - **Catalogue paramétré par schéma.** `LAYER_CATALOG` code `wyre` en dur. Les entrées opérateur doivent prendre le schéma de l'opérateur au chargement. Les **clés** de couches doivent devenir propres à l'opérateur partout où elles indexent des couches chargées (deux opérateurs = deux `cables`) :

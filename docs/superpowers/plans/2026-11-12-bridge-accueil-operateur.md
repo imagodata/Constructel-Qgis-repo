@@ -1175,6 +1175,83 @@ git commit -m "feat(bridge): écran d'accueil avec choix de l'opérateur (1.9.0)
 
 ---
 
+### Task 9b: Navigateur QGIS et projets enregistrés suivent les opérateurs utilisables (§ 6.7)
+
+Ajout du 12/11, décision Simon : deux endroits codaient `wyre` en dur hors spec. La connexion `wyre` du navigateur QGIS restreinte à `wyre,osiris` (l'infra Orange n'y apparaît pas), et `_PROJECT_SCHEMAS = ("wyre", "public")` (un projet enregistré dans `orange.qgis_projects` n'est pas listé).
+
+**Files:**
+- Modify: `P/bridge_operators.py` (deux fonctions pures)
+- Modify: `P/bridge_plugin.py`, aux endroits suivants :
+  - `_PG_CONNECTIONS["wyre"]["schemas"]` vers la ligne 214 : reste la valeur de repli ;
+  - les écritures de `{base}/schemas` vers les lignes 2982 et 3048 ;
+  - `_PROJECT_SCHEMAS` vers la ligne 3758 et ses usages dans `_read_and_clean_project` (vers 3778) et `_list_db_projects` (vers 3913) ;
+  - `_connect`, juste après l'appel `_load_operators` de la tâche 1.
+- Test: `T/test_bridge19_browser_projects.py`
+
+**Interfaces:**
+- Consumes (tâche 1) : `OperatorInfo(code, label, schema)`, `self._operators: list[OperatorInfo]` (utilisables, ordre `code`, schémas déjà validés par `is_safe_schema`), `_load_operators()`. Constantes de test `WYRE`, `ORANGE` (`T/fakes19.py`, tâche 2).
+- Produces (`bridge_operators.py`) :
+  - `def browser_schemas(operators: Sequence[OperatorInfo]) -> str` : schémas des opérateurs dans l'ordre reçu, puis `osiris`, joints par des virgules ; `"wyre,osiris"` si la liste est vide ;
+  - `def project_schemas(operators: Sequence[OperatorInfo]) -> tuple[str, ...]` : schémas des opérateurs puis `"public"` ; `("wyre", "public")` si la liste est vide.
+- Produces (plugin) :
+  - `def _project_schemas(self) -> tuple[str, ...]` : remplace tous les usages de la constante de classe `_PROJECT_SCHEMAS`, qui est supprimée ;
+  - `def _refresh_browser_schemas(self) -> None` : réécrit `PostgreSQL/connections/<_PG_CONNECTIONS["wyre"]["name"]>/schemas` avec `browser_schemas(self._operators)` ; ne touche jamais l'entrée `be`.
+
+- [ ] **Step 1 : écrire les tests en échec**
+
+```python
+def test_browser_schemas_operateurs_puis_osiris():
+    assert bo.browser_schemas([WYRE, ORANGE]) == "wyre,orange,osiris"
+
+def test_browser_schemas_vide_repli_historique():
+    assert bo.browser_schemas([]) == "wyre,osiris"
+
+def test_project_schemas_operateurs_puis_public():
+    assert bo.project_schemas([WYRE, ORANGE]) == ("wyre", "orange", "public")
+    assert bo.project_schemas([]) == ("wyre", "public")
+
+def test_projet_dun_schema_non_utilisable_refuse(plugin):
+    plugin._operators = [WYRE]
+    assert plugin._read_and_clean_project(object(), "orange", "x") is False   # journal « Rejected invalid schema »
+
+def test_liste_projets_parcourt_les_schemas_utilisables(plugin, fake_cursor):
+    plugin._operators = [WYRE, ORANGE]
+    plugin._list_db_projects()
+    assert fake_cursor.schemas_probed == ["wyre", "orange", "public"]
+
+def test_refresh_browser_schemas_ecrit_le_reglage_sans_toucher_be(plugin, settings):
+    settings.setValue("PostgreSQL/connections/be/schemas", "public")
+    plugin._operators = [WYRE, ORANGE]
+    plugin._refresh_browser_schemas()
+    assert settings.value("PostgreSQL/connections/wyre/schemas") == "wyre,orange,osiris"
+    assert settings.value("PostgreSQL/connections/be/schemas") == "public"
+```
+
+- [ ] **Step 2 : lancer les tests et constater l'échec**
+
+Run: `uvx pytest -q plugin-repo/packages/constructel_bridge_tests/test_bridge19_browser_projects.py`
+Expected: FAIL (`browser_schemas` / `project_schemas` / `_project_schemas` absents)
+
+- [ ] **Step 3 : implémenter**
+
+Fonctions pures dans `bridge_operators.py`. Dans le plugin :
+- `_project_schemas()` délègue à `project_schemas(self._operators)` ; `_operators` absent ou vide donne le repli `("wyre", "public")` ;
+- la garde anti-injection de `_read_and_clean_project` porte désormais sur `self._project_schemas()` ;
+- `_connect` appelle `_refresh_browser_schemas()` après `_load_operators()`, dans les deux modes (nominatif et repli) ;
+- les écritures existantes de `{base}/schemas` pour `wyre` passent par `browser_schemas(getattr(self, "_operators", []))`, pour qu'une reconfiguration de la connexion ne revienne pas à `wyre,osiris`.
+
+- [ ] **Step 4 : lancer les tests ciblés puis la suite complète**
+
+Run: `uvx pytest -q`
+Expected: tout vert (aucune régression sur les tests existants des projets en base et de la connexion `be`)
+
+- [ ] **Step 5 : commit**
+
+```bash
+git add plugin-repo/packages/constructel_bridge/bridge_operators.py plugin-repo/packages/constructel_bridge/bridge_plugin.py plugin-repo/packages/constructel_bridge_tests/test_bridge19_browser_projects.py
+git commit -m "feat(bridge): navigateur QGIS et projets enregistrés suivent les opérateurs utilisables (1.9.0)"
+```
+
 ### Task 10: Revue i18n, metadata 1.9.0, changelog, recette QGIS
 
 **Files:**
