@@ -451,16 +451,19 @@ class _ProjectLayers:
 
     def target(self, schema: str, table: str, *, unique_fallback: bool = False):
         """Couche cible de (*schema*, *table*) : la meilleure de ``ranked``.
-        Aucune : None, sauf avec *unique_fallback* (couche commune) quand la
-        table n'a qu'une seule couche valide chargee, tous schemas
-        confondus."""
+        Aucune : None, sauf avec *unique_fallback* (couche commune) quand
+        toutes les couches chargees de la table (invalides comprises)
+        appartiennent a un seul schema : la meilleure de ce schema.
+        Reparties sur plusieurs schemas : None."""
         candidates = self.ranked(self.by_source.get((schema, table), []))
         if candidates:
             return candidates[0]
         if unique_fallback:
-            loaded = self.ranked([ly for (_s, t), layers in self.by_source.items() if t == table for ly in layers])
-            if len(loaded) == 1:
-                return loaded[0]
+            schemas = {layer_schema for layer_schema, t in self.by_source if t == table}
+            if len(schemas) == 1:
+                candidates = self.ranked(self.by_source[(schemas.pop(), table)])
+                if candidates:
+                    return candidates[0]
         return None
 
     def designated(self, config):
@@ -650,8 +653,9 @@ def _sync_value_relation_layer_names(project):
     - Couche commune (chantier...) -> table operateur : la couche de
       (schema du LayerSource de la liste, table) si elle est chargee
       (``_style_schema`` : sans LayerSource, wyre seulement pour un nom sans
-      suffixe ou suffixe wyre) ; sinon la seule couche chargee de la table,
-      tous schemas confondus ; sinon rien. Jamais « dernier gagnant ».
+      suffixe ou suffixe wyre) ; sinon, si toutes les couches chargees de la
+      table sont dans un seul schema, la meilleure de ce schema (valide, sans
+      filtre, ordre de l'arbre) ; sinon rien. Jamais « dernier gagnant ».
     - Toute couche -> table commune : LayerName remappe sur le nom courant
       seulement s'il ne se resout pas (une couche qui porte deja ce nom est
       la bonne : copie filtree, couche personnelle homonyme), get_feature

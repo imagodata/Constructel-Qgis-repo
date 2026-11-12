@@ -539,3 +539,27 @@ def test_get_feature_refs_and_layer_id_table():
     assert bo.layer_id_table("zone_pop") is None
     assert bo.layer_id_table("zone_pop_") is None
     assert bo.layer_id_table("interventions_3") is None
+
+
+def test_common_layer_single_operator_with_filtered_copy_targets_original(sk, project):  # noqa: F811  # T4-I4
+    # Projet Orange seul : l'original et une copie filtree de zone_pop, toutes
+    # deux dans orange (un seul schema) ; la meilleure selon T4-I1 est l'original.
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    original = project.add_pg("orange", "zone_pop")
+    original.setName("Zones POP · Orange")
+    copy = FakeLayer.pg("orange", "zone_pop", "Zones POP · Orange (filtre)")
+    copy.setSubsetString("\"code\" = 'BXL01'")
+    project.addMapLayer(copy, False)
+    project.layerTreeRoot().insertLayer(0, copy)
+    interventions = add_vr(
+        project.add_pg("chantier", "interventions", "Interventions"),
+        {"LayerName": "zone_pop", "LayerSource": source("wyre", "zone_pop"), "Key": "id",
+         "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"},
+    )
+
+    sk._sync_value_relation_layer_names(project)
+
+    cfg = vr(interventions)
+    assert (cfg["Layer"], cfg["LayerName"]) == (original.id(), "Zones POP · Orange")
+    assert 'table="orange"."zone_pop"' in cfg["LayerSource"]
+    assert cfg["Value"] == f"attribute(get_feature('{original.id()}','id',zone_pop_id),'code')"
