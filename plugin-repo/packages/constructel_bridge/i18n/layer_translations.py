@@ -9,6 +9,8 @@ Le mapping VALUE_RELATION_COLUMNS indique quelle colonne afficher
 dans les widgets ValueRelation selon la langue.
 """
 
+from __future__ import annotations
+
 # =====================================================================
 # Champs communs reutilises dans plusieurs couches
 # =====================================================================
@@ -325,6 +327,8 @@ GROUP_NAMES: dict[str, dict[str, str]] = {
     "Demand Points":   {"fr": "Points de demande",   "en": "Demand Points",       "pt": "Pontos de procura"},
     "Listes":          {"fr": "Listes",              "en": "Lists",               "pt": "Listas"},
     "Topologie":       {"fr": "Topologie",           "en": "Topology",            "pt": "Topologia"},
+    # Bridge 1.9 : groupe racine des couches communes (spec § 6.4)
+    "Commun":          {"fr": "Commun",              "en": "Common",              "pt": "Comum"},
 }
 
 

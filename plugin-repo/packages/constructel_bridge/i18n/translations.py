@@ -6,6 +6,8 @@ Convention des cles:  section.sous_section.element
 Substitutions:       {variable} dans les valeurs
 """
 
+from __future__ import annotations
+
 TRANSLATIONS: dict[str, dict[str, str]] = {
     # =====================================================================
     # ENGLISH
@@ -106,6 +108,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                         "This will add layers, styles, relations and set CRS to EPSG:31370.",
         "init.success": "Project initialized: {count} layers, styles and relations configured.",
         "init.error": "Initialization error:\n{error}",
+        "home.no_operator": "No operator available: ask a Farois administrator for an operator scope.",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "User profile",
@@ -413,6 +416,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                         "Cela ajoutera les couches, styles, relations et definira le CRS a EPSG:31370.",
         "init.success": "Projet initialise : {count} couches, styles et relations configures.",
         "init.error": "Erreur d'initialisation :\n{error}",
+        "home.no_operator": "Aucun opérateur accessible : demande un scope opérateur à un administrateur Farois.",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Profil utilisateur",
@@ -722,6 +726,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                         "Isto ira adicionar camadas, estilos, relacoes e definir o CRS para EPSG:31370.",
         "init.success": "Projeto inicializado: {count} camadas, estilos e relacoes configurados.",
         "init.error": "Erro de inicializacao:\n{error}",
+        "home.no_operator": "Nenhum operador acessivel: peca um scope de operador a um administrador Farois.",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Perfil do utilizador",

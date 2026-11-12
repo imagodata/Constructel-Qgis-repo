@@ -36,13 +36,32 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
+from .bridge_operators import (
+    COMMON_ROOT,
+    GROUP_KIND_PROPERTY,
+    GROUP_SCHEMA_PROPERTY,
+    OPERATOR_GROUPS,
+    OPERATOR_KEYS,
+    OPERATOR_TEMPLATE_SCHEMA,
+    OperatorInfo,
+    base_key,
+    canonical_group,
+    format_operator_labels,
+    format_project_operators,
+    is_safe_schema,
+    layer_key,
+    parse_operator_labels,
+    parse_project_operators,
+    relation_id,
+)
 from .i18n import tr
+from .i18n.layer_translations import GROUP_NAMES
 
 TAG = "Constructel Bridge"
 
-# Identifiant operateur et version — stockes comme variables projet QGIS
-# pour detecter qu'un projet a ete initialise par ce plugin.
-WYRE_OPERATOR = "wyre"
+# Version schema/projet — stockee comme variable projet QGIS pour detecter
+# qu'un projet a ete initialise par ce plugin. Les operateurs charges sont
+# dans bridge/operator (Bridge 1.9 : liste, voir stamp_project).
 WYRE_PROJECT_VERSION = "4.0.0"
 
 
@@ -76,41 +95,89 @@ def is_bridge_project() -> bool:
     return bool(scope.get("bridge_operator", "") or scope.get("bridge_version", ""))
 
 
+def _read_suffix(raw, found: bool) -> bool | None:
+    """bridge/operator_suffix : "1" -> True, "0" -> False ; None si l'entree
+    est absente ou illisible (le projet n'a pas encore fait de choix)."""
+    value = str(raw).strip().lower() if found else ""
+    if value in ("1", "true"):
+        return True
+    if value in ("0", "false"):
+        return False
+    return None
+
+
 def get_bridge_info() -> dict:
     """Retourne les metadonnees Bridge du projet courant.
 
-    Cles: operator, version, plugin.  Valeurs vides si absentes.
+    Cles :
+      - operator : chaine brute de bridge/operator (ou @bridge_operator),
+        "wyre,orange" ; "wyre" pour un projet 1.8 ;
+      - operators : schemas des operateurs dans l'ordre de chargement ;
+      - operator_labels : schema -> libelle ({} pour un projet 1.8) ;
+      - operator_suffix : True / False, None si l'entree est absente ;
+      - version, plugin.
+    Valeurs vides si absentes.
     """
     project = QgsProject.instance()
     scope = project.customVariables()
     op, _ = project.readEntry("bridge", "operator", "")
     ver, _ = project.readEntry("bridge", "version", "")
+    labels, _ = project.readEntry("bridge", "operator_labels", "")
+    suffix, has_suffix = project.readEntry("bridge", "operator_suffix", "")
+    operator = op or scope.get("bridge_operator", "")
     return {
-        "operator": op or scope.get("bridge_operator", ""),
+        "operator": operator,
+        "operators": parse_project_operators(operator),
+        "operator_labels": parse_operator_labels(labels),
+        "operator_suffix": _read_suffix(suffix, has_suffix),
         "version": ver or scope.get("bridge_version", ""),
         "plugin": scope.get("bridge_plugin", ""),
     }
 
 
-def stamp_project():
-    """Ecrit les variables d'identification dans le projet courant.
+def stamp_project(operator: OperatorInfo, suffix: bool | None = None) -> None:
+    """Ecrit l'identite Bridge du projet courant (spec § 7, plan D5).
 
-    Variables projet QGIS (accessibles dans les expressions via @):
-      - @bridge_operator : identifiant operateur (ex: "wyre")
-      - @bridge_version  : version schema/projet (ex: "4.0.0")
-      - @bridge_plugin   : version du plugin Bridge ayant initialise le projet
+    - bridge/operator et @bridge_operator (meme chaine) : schemas des
+      operateurs charges, dans l'ordre de chargement ("wyre,orange") ;
+      *operator* est ajoute s'il manque (un projet 1.8 "wyre" se relit
+      ["wyre"]) ;
+    - bridge/operator_labels : JSON schema -> libelle, fusionne ;
+    - bridge/operator_suffix : "1" / "0", seulement si *suffix* n'est pas
+      None (sinon le choix deja enregistre est garde) ;
+    - bridge/version, @bridge_version, @bridge_plugin.
 
-    L'operateur identifie le client/deploiement (wyre, orange, proximus, etc.).
-    Le plugin peut ainsi detecter les projets qu'il gere.
+    init_project l'appelle juste AVANT le premier addMapLayer d'une couche
+    operateur de *operator* (le suffixe des noms de couches, tache 3, est
+    pose sur layersAdded et lit cette identite), ou sur une couche operateur
+    deja presente ; jamais si aucune n'est ajoutee ni presente (T2-c3).
     """
     project = QgsProject.instance()
     from qgis.core import QgsExpressionContextUtils
-    QgsExpressionContextUtils.setProjectVariable(project, "bridge_operator", WYRE_OPERATOR)
+    info = get_bridge_info()
+    operators = info["operators"]
+    if operator.schema not in operators:
+        operators.append(operator.schema)
+    labels = dict(info["operator_labels"])
+    labels[operator.schema] = operator.label
+    operators_text = format_project_operators(operators)
+    # writeEntry pour une lecture rapide sans contexte d'expression
+    project.writeEntry("bridge", "operator", operators_text)
+    project.writeEntry("bridge", "operator_labels", format_operator_labels(labels))
+    if suffix is not None:
+        project.writeEntry("bridge", "operator_suffix", "1" if suffix else "0")
+    # Variable projet QGIS (expressions : @bridge_operator)
+    QgsExpressionContextUtils.setProjectVariable(project, "bridge_operator", operators_text)
+    _stamp_version(project)
+
+
+def _stamp_version(project) -> None:
+    """bridge/version, @bridge_version et @bridge_plugin : ecrits a chaque
+    chargement, avec ou sans couche operateur (is_bridge_project)."""
+    from qgis.core import QgsExpressionContextUtils
+    project.writeEntry("bridge", "version", WYRE_PROJECT_VERSION)
     QgsExpressionContextUtils.setProjectVariable(project, "bridge_version", WYRE_PROJECT_VERSION)
     QgsExpressionContextUtils.setProjectVariable(project, "bridge_plugin", _plugin_version())
-    # Aussi via writeEntry pour lecture rapide sans contexte d'expression
-    project.writeEntry("bridge", "operator", WYRE_OPERATOR)
-    project.writeEntry("bridge", "version", WYRE_PROJECT_VERSION)
 
 
 # =====================================================================
@@ -182,6 +249,20 @@ WFS_KEYS = {
     "wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings",
     "wfs_protection", "wfs_heritage",
 }
+
+
+def catalog_for(schema: str) -> list[tuple]:
+    """LAYER_CATALOG lu dans le schema d'un operateur (spec § 6.3) : les
+    entrees des groupes operateur (OPERATOR_GROUPS) prennent *schema*, les
+    entrees communes sont inchangees. LAYER_CATALOG garde le schema modele
+    OPERATOR_TEMPLATE_SCHEMA (plan D1)."""
+    if not is_safe_schema(schema):
+        raise ValueError(f"Schema operateur invalide : {schema!r}")
+    return [
+        (entry[0], entry[1], schema) + tuple(entry[3:]) if entry[1] in OPERATOR_GROUPS else entry
+        for entry in LAYER_CATALOG
+    ]
+
 
 # Mapping key → fichier QML embarque dans le plugin (dossier styles/)
 EMBEDDED_STYLES = {
@@ -486,10 +567,17 @@ def _log(msg, level=Qgis.MessageLevel.Info):
 # DIALOG — selection des couches avec templates
 # =====================================================================
 
-def _detect_existing_layers():
-    """Detecte les couches deja presentes dans le projet."""
-    existing = set()
-    project = QgsProject.instance()
+def _catalog_table_id(entry) -> str:
+    """Identifiant « deja chargee » d'une entree du catalogue : typename
+    pour une couche WFS, sinon schema.table."""
+    return entry[3] if entry[0] in WFS_KEYS else f"{entry[2]}.{entry[3]}"
+
+
+def _existing_layer_index(project) -> dict:
+    """Couches vectorielles du projet par identifiant « deja chargee »
+    (schema.table PostgreSQL, typename WFS du catalogue). La premiere couche
+    trouvee l'emporte."""
+    index = {}
     for ly in project.mapLayers().values():
         if not isinstance(ly, QgsVectorLayer):
             continue
@@ -498,31 +586,136 @@ def _detect_existing_layers():
             continue
         if prov.name() == "postgres":
             uri = prov.uri()
-            existing.add(f"{uri.schema()}.{uri.table()}")
+            index.setdefault(f"{uri.schema()}.{uri.table()}", ly)
         elif prov.name() == "WFS":
             src = prov.uri().uri()
             for entry in LAYER_CATALOG:
                 if entry[2] == "wfs" and entry[3] in src:
-                    existing.add(entry[3])
-    # Map catalog keys to existing
-    result = set()
-    for key, _grp, schema, table, *_ in LAYER_CATALOG:
-        table_id = table if key in WFS_KEYS else f"{schema}.{table}"
-        if table_id in existing:
-            result.add(key)
-    return result
+                    index.setdefault(entry[3], ly)
+    return index
+
+
+def _detect_existing_layers(schema: str = OPERATOR_TEMPLATE_SCHEMA) -> set[str]:
+    """Cles du catalogue (simples) deja presentes dans le projet pour
+    l'operateur de *schema* : une couche operateur ne compte que dans son
+    schema, une couche commune compte pour tous les operateurs."""
+    index = _existing_layer_index(QgsProject.instance())
+    return {entry[0] for entry in catalog_for(schema) if _catalog_table_id(entry) in index}
+
+
+# =====================================================================
+# GROUPES — un groupe par operateur, « Commun » pour le reste (§ 6.4)
+# Ordre a la racine (§ 9.1) : operateurs (ordre de chargement) < Commun
+# < Basemaps < Reference ; les groupes de la personne ne bougent pas.
+# =====================================================================
+
+_BASEMAPS_GROUP = "Basemaps"
+_REFERENCE_GROUP = "Référence"
+_ROOT_RANKS = {COMMON_ROOT: 1, _BASEMAPS_GROUP: 2, _REFERENCE_GROUP: 3}
+
+
+def _is_group(node) -> bool:
+    return not hasattr(node, "layerId")
+
+
+def _root_rank(node):
+    """Rang d'un enfant de la racine : 0 groupe d'operateur, 1 Commun,
+    2 Basemaps, 3 Reference ; None pour le reste."""
+    if not _is_group(node):
+        return None
+    if node.customProperty(GROUP_SCHEMA_PROPERTY):
+        return 0
+    kind = (node.customProperty(GROUP_KIND_PROPERTY)
+            or canonical_group(node.name(), GROUP_NAMES) or node.name())
+    return _ROOT_RANKS.get(kind)
+
+
+def _insert_root_group(root, name: str, before_ranks):
+    """Nouveau groupe racine avant le premier enfant dont le rang est dans
+    *before_ranks*, sinon en fin."""
+    children = root.children()
+    index = next((i for i, c in enumerate(children) if _root_rank(c) in before_ranks), len(children))
+    return root.insertGroup(index, name)
+
+
+def find_child_group(parent, canonical: str):
+    """Sous-groupe DIRECT de *parent* pour le groupe canonique *canonical*
+    (plan D17) : d'abord la propriete GROUP_KIND_PROPERTY, puis n'importe
+    quelle traduction de GROUP_NAMES, puis le nom exact. Un groupe qui porte
+    une autre propriete Bridge (autre type, groupe d'operateur) n'est jamais
+    pris. Jamais findGroup : il est recursif dans QGIS."""
+    candidates = [c for c in parent.children()
+                  if _is_group(c) and not c.customProperty(GROUP_SCHEMA_PROPERTY)]
+    for child in candidates:
+        if child.customProperty(GROUP_KIND_PROPERTY) == canonical:
+            return child
+    unmarked = [c for c in candidates if not c.customProperty(GROUP_KIND_PROPERTY)]
+    for child in unmarked:
+        if canonical_group(child.name(), GROUP_NAMES) == canonical:
+            return child
+    for child in unmarked:
+        if child.name() == canonical:
+            return child
+    return None
+
+
+def _ensure_child_group(parent, canonical: str):
+    group = find_child_group(parent, canonical)
+    if group is None:
+        group = parent.addGroup(canonical)
+        group.setCustomProperty(GROUP_KIND_PROPERTY, canonical)
+    return group
+
+
+def ensure_operator_group(root, operator: OperatorInfo):
+    """Groupe racine de *operator* (propriete GROUP_SCHEMA_PROPERTY = son
+    schema), sinon cree au libelle de l'operateur avant Commun / Basemaps /
+    Reference (sinon en fin)."""
+    for child in root.children():
+        if _is_group(child) and child.customProperty(GROUP_SCHEMA_PROPERTY) == operator.schema:
+            return child
+    group = _insert_root_group(root, operator.label, (1, 2, 3))
+    group.setCustomProperty(GROUP_SCHEMA_PROPERTY, operator.schema)
+    return group
+
+
+def ensure_common_group(root):
+    """Groupe racine « Commun » (propriete, traduction ou nom), sinon cree
+    avant Basemaps / Reference (sinon en fin)."""
+    group = find_child_group(root, COMMON_ROOT)
+    if group is None:
+        group = _insert_root_group(root, COMMON_ROOT, (2, 3))
+        group.setCustomProperty(GROUP_KIND_PROPERTY, COMMON_ROOT)
+    return group
+
+
+def _layer_group(root, operator: OperatorInfo, group_name: str):
+    """Groupe de destination d'une couche du catalogue (cree a la demande :
+    jamais de groupe vide)."""
+    if group_name in OPERATOR_GROUPS:
+        return _ensure_child_group(ensure_operator_group(root, operator), group_name)
+    return _ensure_child_group(ensure_common_group(root), group_name)
 
 
 class InitProjectDialog(QDialog):
-    """Dialog de selection des couches avec templates pre-configures."""
+    """Dialog de selection des couches avec templates pre-configures.
 
-    def __init__(self, parent=None):
+    Provisoire (plan 1.9.0, tache 2) : charge les couches de *operator*
+    (schema modele si absent) ; remplacee par l'ecran d'accueil en tache 9.
+    """
+
+    def __init__(self, parent=None, operator: OperatorInfo | None = None):
         super().__init__(parent)
-        self._existing = _detect_existing_layers()
-        has_layers = bool(self._existing - {"v_form_lists", "docs_elements"})
-        self.setWindowTitle(
-            tr("init.title_add") if has_layers else tr("init.title")
+        self._operator = operator or OperatorInfo(
+            OPERATOR_TEMPLATE_SCHEMA.upper(), OPERATOR_TEMPLATE_SCHEMA.capitalize(), OPERATOR_TEMPLATE_SCHEMA,
         )
+        self._existing = _detect_existing_layers(self._operator.schema)
+        # Mode ajout : couches de cet operateur, communes, ou autre operateur
+        # deja charge (identite du projet).
+        self._has_layers = (bool(self._existing - {"v_form_lists", "docs_elements"})
+                            or bool(get_bridge_info()["operators"]))
+        title = tr("init.title_add") if self._has_layers else tr("init.title")
+        self.setWindowTitle(f"{title} · {self._operator.label}")
         self.setMinimumWidth(560)
         self.setMinimumHeight(620)
         self._build_ui()
@@ -560,7 +753,7 @@ class InitProjectDialog(QDialog):
         self._items = {}  # key → QTreeWidgetItem
         self._group_items = {}  # group_name → QTreeWidgetItem
 
-        for key, group, schema, table, geom, pk, label in LAYER_CATALOG:
+        for key, group, schema, table, geom, pk, label in catalog_for(self._operator.schema):
             if group is None:
                 # Reference layers — always included, not shown
                 continue
@@ -645,9 +838,8 @@ class InitProjectDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        has_layers = bool(self._existing - {"v_form_lists", "docs_elements"})
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
-            tr("init.btn_add") if has_layers else tr("init.btn_init")
+            tr("init.btn_add") if self._has_layers else tr("init.btn_init")
         )
         layout.addWidget(buttons)
 
@@ -664,10 +856,10 @@ class InitProjectDialog(QDialog):
         self._desc_label.setText(tmpl.get("description", ""))
 
         # Apply template selection
-        for layer_key, item in self._items.items():
+        for item_key, item in self._items.items():
             item.setCheckState(
                 0,
-                Qt.CheckState.Checked if layer_key in tmpl.get("layers", set()) else Qt.CheckState.Unchecked,
+                Qt.CheckState.Checked if item_key in tmpl.get("layers", set()) else Qt.CheckState.Unchecked,
             )
 
     def _set_all(self, checked):
@@ -703,55 +895,80 @@ class InitProjectDialog(QDialog):
 # RELATIONS — creation/recreation dynamique
 # =====================================================================
 
-def ensure_relations(loaded: dict[str, QgsVectorLayer] | None = None):
-    """Cree ou recree les relations QGIS definies dans RELATION_DEFS.
+def _discover_catalog_layers(project) -> dict:
+    """Couches PostgreSQL du projet par cle de couche (layer_key) : une table
+    operateur dans n'importe quel schema ("cables@orange"), une table commune
+    dans son schema ("interventions"). La premiere couche trouvee l'emporte
+    (une copie filtree ajoutee apres l'originale est ignoree)."""
+    operator_keys = {e[3]: e[0] for e in LAYER_CATALOG if e[0] in OPERATOR_KEYS}
+    common_keys = {_catalog_table_id(e): e[0] for e in LAYER_CATALOG
+                   if e[0] not in OPERATOR_KEYS and e[0] not in WFS_KEYS}
+    loaded = {}
+    for layer in project.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer):
+            continue
+        prov = layer.dataProvider()
+        if not prov or prov.name() != "postgres":
+            continue
+        uri = QgsDataSourceUri(prov.dataSourceUri())
+        schema, table = uri.schema(), uri.table()
+        if table in operator_keys:
+            key = layer_key(operator_keys[table], schema)
+        else:
+            key = common_keys.get(f"{schema}.{table}")
+        if key and key not in loaded:
+            loaded[key] = layer
+    return loaded
+
+
+def ensure_relations(loaded: dict | None = None, primary_schema: str | None = None) -> int:
+    """Cree ou recree les relations QGIS de RELATION_DEFS, par operateur
+    (plan D3).
 
     Appelee par init_project() et par _on_project_read() pour garantir
     que les relations existent toujours avec les bons layer IDs.
-    Si ``loaded`` est None, decouvre les couches depuis le projet courant
-    en matchant par table_name.
+    *loaded* : cle de couche (layer_key : "cables@orange", "interventions")
+    -> couche ; None : couches decouvertes dans le projet courant.
+    Pour chaque schema present (cles "@schema"), les deux bouts d'une
+    relation se resolvent par layer_key(cle, schema) : une cle commune donne
+    la couche commune (Documents, permis). L'operateur principal
+    (*primary_schema*, sinon le premier de l'identite du projet, sinon wyre)
+    garde les identifiants historiques cites par les QML ; les autres
+    recoivent "<relation>__<schema>".
     """
     project = QgsProject.instance()
-
-    # Auto-decouverte des couches si pas de dict fourni
     if loaded is None:
-        loaded = {}
-        catalog_tables = {key: f"{schema}.{table}" for key, _grp, schema, table, *_ in LAYER_CATALOG}
-        for layer in project.mapLayers().values():
-            if not isinstance(layer, QgsVectorLayer):
-                continue
-            prov = layer.dataProvider()
-            if prov and prov.name() == "postgres":
-                uri = QgsDataSourceUri(prov.dataSourceUri())
-                table_id = f"{uri.schema()}.{uri.table()}"
-                for key, tid in catalog_tables.items():
-                    if tid == table_id and key not in loaded:
-                        loaded[key] = layer
-                        break
+        loaded = _discover_catalog_layers(project)
+    if primary_schema is None:
+        operators = get_bridge_info()["operators"]
+        primary_schema = operators[0] if operators else OPERATOR_TEMPLATE_SCHEMA
+    schemas = list(dict.fromkeys(key.partition("@")[2] for key in loaded if "@" in key))
 
     relation_manager = project.relationManager()
     rel_count = 0
-    for parent_key, child_key, fk_field, rel_name in RELATION_DEFS:
-        parent = loaded.get(parent_key)
-        child = loaded.get(child_key)
-        if not parent or not child:
-            continue
+    for schema in schemas:
+        for parent_key, child_key, fk_field, rel_name in RELATION_DEFS:
+            parent = loaded.get(layer_key(parent_key, schema))
+            child = loaded.get(layer_key(child_key, schema))
+            if not parent or not child:
+                continue
+            rel_id = relation_id(rel_name, schema, primary_schema)
 
-        # Supprimer toute relation existante (possiblement cassee par QML)
-        existing = relation_manager.relation(rel_name)
-        if existing.id():
-            relation_manager.removeRelation(rel_name)
+            # Supprimer toute relation existante (possiblement cassee par QML)
+            existing = relation_manager.relation(rel_id)
+            if existing.id():
+                relation_manager.removeRelation(rel_id)
 
-        rel = QgsRelation()
-        rel.setId(rel_name)
-        rel.setName(rel_name)
-        rel.setReferencingLayer(child.id())
-        rel.setReferencedLayer(parent.id())
-        rel.addFieldPair(fk_field, "id")
+            rel = QgsRelation()
+            rel.setId(rel_id)
+            rel.setName(rel_id)
+            rel.setReferencingLayer(child.id())
+            rel.setReferencedLayer(parent.id())
+            rel.addFieldPair(fk_field, "id")
 
-        if rel.isValid():
-            relation_manager.addRelation(rel)
-            rel_count += 1
+            if rel.isValid():
+                relation_manager.addRelation(rel)
+                rel_count += 1
 
     if rel_count:
         _log(f"{rel_count} relation(s) creee(s)/recreee(s)")
@@ -764,8 +981,18 @@ def ensure_relations(loaded: dict[str, QgsVectorLayer] | None = None):
 
 def init_project(conn_params: dict, password: str, selected: set[str],
                  add_basemap: bool = True, apply_styles: bool = True,
-                 selected_basemaps: set[str] | None = None) -> int:
-    """Initialise le projet QGIS avec les couches selectionnees.
+                 selected_basemaps: set[str] | None = None, *,
+                 operator: OperatorInfo, suffix: bool | None = None) -> int:
+    """Charge les couches selectionnees (cles simples du catalogue) pour
+    *operator* (spec § 6.3, § 6.4).
+
+    Les entrees operateur sont lues dans operator.schema et rangees dans le
+    groupe de l'operateur ; les entrees communes, chargees une seule fois
+    quel que soit le nombre d'operateurs, dans « Commun ». Une couche deja
+    presente (meme schema.table, meme typename WFS) est reprise telle quelle.
+    L'operateur n'entre dans l'identite du projet (stamp_project) que si
+    une de ses couches operateur est ajoutee (juste avant son addMapLayer)
+    ou deja presente ; version et plugin sont toujours ecrits.
 
     Returns
     -------
@@ -773,74 +1000,43 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         Nombre de couches ajoutees.
     """
     project = QgsProject.instance()
-    catalog = {entry[0]: entry for entry in LAYER_CATALOG}
+    catalog = catalog_for(operator.schema)
 
     # -- CRS projet -------------------------------------------------------
     crs = QgsCoordinateReferenceSystem("EPSG:31370")
     project.setCrs(crs)
     _log("CRS projet: EPSG:31370 (Belgium Lambert 72)")
 
-    # -- Creer les groupes necessaires ------------------------------------
+    # -- Version et plugin : toujours (projet Bridge reconnu) ----------------
+    _stamp_version(project)
+
     root = project.layerTreeRoot()
     groups = {}
-    needed_groups = {catalog[k][1] for k in selected if k in catalog and catalog[k][1]}
-    # Référence est exclu ici — sera cree apres les basemaps
-    for group_name in ("Demand Points", "Infrastructure", "Zones",
-                       "Topologie", "Chantier", "OSIRIS",
-                       "Cadastre UrbIS", "Urbanisme"):
-        if group_name not in needed_groups:
-            continue
-        existing = root.findGroup(group_name)
-        groups[group_name] = existing or root.addGroup(group_name)
-
-    # -- Detecter les couches deja presentes dans le projet -----------------
-    existing_tables = set()
-    for ly in project.mapLayers().values():
-        if not isinstance(ly, QgsVectorLayer):
-            continue
-        prov = ly.dataProvider()
-        if not prov:
-            continue
-        if prov.name() == "postgres":
-            uri = prov.uri()
-            existing_tables.add(f"{uri.schema()}.{uri.table()}")
-        elif prov.name() == "WFS":
-            # Identifier par le typename dans la source
-            src = prov.uri().uri()
-            for wfs_entry in LAYER_CATALOG:
-                if wfs_entry[2] == "wfs" and wfs_entry[3] in src:
-                    existing_tables.add(wfs_entry[3])
+    existing = _existing_layer_index(project)
 
     # -- Charger les couches (dans l'ordre du catalogue) -------------------
-    loaded = {}  # key → QgsVectorLayer
+    loaded = {}  # layer_key ("cables@orange", "interventions") → couche
     count = 0
     skipped = 0
+    stamped = False
 
     # Iterer dans l'ordre du catalogue, pas dans l'ordre du set
-    for entry in LAYER_CATALOG:
+    for entry in catalog:
         key = entry[0]
         if key not in selected:
             continue
         _, group_name, schema, table, geom_col, pk, label = entry
+        lkey = layer_key(key, schema)
 
-        # Eviter les doublons
-        table_id = table if key in WFS_KEYS else f"{schema}.{table}"
-        if table_id in existing_tables:
-            # Retrouver la couche existante pour les relations
-            for ly in project.mapLayers().values():
-                if not isinstance(ly, QgsVectorLayer):
-                    continue
-                prov = ly.dataProvider()
-                if not prov:
-                    continue
-                if prov.name() == "postgres":
-                    uri = prov.uri()
-                    if f"{uri.schema()}.{uri.table()}" == table_id:
-                        loaded[key] = ly
-                        break
-                elif prov.name() == "WFS" and table in prov.uri().uri():
-                    loaded[key] = ly
-                    break
+        # Eviter les doublons : reprendre la couche existante (relations)
+        present = existing.get(_catalog_table_id(entry))
+        if present is not None:
+            if key in OPERATOR_KEYS and not stamped:
+                # Deja presente : l'operateur est dans le projet (T2-c3) ;
+                # aucun addMapLayer ici, l'ordre n'est pas en jeu.
+                stamp_project(operator, suffix)
+                stamped = True
+            loaded[lkey] = present
             skipped += 1
             continue
 
@@ -853,26 +1049,34 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             layer = QgsVectorLayer(uri.uri(False), table, "postgres")
 
         if not layer or not layer.isValid():
-            _log(f"Couche invalide: {table}", Qgis.MessageLevel.Warning)
+            _log(f"Couche invalide: {schema}.{table}", Qgis.MessageLevel.Warning)
             continue
 
-        if not group_name:
-            # Couche de reference (sans groupe) — ajouter au projet
-            # sans l'afficher dans le layer tree
-            project.addMapLayer(layer, False)
-        else:
-            project.addMapLayer(layer, False)
-            if group_name in groups:
-                groups[group_name].addLayer(layer)
-            else:
-                root.addLayer(layer)
+        if key in OPERATOR_KEYS and not stamped:
+            # Identite AVANT le premier addMapLayer d'une couche operateur
+            # (suffixe pose sur layersAdded, tache 3) ; un operateur sans
+            # couche ajoutee ni deja presente n'y entre jamais (T2-c3).
+            stamp_project(operator, suffix)
+            stamped = True
 
-        loaded[key] = layer
+        # Sans groupe : au projet seulement, hors arbre de couches.
+        project.addMapLayer(layer, False)
+        if group_name == _REFERENCE_GROUP:
+            # Rangee dans Reference apres les fonds de plan (plus bas)
+            root.addLayer(layer)
+        elif group_name:
+            group = _layer_group(root, operator, group_name)
+            groups[(schema, group_name)] = group
+            group.addLayer(layer)
+
+        loaded[lkey] = layer
         count += 1
 
     if skipped:
         _log(f"{skipped} couche(s) deja presente(s) — ignoree(s)")
     _log(f"{count} couche(s) chargee(s)")
+    _log(f"Projet identifie: operators={get_bridge_info()['operator'] or '-'} "
+         f"version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
 
     # -- Relations --------------------------------------------------------
     ensure_relations(loaded)
@@ -895,20 +1099,24 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:
         basemap_group = _add_basemaps(root, selected_basemaps)
-        groups["Basemaps"] = basemap_group
+        if basemap_group is not None:
+            groups[_BASEMAPS_GROUP] = basemap_group
 
     # -- Groupe Référence (en bas, apres les basemaps) --------------------
-    if "Référence" in needed_groups:
-        ref_group = root.findGroup("Référence") or root.addGroup("Référence")
-        groups["Référence"] = ref_group
+    # Seulement pour des couches presentes dans l'arbre (v_form_lists ajoutee
+    # cachee par le plugin n'a pas de noeud) : jamais de groupe vide.
+    ref_nodes = []
+    for entry in catalog:
+        layer = loaded.get(entry[0]) if entry[1] == _REFERENCE_GROUP else None
+        node = root.findLayer(layer.id()) if layer is not None else None
+        if node is not None:
+            ref_nodes.append(node)
+    if ref_nodes:
+        ref_group = root.findGroup(_REFERENCE_GROUP) or root.addGroup(_REFERENCE_GROUP)
+        groups[_REFERENCE_GROUP] = ref_group
         # Deplacer les couches ref dans ce groupe
-        for entry in LAYER_CATALOG:
-            key = entry[0]
-            if key not in loaded or entry[1] != "Référence":
-                continue
-            layer = loaded[key]
-            node = root.findLayer(layer.id())
-            if node and node.parent() != ref_group:
+        for node in ref_nodes:
+            if node.parent() != ref_group:
                 clone = node.clone()
                 ref_group.addChildNode(clone)
                 node.parent().removeChildNode(node)
@@ -917,10 +1125,6 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 
     # -- Nettoyer les couches fantomes a la racine -------------------------
     _cleanup_ghost_layers(root, groups)
-
-    # -- Tamponner le projet avec operateur/version ------------------------
-    stamp_project()
-    _log(f"Projet identifie: operator={WYRE_OPERATOR} version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
 
     return count
 
@@ -988,11 +1192,12 @@ def _cleanup_ghost_layers(root, groups):
 
 
 def _apply_embedded_styles(loaded: dict):
-    """Applique les styles QML embarques dans le plugin."""
+    """Applique les styles QML embarques dans le plugin (*loaded* indexe
+    par cle de couche : "cables@orange" prend le style de "cables")."""
     styles_dir = os.path.join(os.path.dirname(__file__), "styles")
     styled = 0
     for key, layer in loaded.items():
-        qml_file = EMBEDDED_STYLES.get(key)
+        qml_file = EMBEDDED_STYLES.get(base_key(key))
         if not qml_file:
             continue
         qml_path = os.path.join(styles_dir, qml_file)
@@ -1027,11 +1232,12 @@ def _build_wfs_layer(typename: str, label: str):
 
 
 def _add_basemaps(root, selected_keys: set[str]):
-    """Ajoute les fonds de carte dans un groupe Basemaps."""
+    """Ajoute les fonds de carte dans un groupe Basemaps, cree au premier
+    fond ajoute (jamais de groupe vide). Retourne le groupe, ou None."""
     project = QgsProject.instance()
     existing_names = {ly.name() for ly in project.mapLayers().values()}
 
-    basemap_group = root.findGroup("Basemaps") or root.addGroup("Basemaps")
+    basemap_group = root.findGroup(_BASEMAPS_GROUP)
     basemap_by_key = {bm["key"]: bm for bm in BASEMAPS}
     added = 0
 
@@ -1047,6 +1253,9 @@ def _add_basemaps(root, selected_keys: set[str]):
         layer = QgsRasterLayer(bm["source"], name, bm["provider"])
         if layer.isValid():
             project.addMapLayer(layer, False)
+            if basemap_group is None:
+                # Juste au-dessus de Reference (ordre § 9.1)
+                basemap_group = _insert_root_group(root, _BASEMAPS_GROUP, (3,))
             basemap_group.addLayer(layer)
             added += 1
         else:

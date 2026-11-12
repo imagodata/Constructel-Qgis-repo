@@ -4,6 +4,8 @@ the real API beyond what's needed for a clean module import — extend as
 needed if other constructel_bridge modules require more symbols; a
 failing import's traceback names exactly what's missing.
 """
+from __future__ import annotations
+
 import hashlib
 import re
 
@@ -21,10 +23,12 @@ class Qgis:
         Info = 0
         Warning = 1
         Critical = 2
+        Success = 3
 
     Info = MessageLevel.Info
     Warning = MessageLevel.Warning
     Critical = MessageLevel.Critical
+    Success = MessageLevel.Success
 
 
 class _StubUserProfile:
@@ -489,6 +493,24 @@ class QgsProject:
 
     def error(self):
         return ""
+
+    # Bridge 1.9 : identite du projet (bridge/operator...). Comme QGIS,
+    # readEntry rend (valeur, trouvee) ; les variables projet sont vides.
+    def _project_entries(self):
+        return self.__dict__.setdefault("_entries", {})
+
+    def readEntry(self, scope, key, default=""):
+        entries = self._project_entries()
+        if (scope, key) in entries:
+            return entries[(scope, key)], True
+        return default, False
+
+    def writeEntry(self, scope, key, value):
+        self._project_entries()[(scope, key)] = str(value)
+        return True
+
+    def customVariables(self):
+        return {}
 
 
 class QgsProjectBadLayerHandler:

@@ -63,10 +63,13 @@ from .bridge_mtls import (
     validate_client_certificate,
 )
 from .bridge_operators import (
+    FALLBACK_OPERATOR,
+    LAST_OPERATOR_KEY,
     OPERATORS_QUERY,
     SCOPE_CODES_QUERY,
     OperatorInfo,
     parse_operator_rows,
+    preselect_operator,
     usable_operators,
 )
 from .bridge_nominatif import (
@@ -912,6 +915,10 @@ class ConstructelBridgePlugin:
         # registre schema -> operateur de tous les actifs instancies.
         self._operators: list[OperatorInfo] = []
         self._operator_registry: dict[str, OperatorInfo] = {}
+        # True quand la liste n'a pas pu etre lue (le chargement retombe sur
+        # Wyre, comme 1.8.4) ; False si elle est lue, meme sans operateur
+        # utilisable (decision T2-c4).
+        self._operators_unavailable = False
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -1186,7 +1193,7 @@ class ConstructelBridgePlugin:
 
         info = get_bridge_info()
         self._log(
-            f"Projet Bridge detecte — operator={info['operator']!r} "
+            f"Projet Bridge detecte — operateurs={','.join(info['operators']) or '?'} "
             f"version={info['version']!r} plugin={info['plugin']!r}"
         )
 
@@ -2355,11 +2362,13 @@ class ConstructelBridgePlugin:
         session (spec 6.2) : ``_operator_registry`` (schema -> operateur,
         tous les actifs instancies) et ``_operators`` (utilisables, ordre
         code). SELECT seul, jamais bloquant : sur echec de la liste, les deux
-        restent vides (la tache 5 decide du repli). Codes de scope absents
-        (NULL, fonction non executable, ligne vide) : seul le filtre
-        "schema lisible" s'applique."""
+        restent vides et ``_operators_unavailable`` passe a True (repli Wyre
+        au chargement, decision T2-c4). Codes de scope absents (NULL,
+        fonction non executable, ligne vide) : seul le filtre "schema
+        lisible" s'applique."""
         self._operators = []
         self._operator_registry = {}
+        self._operators_unavailable = True
         if not self._conn or self._conn.closed:
             return
         cur = None
@@ -2372,6 +2381,7 @@ class ConstructelBridgePlugin:
             if cur is not None:
                 cur.close()
             return
+        self._operators_unavailable = False
         scope_codes = None
         try:
             cur.execute(SCOPE_CODES_QUERY)
@@ -3685,7 +3695,9 @@ class ConstructelBridgePlugin:
     # =====================================================================
 
     def _on_init_project(self):
-        """Ouvre le dialog de selection et initialise le projet WYRE."""
+        """Ouvre le dialog de selection et charge les couches de l'operateur
+        preselectionne (provisoire, plan 1.9.0 tache 2 : l'ecran d'accueil
+        de la tache 9 portera le choix de l'operateur)."""
         if not self._connected:
             QMessageBox.warning(
                 self.iface.mainWindow(),
@@ -3694,9 +3706,18 @@ class ConstructelBridgePlugin:
             )
             return
 
-        from .bridge_project_init import InitProjectDialog, init_project
+        operator = self._loading_operator()
+        if operator is None:
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                "Constructel Bridge",
+                tr("home.no_operator"),
+            )
+            return
 
-        dlg = InitProjectDialog(self.iface.mainWindow())
+        from .bridge_project_init import InitProjectDialog
+
+        dlg = InitProjectDialog(self.iface.mainWindow(), operator=operator)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -3704,18 +3725,44 @@ class ConstructelBridgePlugin:
         if not selected - {"v_form_lists"}:
             return  # rien selectionne
 
+        basemaps = dlg.selected_basemaps() if dlg.want_basemap() else set()
+        self._load_operator_layers(operator, selected, basemaps, dlg.want_styles())
+
+    def _loading_operator(self) -> OperatorInfo | None:
+        """Operateur propose au chargement (decision T2-c4) : liste des
+        operateurs illisible -> Wyre, comme 1.8.4 ; sinon le dernier charge
+        sur le poste s'il est utilisable, puis le premier ; liste lue sans
+        operateur utilisable -> None (spec 6.2)."""
+        if self._operators_unavailable:
+            self._log("Liste des operateurs indisponible : chargement des couches Wyre (repli 1.8.4)",
+                      Qgis.MessageLevel.Warning)
+            return FALLBACK_OPERATOR
+        return preselect_operator(self._operators, QgsSettings().value(LAST_OPERATOR_KEY, "") or "")
+
+    def _load_operator_layers(self, operator: OperatorInfo, selected: set, basemaps: set,
+                              apply_styles: bool, suffix: bool | None = None) -> int:
+        """Charge les couches *selected* (cles simples du catalogue) de
+        *operator*, les fonds de plan *basemaps*, puis traductions, sources
+        des listes de valeurs, hooks d'edition et lecture seule. Memorise
+        l'operateur sur le poste (LAST_OPERATOR_KEY). Ne leve jamais :
+        erreur -> init.error, retour 0. Retourne le nombre de couches
+        ajoutees."""
         try:
+            from .bridge_project_init import init_project
+
             conn_params, password = self._init_conn_params()
 
             count = init_project(
                 conn_params, password, selected,
-                add_basemap=dlg.want_basemap(),
-                apply_styles=dlg.want_styles(),
-                selected_basemaps=dlg.selected_basemaps(),
+                add_basemap=bool(basemaps),
+                apply_styles=apply_styles,
+                selected_basemaps=set(basemaps),
+                operator=operator,
+                suffix=suffix,
             )
+            QgsSettings().setValue(LAST_OPERATOR_KEY, operator.schema)
 
             # Appliquer les traductions i18n
-            from . import bridge_sketcher
             bridge_sketcher.apply_all_translations()
             self._rewrite_value_relation_sources()
 
@@ -3729,7 +3776,8 @@ class ConstructelBridgePlugin:
                 level=Qgis.MessageLevel.Success,
                 duration=5,
             )
-        except Exception as exc:
+            return count
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
             QMessageBox.critical(
                 self.iface.mainWindow(),
                 "Constructel Bridge",
@@ -3737,6 +3785,7 @@ class ConstructelBridgePlugin:
             )
             import traceback
             self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
+            return 0
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL
