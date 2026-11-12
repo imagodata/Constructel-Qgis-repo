@@ -117,7 +117,11 @@ On veut un **écran d'accueil** derrière le clic principal, qui :
 
 - **Toutes** les couches d'un opérateur sont dans le groupe à son nom (décision Simon).
 - Le reste des couches de travail est dans le groupe **Commun** (décision Simon).
-- **Noms des couches opérateur : suffixe partout** (décision Simon). Dès le premier chargement, une couche opérateur porte le libellé de son opérateur : « Câbles · Wyre », « Zones POP · Orange ». Le suffixe s'ajoute **après** la traduction du nom (`apply_layer_name`), dans la langue courante. Les couches communes n'ont pas de suffixe.
+- **Noms des couches opérateur : suffixe de l'opérateur** (décisions Simon) : « Câbles · Wyre », « Zones POP · Orange ».
+  - **Un seul opérateur dans le projet** : le suffixe est **optionnel**. Une case « Ajouter le nom de l'opérateur aux couches » est proposée dans la tuile de chargement. Mon interprétation de « en option » : la case est **décochée par défaut**, et le dernier choix est mémorisé sur le poste.
+  - **Dès qu'un deuxième opérateur est chargé ou ajouté** : le suffixe devient **obligatoire** pour toutes les couches opérateur. La case est alors cochée et grisée. Au clic « Ajouter », les couches du premier opérateur encore sans suffixe le reçoivent aussi.
+  - Le suffixe s'ajoute **après** la traduction du nom (`apply_layer_name`), dans la langue courante, et suit un changement de langue.
+  - Les couches communes n'ont jamais de suffixe.
 
 ### 6.5 Projets existants (structure 1.8.x)
 
@@ -125,7 +129,7 @@ On veut un **écran d'accueil** derrière le clic principal, qui :
 - La réorganisation n'a lieu **qu'au clic « Ajouter des couches »** dans le nouvel écran (décision Simon) :
   - les groupes racine *Demand Points*, *Infrastructure* et *Zones* passent dans le groupe de l'opérateur dont ils viennent (schéma de la source des couches, `wyre` pour les projets 1.8.x) ;
   - les groupes communs (*Chantier*, *OSIRIS*, *Cadastre UrbIS*, *Urbanisme*) passent dans **Commun** ;
-  - les couches opérateur existantes reçoivent le suffixe (choix Claude, par cohérence avec « suffixe partout »).
+  - les couches opérateur existantes suivent la règle du suffixe du § 6.4 : suffixe optionnel si le projet n'a toujours qu'un opérateur, obligatoire si on ajoute un autre opérateur.
 - Un projet partagé en base est en lecture seule hors administrateurs (mig 539). Après réorganisation, l'utilisateur l'enregistre en local, comme pour toute autre modification.
 
 ### 6.6 Hors connexion
@@ -182,5 +186,5 @@ On veut un **écran d'accueil** derrière le clic principal, qui :
 2. **Un opérateur déjà chargé reste sélectionnable** en mode ajout, pour compléter ses couches manquantes.
 3. **Style de repli** : le style `wyre` de la même table si l'opérateur n'a pas le sien.
 4. **Liste d'opérateurs** : filtre « schéma lisible » (USAGE), croisé avec les scopes quand le serveur en renvoie. Ce filtre remplace la règle « ADMIN/MANAGER voient tout » et le repli « Wyre seul ».
-5. **Ancien projet réorganisé** : ses couches opérateur reçoivent aussi le suffixe.
+5. **Suffixe optionnel avec un seul opérateur** : la case est décochée par défaut et le choix est mémorisé sur le poste. C'est mon interprétation de « en option ».
 6. **Version cible** : 1.9.0 (nouvelle fonctionnalité).
