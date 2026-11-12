@@ -140,6 +140,13 @@ class _FakeFields:
         return self._names.index(name) if name in self._names else -1
 
 
+class _FakeEditFormConfig:
+    """QgsEditFormConfig sans conteneur : apply_form_containers s'arrete."""
+
+    def invisibleRootContainer(self):
+        return None
+
+
 class FakeLayer(_Properties):
     """Couche vectorielle construite comme ``QgsVectorLayer(source, name,
     provider)`` : PostgreSQL (``"postgres"``) ou WFS (``"WFS"``).
@@ -204,6 +211,15 @@ class FakeLayer(_Properties):
 
     def setEditorWidgetSetup(self, index, setup):
         self._setups[index] = setup
+
+    def editFormConfig(self):
+        return _FakeEditFormConfig()
+
+    def setEditFormConfig(self, _config):
+        pass
+
+    def labeling(self):
+        return None
 
     def mapTipTemplate(self):
         return self._map_tip
