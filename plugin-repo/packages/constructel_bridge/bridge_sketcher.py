@@ -425,6 +425,8 @@ class _ProjectLayers:
                 self.by_source.setdefault(key, []).append(layer)
         self.tables = {table for _schema, table in self.by_source}
         self.labels = project_operator_naming(project)[0]
+        # Schemas operateur de l'identite du projet (bridge/operator).
+        self.operators = parse_project_operators(project.readEntry("bridge", "operator", "")[0])
         self._tree_rank = None
         self._targets: dict = {}
 
@@ -451,19 +453,21 @@ class _ProjectLayers:
 
     def target(self, schema: str, table: str, *, unique_fallback: bool = False):
         """Couche cible de (*schema*, *table*) : la meilleure de ``ranked``.
-        Aucune : None, sauf avec *unique_fallback* (couche commune) quand
-        toutes les couches chargees de la table (invalides comprises)
-        appartiennent a un seul schema : la meilleure de ce schema.
-        Reparties sur plusieurs schemas : None."""
+        Aucune : None, sauf avec *unique_fallback* (couche commune) quand les
+        couches VALIDES de la table, parmi les schemas operateur de
+        l'identite du projet (``bridge/operator``), sont toutes dans un seul
+        schema : la meilleure de ce schema. Reparties sur plusieurs schemas,
+        ou hors de l'identite (public...) : None."""
         candidates = self.ranked(self.by_source.get((schema, table), []))
         if candidates:
             return candidates[0]
         if unique_fallback:
-            schemas = {layer_schema for layer_schema, t in self.by_source if t == table}
+            schemas = {
+                layer_schema for (layer_schema, t), layers in self.by_source.items()
+                if t == table and layer_schema in self.operators and any(ly.isValid() for ly in layers)
+            }
             if len(schemas) == 1:
-                candidates = self.ranked(self.by_source[(schemas.pop(), table)])
-                if candidates:
-                    return candidates[0]
+                return self.ranked(self.by_source[(schemas.pop(), table)])[0]
         return None
 
     def designated(self, config):
@@ -472,7 +476,9 @@ class _ProjectLayers:
         d'une couche du projet, nom de table, nom traduit avec ou sans
         suffixe). Le suffixe ne sert qu'a retrouver la table, jamais
         l'operateur. *couches* : celles que la reference designe deja
-        (vide pour un nom de table ou un nom perime)."""
+        (toutes les homonymes ; vide pour un nom de table ou un nom perime).
+        Pour un nom exact, la table est lue sur la premiere homonyme qui a
+        une source PostgreSQL (une couche memoire homonyme ne la masque pas)."""
         layer = self.by_id.get(config.get("Layer") or "")
         if layer is not None:
             return self._table_of(layer), [layer]
@@ -481,7 +487,7 @@ class _ProjectLayers:
             return None, []
         named = self.by_name.get(name)
         if named:
-            return self._table_of(named[0]), named
+            return next((self._table_of(ly) for ly in named if self.source(ly)), None), named
         if name in self.tables or name in OPERATOR_TABLES:
             return name, []
         table = _DISPLAY_NAME_TABLES.get(name) or _DISPLAY_NAME_TABLES.get(split_operator_suffix(name)[0])
@@ -511,6 +517,11 @@ class _ProjectLayers:
                 if other_table == table and other_schema != target_schema:
                     for other in others:
                         keys.update((other.name(), other.id()))
+            if not target.subsetString():
+                # Copie filtree du meme schema citee par identifiant : vers
+                # l'original non filtre (meme regle que les ValueRelation).
+                keys.update(ly.id() for ly in self.by_source[(target_schema, table)]
+                            if ly is not target and ly.subsetString())
             for key in keys:
                 if targets.setdefault(key, target.id()) != target.id():
                     ambiguous.add(key)
@@ -547,18 +558,22 @@ def _value_relations(layer):
 def _retarget_value_relation(config: dict, schema: str, index: _ProjectLayers, *,
                              unique_fallback: bool = False) -> bool:
     """Oriente la ValueRelation *config* (modifiee en place) vers la couche de
-    (*schema*, t). Table t non operateur : rien. Couche valide de (schema, t)
-    deja designee (copie filtree choisie comprise) : gardee, ``Layer`` et
-    ``LayerName`` resynchronises sur elle ; sinon ``index.target`` ; aucune :
-    rien, jamais la couche d'un autre operateur (sauf *unique_fallback*,
-    couche commune). ``LayerSource`` (s'il existe) passe dans le schema de la
-    cible. True si *config* a change."""
+    (*schema*, t). Table t non operateur : rien. Couches valides de (schema, t)
+    deja designees (identifiant ou homonymes) : la meilleure selon
+    ``index.ranked``, ``Layer`` et ``LayerName`` resynchronises sur elle ; une
+    copie filtree n'est jamais gardee face a un original non filtre de
+    (schema, t) (apply_layer_name rend copie et original homonymes) ; sinon
+    ``index.target`` ; aucune : rien, jamais la couche d'un autre operateur
+    (sauf *unique_fallback*, couche commune). ``LayerSource`` (s'il existe)
+    passe dans le schema de la cible. True si *config* a change."""
     table, designated = index.designated(config)
     if table not in OPERATOR_TABLES:
         return False
-    target = next((ly for ly in designated if ly.isValid() and index.source(ly) == (schema, table)), None)
-    if target is None:
-        target = index.target(schema, table, unique_fallback=unique_fallback)
+    best = index.target(schema, table, unique_fallback=unique_fallback)
+    chosen = index.ranked([ly for ly in designated if index.source(ly) == (schema, table)])
+    target = chosen[0] if chosen else best
+    if target is not None and best is not None and target.subsetString() and not best.subsetString():
+        target = best
     if target is None:
         return False
     wanted = {"Layer": target.id(), "LayerName": target.name()}

@@ -563,3 +563,110 @@ def test_common_layer_single_operator_with_filtered_copy_targets_original(sk, pr
     assert (cfg["Layer"], cfg["LayerName"]) == (original.id(), "Zones POP · Orange")
     assert 'table="orange"."zone_pop"' in cfg["LayerSource"]
     assert cfg["Value"] == f"attribute(get_feature('{original.id()}','id',zone_pop_id),'code')"
+
+
+# --- tour 2 : copies homonymes (F1), schemas de l'identite et couches valides (T4-I4b) ----
+
+
+def _homonym_filtered_copy(project, schema, name):
+    """Copie filtree de (schema, zone_pop), creee sous le nom *name* : son
+    identifiant « Zones POP · ..._<n> » (Z avant z) se classe avant
+    « zone_pop_<n> », et elle est placee en tete de l'arbre."""
+    copy = FakeLayer.pg(schema, "zone_pop", name)
+    copy.setSubsetString("\"code\" = 'BXL01'")
+    project.addMapLayer(copy, False)
+    project.layerTreeRoot().insertLayer(0, copy)
+    return copy
+
+
+def test_homonym_filtered_copy_never_kept_after_reload(sk, project):  # noqa: F811  # F1 (a)
+    # apply_layer_name rend la copie homonyme de l'original. Original
+    # supprime : la copie, seule, est ciblee ; original recharge : Layer,
+    # Value et infobulle reviennent sur lui, la copie n'est pas « gardee ».
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    original = project.add_pg("orange", "zone_pop")
+    copy = _homonym_filtered_copy(project, "orange", "Zones POP · Orange")
+    cables = _cables_pointing_at_zone_pop(project, "orange")
+    cables.setMapTipTemplate("[% attribute(get_feature('zone_pop','id',\"zone_pop_id\"),'code') %]")
+    sk.apply_all_translations("fr")
+    assert original.name() == copy.name() == "Zones POP · Orange"
+    assert vr(cables)["Layer"] == original.id()
+
+    project.removeMapLayer(original.id())
+    sk.apply_all_translations("fr")
+    assert vr(cables)["Layer"] == copy.id()  # seule couche de (orange, zone_pop)
+
+    reloaded = project.add_pg("orange", "zone_pop")
+    sk.apply_all_translations("fr")
+
+    assert reloaded.name() == "Zones POP · Orange"
+    cfg = vr(cables)
+    assert (cfg["Layer"], cfg["LayerName"]) == (reloaded.id(), "Zones POP · Orange")
+    assert cfg["Value"] == f"attribute(get_feature('{reloaded.id()}','id',zone_pop_id),'code')"
+    assert f"get_feature('{reloaded.id()}'," in cables.mapTipTemplate()
+
+
+def test_common_vr_homonym_filtered_copy_never_chosen(sk, project):  # noqa: F811  # F1 (b)
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    original = project.add_pg("orange", "zone_pop")  # identifiant zone_pop_<n>
+    original.setName("Zones POP · Orange")  # comme apply_layer_name
+    copy = _homonym_filtered_copy(project, "orange", "Zones POP · Orange")
+    assert copy.id() < original.id()
+    interventions = add_vr(
+        project.add_pg("chantier", "interventions", "Interventions"),
+        {"LayerName": "Zones POP · Orange", "LayerSource": source("orange", "zone_pop"), "Key": "id", "Value": "code"},
+    )
+
+    sk._sync_value_relation_layer_names(project)
+
+    assert vr(interventions)["Layer"] == original.id()
+
+
+def test_memory_homonym_listed_first_does_not_hide_the_table(sk, project):  # noqa: F811  # F1 (c)
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    memory = FakeLayer("", "Zones POP · Orange", "memory")  # identifiant classe avant
+    project.addMapLayer(memory)
+    original = project.add_pg("orange", "zone_pop")
+    original.setName("Zones POP · Orange")
+    cables = add_vr(project.add_pg("orange", "cables"),
+                    {"LayerName": "Zones POP · Orange", "Key": "id", "Value": "code"})
+    assert list(project.mapLayers())[0] == memory.id()
+
+    sk.retarget_operator_references(project)
+
+    assert vr(cables)["Layer"] == original.id()
+
+
+def test_common_layer_fallback_ignores_schemas_outside_identity(sk, project):  # noqa: F811  # T4-I4b
+    # Orange seul, orange.zone_pop non chargee ; une sauvegarde public.zone_pop
+    # n'est pas un schema operateur : aucune reecriture.
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    project.add_pg("public", "zone_pop", "zone_pop backup")
+    original = {"LayerName": "zone_pop", "LayerSource": source("wyre", "zone_pop"), "Key": "id",
+                "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"}
+    interventions = add_vr(project.add_pg("chantier", "interventions", "Interventions"), dict(original))
+
+    sk._sync_value_relation_layer_names(project)
+
+    assert vr(interventions) == original
+
+
+def test_common_layer_fallback_counts_only_valid_layers(sk, project):  # noqa: F811  # T4-I4b
+    # Projet partage ouvert par un utilisateur Orange : les couches wyre sont
+    # injoignables (isValid() faux) ; la liste de chantier retombe sur orange.
+    stamp(project, ["wyre", "orange"], LABELS_TWO)
+    for name in ("Zones POP · Wyre", "Zones POP · Wyre (2)"):
+        project.add_pg("wyre", "zone_pop", name).isValid = lambda: False
+    pop_or = project.add_pg("orange", "zone_pop", "Zones POP · Orange")
+    interventions = add_vr(
+        project.add_pg("chantier", "interventions", "Interventions"),
+        {"LayerName": "zone_pop", "LayerSource": source("wyre", "zone_pop"), "Key": "id",
+         "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"},
+    )
+
+    sk._sync_value_relation_layer_names(project)
+
+    cfg = vr(interventions)
+    assert (cfg["Layer"], cfg["LayerName"]) == (pop_or.id(), "Zones POP · Orange")
+    assert 'table="orange"."zone_pop"' in cfg["LayerSource"]
+    assert cfg["Value"] == f"attribute(get_feature('{pop_or.id()}','id',zone_pop_id),'code')"
