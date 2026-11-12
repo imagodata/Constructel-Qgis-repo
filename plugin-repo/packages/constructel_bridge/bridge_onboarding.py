@@ -7,7 +7,14 @@ Affiche apres la premiere connexion reussie:
   Page 2: Plugins recommandes (facultatifs) avec bouton d'installation
   Page 3: Configuration QGIS Resource Sharing (repo Constructel)
   Page 4: Resume et finalisation
+
+Utilisable aussi SANS connexion a la base Farois (check-in hors connexion,
+spec 2026-11-12 § 6.6) : sans profil, la page 1 (la seule qui ecrit via
+db_conn) n'est pas enregistree et le resume indique que le profil sera
+disponible une fois connecte.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -92,6 +99,43 @@ FILTERMATE_REPO_BRANCH = os.environ.get("CONSTRUCTEL_FILTERMATE_BRANCH", "master
 FILTERMATE_TARGET_COLLECTION = os.environ.get(
     "CONSTRUCTEL_FILTERMATE_COLLECTION", "filtermate"
 )
+
+
+# =========================================================================
+# Installation / activation d'un plugin (unique chemin : assistant + Diagnostic)
+# =========================================================================
+class PluginInstallerUnavailable(ImportError):
+    """pyplugin_installer (installeur de QGIS) est introuvable."""
+
+
+def install_or_activate_plugin(pid: str, upgrade: bool = False) -> str:
+    """Rend le plugin *pid* disponible et actif ; leve en cas d'echec.
+
+    Retour : "active" (deja actif), "activated" (installe mais inactif :
+    loadPlugin + startPlugin), "installed" (absent : installPlugin) ou
+    "updated" (installe, reinstalle car *upgrade*).
+
+    Seul chemin d'installation du plugin : ``_install_selected_plugins`` et le
+    Diagnostic l'appellent. Le cache de l'installeur QGIS
+    (``fetchAvailablePlugins(False)``) est charge juste avant installPlugin ;
+    un plugin deja present n'a pas besoin de l'installeur (donc pas de reseau).
+    """
+    installed = pid in available_plugins
+    if installed and not upgrade:
+        if pid in active_plugins:
+            return "active"
+        loadPlugin(pid)
+        startPlugin(pid)
+        return "activated"
+
+    try:
+        from pyplugin_installer import instance as plugin_installer_instance
+    except ImportError as exc:
+        raise PluginInstallerUnavailable(str(exc)) from exc
+    installer = plugin_installer_instance()
+    installer.fetchAvailablePlugins(False)
+    installer.installPlugin(pid)
+    return "updated" if installed else "installed"
 
 
 # =========================================================================
@@ -471,6 +515,7 @@ class OnboardingWizard(QWizard):
         is_new_user: bool,
         db_conn=None,
         email_domain: str = "",
+        include_profile: bool = True,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("wizard.title"))
@@ -481,16 +526,24 @@ class OnboardingWizard(QWizard):
         self._username = username
         self._user_id = user_id
         self._db_conn = db_conn
+        self._include_profile = include_profile
         self._actions_done: list[str] = []
 
-        self._page_user = UserProfilePage(username, user_id, is_new_user, email_domain=email_domain)
+        # Hors connexion : pas de page Profil (elle ecrit via db_conn).
+        self._page_user = (
+            UserProfilePage(username, user_id, is_new_user, email_domain=email_domain)
+            if include_profile else None
+        )
         self._page_plugins = PluginBundlePage()
         self._page_rs = ResourceSharingPage()
         self._page_fm = FilterMateSharingPage()
         self._page_services = ExternalServicesPage()
         self._page_summary = SummaryPage()
 
-        self.setPage(self.PAGE_USER, self._page_user)
+        if include_profile:
+            self.setPage(self.PAGE_USER, self._page_user)
+        else:
+            self.setStartId(self.PAGE_PLUGINS)
         self.setPage(self.PAGE_PLUGINS, self._page_plugins)
         self.setPage(self.PAGE_RESOURCE_SHARING, self._page_rs)
         self.setPage(self.PAGE_FILTERMATE, self._page_fm)
@@ -515,8 +568,11 @@ class OnboardingWizard(QWizard):
         if self._page_fm.should_configure():
             self._configure_filtermate_sharing()
 
-        QgsSettings().setValue("constructel_bridge/onboarding_done", True)
-        self._actions_done.append(tr("onboard.action.onboarding_done"))
+        # Hors connexion le profil reste a faire : on ne marque pas l'assistant
+        # termine, sinon la premiere connexion sauterait la page Profil.
+        if self._include_profile:
+            QgsSettings().setValue("constructel_bridge/onboarding_done", True)
+            self._actions_done.append(tr("onboard.action.onboarding_done"))
 
         summary = tr("onboard.summary.header")
         for action in self._actions_done:
@@ -525,6 +581,10 @@ class OnboardingWizard(QWizard):
         self._page_summary.set_summary(summary)
 
     def _update_user_profile(self):
+        if not self._include_profile:
+            self._actions_done.append(tr("onboard.action.profile_offline"))
+            return
+
         if not self._db_conn or self._db_conn.closed:
             return
 
@@ -565,34 +625,29 @@ class OnboardingWizard(QWizard):
             self._actions_done.append(tr("onboard.action.no_plugins"))
             return
 
-        try:
-            from pyplugin_installer import instance as plugin_installer_instance
-            installer = plugin_installer_instance()
-            installer.fetchAvailablePlugins(False)
-        except Exception as exc:
-            self._actions_done.append(
-                tr("onboard.action.installer_unavailable", error=exc)
-            )
-            self._log(f"pyplugin_installer unavailable: {exc}", Qgis.MessageLevel.Warning)
-            return
-
+        installer_reported = False
         for pid in selected:
             try:
-                if pid in available_plugins and pid in active_plugins:
-                    continue
-
-                if pid in available_plugins and pid not in active_plugins:
-                    loadPlugin(pid)
-                    startPlugin(pid)
-                    self._actions_done.append(tr("onboard.action.plugin_activated", pid=pid))
-                    self._log(f"Plugin activated: {pid}")
-                else:
-                    installer.installPlugin(pid)
-                    self._actions_done.append(tr("onboard.action.plugin_installed", pid=pid))
-                    self._log(f"Plugin installed: {pid}")
+                outcome = install_or_activate_plugin(pid)
+            except PluginInstallerUnavailable as exc:
+                # Installeur de QGIS indisponible : un seul message, les
+                # plugins deja installes continuent d'etre actives.
+                if not installer_reported:
+                    installer_reported = True
+                    self._actions_done.append(
+                        tr("onboard.action.installer_unavailable", error=exc)
+                    )
+                    self._log(f"pyplugin_installer unavailable: {exc}", Qgis.MessageLevel.Warning)
             except Exception as exc:
                 self._actions_done.append(tr("onboard.action.plugin_error", pid=pid, error=exc))
                 self._log(f"Plugin error {pid}: {exc}", Qgis.MessageLevel.Warning)
+            else:
+                if outcome == "activated":
+                    self._actions_done.append(tr("onboard.action.plugin_activated", pid=pid))
+                    self._log(f"Plugin activated: {pid}")
+                elif outcome != "active":
+                    self._actions_done.append(tr("onboard.action.plugin_installed", pid=pid))
+                    self._log(f"Plugin installed: {pid}")
 
     def _configure_resource_sharing(self):
         rs_available = (

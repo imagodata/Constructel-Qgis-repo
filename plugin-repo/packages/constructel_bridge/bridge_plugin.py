@@ -4140,7 +4140,10 @@ class ConstructelBridgePlugin:
     # Onboarding
     # =====================================================================
 
-    def _run_onboarding(self, is_new_user: bool):
+    def _run_onboarding(self, is_new_user: bool, include_profile: bool = True):
+        """Ouvre l'assistant. *include_profile* False (check-in hors
+        connexion, spec 2026-11-12 § 6.6) : sans page Profil et sans aucun
+        acces a la base."""
         from .bridge_onboarding import OnboardingWizard
 
         wizard = OnboardingWizard(
@@ -4150,21 +4153,21 @@ class ConstructelBridgePlugin:
             is_new_user=is_new_user,
             # Session nominative : plus d'UPDATE ref.users par le plugin
             # (spec §5.7.8, trigger 502) -- le profil se gere dans Farois.
-            db_conn=None if self._auth_mode == AUTH_MODE_NOMINAL else self._conn,
+            db_conn=(
+                None if not include_profile or self._auth_mode == AUTH_MODE_NOMINAL
+                else self._conn
+            ),
             email_domain=EMAIL_DOMAIN,
+            include_profile=include_profile,
         )
         wizard.exec()
-        self._refresh_audit_identity()
+        if include_profile:
+            self._refresh_audit_identity()
 
     def _on_onboarding(self):
-        if not self._connected:
-            QMessageBox.warning(
-                self.iface.mainWindow(),
-                "Constructel Bridge",
-                tr("conn.connect_first"),
-            )
-            return
-        self._run_onboarding(is_new_user=False)
+        # Check-in lancable sans connexion : les plugins recommandes, Resource
+        # Sharing et le resume n'ont pas besoin de la base ; le profil, si.
+        self._run_onboarding(is_new_user=False, include_profile=self._connected)
 
     # =====================================================================
     # Status

@@ -47,6 +47,7 @@ def test_pep604_annotations_need_future_import():
 
 def test_planned_modules_carry_the_future_import():
     # D16 : modules du plan deja touches ; les nouveaux modules s'ajoutent ici.
-    for name in ("bridge_plugin.py", "bridge_project_init.py", "bridge_sketcher.py", "bridge_operators.py"):
+    for name in ("bridge_plugin.py", "bridge_project_init.py", "bridge_sketcher.py", "bridge_operators.py",
+                 "bridge_onboarding.py"):
         tree = ast.parse((PKG / name).read_text(encoding="utf-8"))
         assert _has_future_annotations(tree), name
