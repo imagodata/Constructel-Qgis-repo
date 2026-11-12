@@ -293,6 +293,23 @@ def test_operator_loaded_after_common_only_load_is_primary(pi, monkeypatch):
     assert rels["cables_to_pop"].referencingLayerId() == project.layer("wyre", "cables").id()
 
 
+def test_operator_already_present_enters_identity(pi, monkeypatch):
+    # Decision T2-c3 : couche operateur ajoutee OU deja presente. Projet sans
+    # bridge/operator contenant deja wyre.cables et wyre.zone_pop : « Ajouter »
+    # Wyre n'ajoute rien mais tamponne Wyre, qui reste principal apres Orange.
+    project = install_fake_project(pi, monkeypatch)
+    project.add_pg("wyre", "cables"); project.add_pg("wyre", "zone_pop")
+    assert pi.init_project({}, "", {"cables", "zone_pop"}, operator=WYRE) == 0
+    assert pi.get_bridge_info()["operators"] == ["wyre"]
+    assert pi.get_bridge_info()["operator_labels"] == {"wyre": "Wyre"}
+    pi.init_project({}, "", {"cables", "zone_pop"}, operator=ORANGE)
+    assert pi.get_bridge_info()["operators"] == ["wyre", "orange"]
+    rels = project.relationManager().relations()
+    assert rels["cables_to_pop"].referencingLayerId() == project.layer("wyre", "cables").id()
+    assert rels["cables_to_pop__orange"].referencingLayerId() == project.layer("orange", "cables").id()
+    assert not any(i.endswith("__wyre") for i in rels)
+
+
 def test_operator_suffix_entry_is_none_until_chosen(pi, monkeypatch):
     project = install_fake_project(pi, monkeypatch)
     pi.stamp_project(WYRE)

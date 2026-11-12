@@ -149,8 +149,8 @@ def stamp_project(operator: OperatorInfo, suffix: bool | None = None) -> None:
 
     init_project l'appelle juste AVANT le premier addMapLayer d'une couche
     operateur de *operator* (le suffixe des noms de couches, tache 3, est
-    pose sur layersAdded et lit cette identite), et jamais si aucune couche
-    operateur n'est ajoutee (decision T2-c3).
+    pose sur layersAdded et lit cette identite), ou sur une couche operateur
+    deja presente ; jamais si aucune n'est ajoutee ni presente (T2-c3).
     """
     project = QgsProject.instance()
     from qgis.core import QgsExpressionContextUtils
@@ -991,8 +991,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     quel que soit le nombre d'operateurs, dans « Commun ». Une couche deja
     presente (meme schema.table, meme typename WFS) est reprise telle quelle.
     L'operateur n'entre dans l'identite du projet (stamp_project) que si
-    une de ses couches operateur est reellement ajoutee, juste avant son
-    addMapLayer ; version et plugin sont toujours ecrits.
+    une de ses couches operateur est ajoutee (juste avant son addMapLayer)
+    ou deja presente ; version et plugin sont toujours ecrits.
 
     Returns
     -------
@@ -1031,6 +1031,11 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         # Eviter les doublons : reprendre la couche existante (relations)
         present = existing.get(_catalog_table_id(entry))
         if present is not None:
+            if key in OPERATOR_KEYS and not stamped:
+                # Deja presente : l'operateur est dans le projet (T2-c3) ;
+                # aucun addMapLayer ici, l'ordre n'est pas en jeu.
+                stamp_project(operator, suffix)
+                stamped = True
             loaded[lkey] = present
             skipped += 1
             continue
@@ -1050,7 +1055,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         if key in OPERATOR_KEYS and not stamped:
             # Identite AVANT le premier addMapLayer d'une couche operateur
             # (suffixe pose sur layersAdded, tache 3) ; un operateur sans
-            # couche ajoutee n'y entre jamais (decision T2-c3).
+            # couche ajoutee ni deja presente n'y entre jamais (T2-c3).
             stamp_project(operator, suffix)
             stamped = True
 
