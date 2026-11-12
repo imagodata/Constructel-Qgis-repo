@@ -25,6 +25,19 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
+from .bridge_operators import (
+    COMMON_ROOT,
+    GROUP_KIND_PROPERTY,
+    GROUP_SCHEMA_PROPERTY,
+    OPERATOR_TABLES,
+    canonical_group,
+    operator_layer_name,
+    parse_operator_labels,
+    parse_project_operators,
+    parse_suffix_flag,
+    split_operator_suffix,
+    suffix_applies,
+)
 from .i18n import get_language
 from .i18n.layer_translations import (
     FIELD_ALIASES,
@@ -138,8 +151,38 @@ def apply_value_relation_columns(layer: QgsVectorLayer, lang: str | None = None)
 # 3. Noms de couches
 # =====================================================================
 
-def apply_layer_name(layer: QgsVectorLayer, lang: str | None = None):
-    """Renomme la couche dans le Layer Tree selon la langue."""
+def project_operator_naming(project) -> tuple[dict[str, str], bool]:
+    """Identite du projet pour le nommage : ``(libelles, suffixe actif)``.
+
+    *libelles* : ``bridge/operator_labels`` (schema -> libelle ; ``{}`` pour un
+    projet 1.8, qui n'est donc jamais suffixe). Suffixe actif : au moins deux
+    operateurs dans ``bridge/operator``, ou ``bridge/operator_suffix`` coche
+    (une entree absente vaut non coche)."""
+    labels = parse_operator_labels(project.readEntry("bridge", "operator_labels", "")[0])
+    operators = parse_project_operators(project.readEntry("bridge", "operator", "")[0])
+    opted_in, found = project.readEntry("bridge", "operator_suffix", "")
+    return labels, suffix_applies(operators, parse_suffix_flag(opted_in if found else ""))
+
+
+def _layer_schema(layer: QgsVectorLayer) -> str:
+    """Schema PostgreSQL de la source de la couche, "" pour une autre source."""
+    provider = layer.dataProvider()
+    if provider and provider.name() == "postgres":
+        return QgsDataSourceUri(layer.source()).schema()
+    return ""
+
+
+def apply_layer_name(layer: QgsVectorLayer, lang: str | None = None, naming=None):
+    """Renomme la couche dans le Layer Tree selon la langue.
+
+    Le nom est toujours recalcule depuis LAYER_DISPLAY_NAMES, jamais depuis le
+    nom courant : le suffixe de l'operateur (« Cables · Wyre ») ne s'empile
+    donc pas, meme apres un second « Ajouter » ou un changement de langue. Il
+    est ajoute apres la traduction quand la table est une table d'operateur,
+    que le schema de la source a un libelle dans ``bridge/operator_labels`` et
+    que ``project_operator_naming`` l'active ; sinon il est retire.
+    *naming* : resultat de ``project_operator_naming``, a fournir quand on
+    traite toutes les couches d'affilee."""
     lang = lang or get_language()
     table_key = _resolve_table_key(layer)
     if not table_key:
@@ -150,6 +193,11 @@ def apply_layer_name(layer: QgsVectorLayer, lang: str | None = None):
         return False
 
     new_name = names.get(lang) or names.get("en", "")
+    if new_name and table_key in OPERATOR_TABLES:
+        labels, suffixed = naming or project_operator_naming(QgsProject.instance())
+        label = labels.get(_layer_schema(layer))
+        if suffixed and label:
+            new_name = operator_layer_name(new_name, label)
     if new_name and layer.name() != new_name:
         layer.setName(new_name)
         return True
@@ -160,30 +208,47 @@ def apply_layer_name(layer: QgsVectorLayer, lang: str | None = None):
 # 4. Noms de groupes
 # =====================================================================
 
+def _is_group(node) -> bool:
+    return not hasattr(node, "layerId")
+
+
+def _rename_group(group, lang: str) -> bool:
+    """Traduit *group* : d'abord par sa propriete GROUP_KIND_PROPERTY (le nom
+    a pu etre modifie a la main), puis par son nom actuel. Le groupe d'un
+    operateur (GROUP_SCHEMA_PROPERTY) porte son libelle : jamais renomme."""
+    if group.customProperty(GROUP_SCHEMA_PROPERTY):
+        return False
+    kind = group.customProperty(GROUP_KIND_PROPERTY)
+    canonical = kind if kind in GROUP_NAMES else canonical_group(group.name(), GROUP_NAMES)
+    if canonical is None:
+        return False
+    tr_dict = GROUP_NAMES[canonical]
+    new_name = tr_dict.get(lang) or tr_dict.get("en", group.name())
+    if new_name == group.name():
+        return False
+    group.setName(new_name)
+    return True
+
+
 def apply_group_names(lang: str | None = None):
-    """Renomme les groupes du Layer Tree selon la langue."""
+    """Renomme les groupes du Layer Tree selon la langue.
+
+    Parcourt les enfants de la racine et ceux des groupes d'operateur
+    (GROUP_SCHEMA_PROPERTY) et de « Commun » (GROUP_KIND_PROPERTY == Commun) ;
+    les groupes personnels et leur contenu ne sont pas touches."""
     lang = lang or get_language()
     root = QgsProject.instance().layerTreeRoot()
     renamed = 0
 
-    # Construire un reverse lookup: n'importe quel nom traduit -> dict complet
-    all_names = {}
-    for canonical, tr_dict in GROUP_NAMES.items():
-        for l, name in tr_dict.items():
-            all_names[name] = (canonical, tr_dict)
-        all_names[canonical] = (canonical, tr_dict)
-
     for child in root.children():
-        if not hasattr(child, "name"):
+        if not _is_group(child):
             continue
-        current_name = child.name()
-        entry = all_names.get(current_name)
-        if entry:
-            _, tr_dict = entry
-            new_name = tr_dict.get(lang) or tr_dict.get("en", current_name)
-            if new_name != current_name:
-                child.setName(new_name)
-                renamed += 1
+        if _rename_group(child, lang):
+            renamed += 1
+        if child.customProperty(GROUP_SCHEMA_PROPERTY) or child.customProperty(GROUP_KIND_PROPERTY) == COMMON_ROOT:
+            for sub in child.children():
+                if _is_group(sub) and _rename_group(sub, lang):
+                    renamed += 1
 
     return renamed
 
@@ -368,7 +433,12 @@ def _sync_value_relation_layer_names(project):
             # table, couche personnelle homonyme d'un nom traduit)
             ref_name = config.get("LayerName", "")
             if ref_name and not project.mapLayersByName(ref_name):
-                ref_table = ref_name if ref_name in table_to_layer_name else name_to_table.get(ref_name)
+                # Un nom perime peut porter le suffixe de l'operateur
+                # (« POP Zones · Wyre ») : repli sur le nom sans suffixe.
+                ref_table = (
+                    ref_name if ref_name in table_to_layer_name
+                    else name_to_table.get(ref_name) or name_to_table.get(split_operator_suffix(ref_name)[0])
+                )
                 actual_name = table_to_layer_name.get(ref_table)
                 if actual_name:
                     config["LayerName"] = actual_name
@@ -471,6 +541,7 @@ def apply_all_translations(lang: str | None = None):
     vr_switched = 0
     forms_translated = 0
     labels_switched = 0
+    naming = project_operator_naming(project)
 
     for layer in project.mapLayers().values():
         if not isinstance(layer, QgsVectorLayer):
@@ -483,7 +554,7 @@ def apply_all_translations(lang: str | None = None):
             forms_translated += 1
         if apply_label_expressions(layer, lang):
             labels_switched += 1
-        apply_layer_name(layer, lang)
+        apply_layer_name(layer, lang, naming)
 
     # Apres renommage des couches, synchroniser les LayerName dans les
     # widgets ValueRelation pour que les FK affichent nom/code, pas UUID

@@ -187,3 +187,42 @@ def canonical_group(name: str, group_names: Mapping[str, Mapping[str, str]]) -> 
         if name == canonical or name in translations.values():
             return canonical
     return None
+
+
+# --- Suffixe de l'operateur sur les noms de couches (task 3, spec § 6.4, § 9.5) ----
+# « Cables · Wyre » : un seul operateur dans le projet -> suffixe facultatif
+# (case decochee par defaut) ; au moins deux -> obligatoire. Les couches
+# communes n'en recoivent jamais.
+SUFFIX_SEP = " · "
+# QgsSettings key: default of the "suffix" box of the home screen on this
+# workstation (the project keeps its own choice in bridge/operator_suffix).
+SUFFIX_SETTINGS_KEY = "constructel_bridge/operator_suffix"
+
+
+def parse_suffix_flag(raw) -> bool:
+    """``bridge/operator_suffix`` -> opted in: ``"1"`` / ``"true"`` (any case,
+    surrounding blanks ignored) -> True; anything else, absent included,
+    -> False."""
+    return str(raw if raw is not None else "").strip().lower() in ("1", "true")
+
+
+def suffix_applies(operators: Iterable[str], opted_in: bool) -> bool:
+    """True when layer names carry the operator suffix: at least two distinct
+    operators in the project (mandatory), or the option is ticked. Zero
+    operator (common layers loaded alone) follows the option."""
+    return bool(opted_in) or len(set(operators)) >= 2
+
+
+def operator_layer_name(base: str, label: str) -> str:
+    """``("Cables", "Wyre")`` -> ``"Cables · Wyre"``."""
+    return f"{base}{SUFFIX_SEP}{label}"
+
+
+def split_operator_suffix(name: str) -> tuple[str, Optional[str]]:
+    """``"Zones POP · Orange"`` -> ``("Zones POP", "Orange")``; cut at the LAST
+    separator. A name without separator (or with an empty side) is returned
+    whole with ``None``."""
+    base, sep, label = name.rpartition(SUFFIX_SEP)
+    if sep and base and label:
+        return base, label
+    return name, None
