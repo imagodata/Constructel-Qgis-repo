@@ -12,6 +12,8 @@ Aucune dependance locale (styles, QML) — tout passe par l'API QGIS.
 Compatible avec les projets stockes en base PostgreSQL.
 """
 
+from __future__ import annotations
+
 from qgis.core import (
     Qgis,
     QgsAttributeEditorContainer,

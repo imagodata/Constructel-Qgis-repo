@@ -9,6 +9,8 @@ Responsabilites:
   4. Intercepter les commits de couche pour tagger l'utilisateur
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from typing import Optional
@@ -59,6 +61,13 @@ from .bridge_mtls import (
     pgpass_file_path,
     upsert_pgpass_entry,
     validate_client_certificate,
+)
+from .bridge_operators import (
+    OPERATORS_QUERY,
+    SCOPE_CODES_QUERY,
+    OperatorInfo,
+    parse_operator_rows,
+    usable_operators,
 )
 from .bridge_nominatif import (
     AUTH_MODE_NOMINAL,
@@ -899,6 +908,10 @@ class ConstructelBridgePlugin:
         self._pg_login = ""
         self._scope = None
         self._scope_names = ({}, {})
+        # Bridge 1.9 : operateurs utilisables par la session (ordre code) et
+        # registre schema -> operateur de tous les actifs instancies.
+        self._operators: list[OperatorInfo] = []
+        self._operator_registry: dict[str, OperatorInfo] = {}
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -2126,6 +2139,10 @@ class ConstructelBridgePlugin:
             self._log(f"User registration failed: {exc}", Qgis.MessageLevel.Warning)
             is_new_user = False
 
+        # Bridge 1.9 : operateurs utilisables, dans les deux modes ; jamais
+        # bloquant (_load_operators ne leve pas).
+        self._load_operators()
+
         if nominal:
             self._read_session_scope()
         else:
@@ -2332,6 +2349,43 @@ class ConstructelBridgePlugin:
             cur.close()
 
         return is_new
+
+    def _load_operators(self) -> None:
+        """Lit les operateurs de ref.operateurs puis les codes du scope de la
+        session (spec 6.2) : ``_operator_registry`` (schema -> operateur,
+        tous les actifs instancies) et ``_operators`` (utilisables, ordre
+        code). SELECT seul, jamais bloquant : sur echec de la liste, les deux
+        restent vides (la tache 5 decide du repli). Codes de scope absents
+        (NULL, fonction non executable, ligne vide) : seul le filtre
+        "schema lisible" s'applique."""
+        self._operators = []
+        self._operator_registry = {}
+        if not self._conn or self._conn.closed:
+            return
+        cur = None
+        try:
+            cur = self._conn.cursor()
+            cur.execute(OPERATORS_QUERY)
+            registry = parse_operator_rows(cur.fetchall())
+        except Exception as exc:  # noqa: BLE001 -- ne jamais bloquer la connexion
+            self._log(f"Liste des operateurs indisponible : {exc}", Qgis.MessageLevel.Warning)
+            if cur is not None:
+                cur.close()
+            return
+        scope_codes = None
+        try:
+            cur.execute(SCOPE_CODES_QUERY)
+            row = cur.fetchone()
+            value = row[0] if row else None
+            if isinstance(value, (list, tuple)):  # text[] -> liste Python
+                scope_codes = [str(code) for code in value]
+        except Exception as exc:  # noqa: BLE001 -- ex. login BE sans EXECUTE
+            self._log(f"Codes operateurs de la session indisponibles : {exc}")
+        finally:
+            cur.close()
+        self._operator_registry = {op.schema: op for op in registry}
+        self._operators = usable_operators(registry, scope_codes)
+        self._log("Operateurs utilisables : " + (", ".join(op.code for op in self._operators) or "aucun"))
 
     def _read_session_scope(self):
         """Lit le perimetre de la session nominative : role, capacites

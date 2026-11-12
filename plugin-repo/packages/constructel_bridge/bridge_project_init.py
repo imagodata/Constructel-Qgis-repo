@@ -6,6 +6,8 @@ Dialog de selection de couches avec templates pre-configures,
 puis chargement des couches, styles, relations et basemaps.
 """
 
+from __future__ import annotations
+
 import os
 
 from qgis.PyQt.QtCore import Qt
