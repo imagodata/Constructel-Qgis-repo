@@ -66,6 +66,7 @@ from .bridge_nominatif import (
     AUTH_REFUSED,
     LOGIN_DISABLED,
     NOMINAL_SETTINGS_KEYS,
+    SCOPE_NAMES_SHOWN,
     SCOPE_QUERY,
     ca_bundle_path,
     classify_auth_failure,
@@ -86,6 +87,8 @@ from .bridge_nominatif import (
     should_lock_layer,
     should_reprompt,
     strip_datasource_authcfg,
+    summarize_labels,
+    write_scope_equals_read,
     write_scope_kind,
 )
 
@@ -2361,47 +2364,60 @@ class ConstructelBridgePlugin:
             except Exception as exc:  # noqa: BLE001 -- noms = confort d'affichage
                 self._log(f"Noms des zones du perimetre illisibles : {exc}", Qgis.MessageLevel.Warning)
             self._scope_names = (mro_names, pop_names)
+            # Liste complete ici (diagnostic) ; la barre de messages tronque.
             self._log(
                 f"Perimetre de session : role={scope.role} read={scope.network_read} "
-                f"write={scope.network_write} -- {self._scope_text()}"
+                f"write={scope.network_write} -- {self._scope_text(max_names=None)}"
             )
         except Exception as exc:  # noqa: BLE001 -- ne jamais bloquer la connexion
             self._log(f"Perimetre de session illisible : {exc}", Qgis.MessageLevel.Warning)
         finally:
             cur.close()
 
-    def _scope_text(self) -> str:
-        """Perimetre de la session, pour les messages (volet D3)."""
+    def _scope_dims(self, mro_ids, pop_ids, max_names) -> str:
+        """« 10 MRO : A, B, C… (+7) ; 2 POP : P1, P2 » -- une dimension
+        vide est omise ; noms resolus (zone_mro.name, zone_pop.code), sinon
+        premier bloc de l'UUID."""
+        mro_names, pop_names = self._scope_names
+        dims = []
+        if mro_ids:
+            names = summarize_labels(scope_labels(mro_ids, mro_names), max_names)
+            dims.append(tr("scope.mro", count=len(mro_ids), names=names))
+        if pop_ids:
+            names = summarize_labels(scope_labels(pop_ids, pop_names), max_names)
+            dims.append(tr("scope.pop", count=len(pop_ids), names=names))
+        return tr("scope.sep").join(dims)
+
+    def _scope_text(self, max_names: Optional[int] = SCOPE_NAMES_SHOWN) -> str:
+        """Perimetre de la session, pour les messages (volet D3). Listes
+        tronquees a *max_names* noms (None = liste complete, journal)."""
         if self._auth_mode != AUTH_MODE_NOMINAL:
             return tr("nominal.mode_shared", user=DEFAULT_USER)
         scope = self._scope
         if scope is None:
             return tr("scope.unknown")
         kind = scope_kind(scope)
+        write_kind = write_scope_kind(scope)
         if kind == "all":
             text = tr("scope.all")
         elif kind == "none":
             text = tr("scope.none")
         else:
-            mro_names, pop_names = self._scope_names
-            text = tr(
-                "scope.scoped",
-                mro=", ".join(scope_labels(scope.mro_ids, mro_names)) or "-",
-                pop=", ".join(scope_labels(scope.pop_ids, pop_names)) or "-",
-            )
+            text = self._scope_dims(scope.mro_ids, scope.pop_ids, max_names)
         if not scope.network_write:
             text = f"{text} / {tr('scope.readonly')}"
-        elif write_scope_kind(scope) == "none" and kind != "none":
+        elif write_kind == "none" and kind != "none":
             # Migration Farois 536 : network.write ne suffit plus, il faut
             # aussi un MRO ou une POP coche « ecriture » (can_write).
             text = f"{text} / {tr('scope.write_none_short')}"
-        elif write_scope_kind(scope) == "scoped":
-            mro_names, pop_names = self._scope_names
-            text = f"{text} / " + tr(
-                "scope.write_scoped",
-                mro=", ".join(scope_labels(scope.mro_write_ids, mro_names)) or "-",
-                pop=", ".join(scope_labels(scope.pop_write_ids, pop_names)) or "-",
-            )
+        elif kind == "scoped" and (
+            write_kind == "all" or (write_kind == "scoped" and write_scope_equals_read(scope))
+        ):
+            # Ne pas repeter la liste : ecriture partout ou l'on lit.
+            text = f"{text} / {tr('scope.write_all')}"
+        elif write_kind == "scoped":
+            dims = self._scope_dims(scope.mro_write_ids, scope.pop_write_ids, max_names)
+            text = f"{text} / {tr('scope.write_scoped', dims=dims)}"
         return text
 
     def _warn_if_no_write_perimeter(self) -> bool:

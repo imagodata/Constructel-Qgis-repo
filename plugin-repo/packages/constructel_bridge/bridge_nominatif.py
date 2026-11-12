@@ -16,6 +16,7 @@ Server facts encoded here (verified 2026-10-29 on prod):
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit, urlunsplit
 from pathlib import Path
@@ -387,22 +388,85 @@ class SessionScope:
     write_bypass: bool = False
 
 
+# current_gis_*_ids() renvoient du uuid[] : psycopg2 n'a pas de typecaster
+# pour uuid[] (OID 2951) et rend alors le littéral brut « {a,b} », que l'on
+# itérait caractère par caractère (1.8.0 -> 1.8.3 : périmètre illisible,
+# « {} » pris pour un périmètre non vide). Le cast ::text[] est parsé
+# nativement en liste ; NULL reste NULL (bypass), distinct de « {} ».
 SCOPE_QUERY = (
     "SELECT public.current_gis_role(), "
     "public.current_gis_has_capability('network.read'), "
     "public.current_gis_has_capability('network.write'), "
-    "public.current_gis_mro_ids(false), public.current_gis_mro_ids(true), "
-    "public.current_gis_pop_ids(false), public.current_gis_pop_ids(true)"
+    "public.current_gis_mro_ids(false)::text[], public.current_gis_mro_ids(true)::text[], "
+    "public.current_gis_pop_ids(false)::text[], public.current_gis_pop_ids(true)::text[]"
 )
 
 
+def _pg_array_items(text: str) -> list[str]:
+    """Éléments d'un littéral de tableau PostgreSQL à une dimension
+    (``{}``, ``{a,b}``, ``{"a b",c}``), tel que psycopg2 le rend pour un
+    type de tableau sans typecaster. Guillemets retirés, ``\\`` déséchappé,
+    éléments NULL ignorés. Une chaîne qui n'est pas un littéral de tableau
+    est un identifiant unique (jamais découpée en caractères)."""
+    body = text.strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        return [body] if body else []
+    body = body[1:-1]
+    items: list[str] = []
+    if not body.strip():
+        return items
+    buf: list[str] = []
+    in_quotes = was_quoted = False
+    i = 0
+    while i <= len(body):
+        ch = body[i] if i < len(body) else ","  # virgule finale implicite
+        if ch == "\\" and i + 1 < len(body):
+            i += 1
+            buf.append(body[i])
+        elif in_quotes:
+            if ch == '"':
+                in_quotes = False
+            else:
+                buf.append(ch)
+        elif ch == '"':
+            if not "".join(buf).strip():
+                buf = []
+            in_quotes = was_quoted = True
+        elif ch == ",":
+            item = "".join(buf)
+            if not was_quoted:
+                item = item.strip()
+            # Un identifiant vide n'a pas de sens : il ne doit pas rendre
+            # un périmètre « non vide ».
+            if item and (was_quoted or item.upper() != "NULL"):
+                items.append(item)
+            buf, was_quoted = [], False
+        elif not (was_quoted and ch.isspace()):
+            buf.append(ch)
+        i += 1
+    return items
+
+
 def _ids(value) -> list:
-    return [str(v) for v in value] if value else []
+    """Identifiants d'un tableau lu par psycopg2 : liste/tuple (cas normal,
+    ``text[]``) ou littéral brut ``"{a,b}"`` (tableau sans typecaster).
+    NULL -> [] : l'appelant teste ``is None`` sur la valeur brute AVANT
+    (NULL = tout, distinct d'un tableau vide)."""
+    if value is None:
+        return []
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        value = bytes(value).decode("utf-8", "replace")
+    if isinstance(value, str):
+        return _pg_array_items(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [str(v) for v in value if v is not None and str(v) != ""]
+    return [str(value)]
 
 
 def parse_session_scope(row: Sequence) -> SessionScope:
     """Build a SessionScope from one row of SCOPE_QUERY. NULL id arrays mean
-    "no restriction" (bypass_scopes of current_verified_gis_user)."""
+    "no restriction" (bypass_scopes of current_verified_gis_user). The NULL
+    tests below are made on the RAW values, before _ids()."""
     role, can_read, can_write, mro_all, mro_write, pop_all, pop_write = row
     bypass = mro_all is None and pop_all is None
     return SessionScope(
@@ -446,8 +510,37 @@ def write_scope_kind(scope: SessionScope) -> str:
 
 def scope_labels(ids: Sequence[str], names: dict) -> list[str]:
     """Human labels for scope ids: the name when known, else the first
-    block of the UUID. Sorted for a stable display."""
-    return sorted(str(names.get(i) or str(i).split("-")[0]) for i in ids)
+    block of the UUID. Sorted (case- and accent-insensitive) for a stable
+    display."""
+    labels = (str(names.get(i) or str(i).split("-")[0]) for i in ids)
+    return sorted(labels, key=lambda label: (_sort_key(label), label))
+
+
+def _sort_key(label: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", label.casefold())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+# Barre de messages QGIS : le nombre de zones et les premiers noms ; la
+# liste complète va dans le journal (max_names=None).
+SCOPE_NAMES_SHOWN = 3
+
+
+def summarize_labels(labels: Sequence[str], max_names: int | None = SCOPE_NAMES_SHOWN) -> str:
+    """``"A, B, C… (+7)"`` : les *max_names* premiers libellés puis le
+    nombre de libellés non affichés ; tous les libellés quand ils tiennent
+    ou quand *max_names* vaut None."""
+    labels = list(labels)
+    if max_names is None or len(labels) <= max_names:
+        return ", ".join(labels)
+    return f"{', '.join(labels[:max_names])}… (+{len(labels) - max_names})"
+
+
+def write_scope_equals_read(scope: SessionScope) -> bool:
+    """True quand les MRO/POP cochés « écriture » sont exactement ceux du
+    périmètre de lecture (message : « écriture sur tout le périmètre »)."""
+    return (set(scope.mro_write_ids) == set(scope.mro_ids)
+            and set(scope.pop_write_ids) == set(scope.pop_ids))
 
 
 def should_lock_layer(schema: str, scope: SessionScope | None) -> bool:
