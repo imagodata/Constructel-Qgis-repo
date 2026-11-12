@@ -129,7 +129,10 @@ def test_texte_de_session_montre_le_perimetre_d_ecriture(bp18, monkeypatch):
     plugin = _plugin(bp18, monkeypatch, DESIGNER_POP_WRITE)
     plugin._scope_names = ({"m1": "MRO-1"}, {"p1": "POP-1", "p2": "POP-2"})
     text = plugin._scope_text()
-    assert bp18.tr("scope.write_scoped", mro="-", pop="POP-2") in text
+    # 1.8.4 : la dimension d'ecriture vide (MRO) est omise, plus de « [-] ».
+    assert text.endswith(" / " + bp18.tr(
+        "scope.write_scoped", dims=bp18.tr("scope.pop", count=1, names="POP-2")))
+    assert "[" not in text
 
     plugin = _plugin(bp18, monkeypatch, ADMIN)
     assert plugin._scope_text() == bp18.tr("scope.all")

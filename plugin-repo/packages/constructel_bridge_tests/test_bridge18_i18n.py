@@ -78,7 +78,8 @@ def test_placeholders_match_across_languages():
     "nominal.reason_login_disabled", "nominal.reason_auth_refused", "nominal.reason_unavailable",
     "nominal.reason_local_setup", "nominal.reason_no_password",
     "nominal.no_fallback", "nominal.ca_import_failed", "nominal.login_unusable", "nominal.retry_ok",
-    "scope.all", "scope.none", "scope.scoped", "scope.readonly", "scope.unknown",
+    "scope.all", "scope.none", "scope.mro", "scope.pop", "scope.sep", "scope.readonly", "scope.unknown",
+    "scope.write_all", "scope.write_scoped",
     "scope.layers_locked", "scope.write_refused",
 ])
 def test_bridge18_keys_present_in_three_languages(key):
