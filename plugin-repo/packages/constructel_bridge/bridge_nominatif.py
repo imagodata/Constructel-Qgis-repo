@@ -20,7 +20,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit, urlunsplit
 from pathlib import Path
-from typing import Sequence
+from typing import Collection, Sequence
 
 # --- identity -----------------------------------------------------------------
 
@@ -543,14 +543,17 @@ def write_scope_equals_read(scope: SessionScope) -> bool:
             and set(scope.pop_write_ids) == set(scope.pop_ids))
 
 
-def should_lock_layer(schema: str, scope: SessionScope | None) -> bool:
+def should_lock_layer(schema: str, scope: SessionScope | None,
+                      operator_schemas: Collection[str] = ("wyre",)) -> bool:
     """True when a layer of *schema* must be set read-only in QGIS: a
-    nominative session without network.write, on the ``wyre`` schema only
-    (plan D2 ; revue 29/10 I8 -- chantier.*, docs.* stay editable, spec
-    D11 ; public/ref/osiris untouched). Shared mode (scope None): never."""
+    nominative session without network.write, on an operator schema
+    (*operator_schemas*, ``("wyre",)`` by default as in 1.8 ; Bridge 1.9 :
+    every operator schema -- plan D2 ; revue 29/10 I8 -- chantier.*, docs.*
+    stay editable, spec D11 ; public/ref/osiris untouched). Shared mode
+    (scope None): never."""
     if scope is None or scope.network_write:
         return False
-    return schema == "wyre"
+    return schema in operator_schemas
 
 
 # Revue 29/10 (M7) : « hors périmètre » (RLS, trigger de périmètre) et

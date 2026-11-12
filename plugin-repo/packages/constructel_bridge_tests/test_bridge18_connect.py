@@ -13,6 +13,7 @@ dialogue) ; `_start()` = démarrage complet (phase silencieuse puis
 interactive, comme à `initializationCompleted`).
 """
 import os
+import re
 import sys
 import types
 
@@ -111,21 +112,29 @@ class _FakeIface:
         pass
 
 
+_ZONE_RE = re.compile(r"FROM (\w+)\.zone_(mro|pop)\b")
+
+
 class _FakeCursor:
     """Answers _register_bridge_user, the scope query, the zone names and
     (Bridge 1.9) the operator registry / scope codes. *operator_rows* : lignes
     de OPERATORS_QUERY, ou une Exception levee par execute ; *operator_codes* :
     liste renvoyee par current_gis_operator_codes (None = NULL, ADMIN/MANAGER),
-    ou une Exception levee par execute."""
+    ou une Exception levee par execute. Noms des zones : ``mro_names`` et
+    ``pop_names`` pour ``wyre`` ; ``extra_names={schema: (mro, pop)}`` pour les
+    autres schemas ; ``denied_schemas`` : schemas dont la lecture leve."""
 
     def __init__(self, user_row=USER_ROW, scope_row=None, mro_names=(), pop_names=(),
-                 operator_rows=(("WYRE", "Wyre", "wyre", True),), operator_codes=None):
+                 operator_rows=(("WYRE", "Wyre", "wyre", True),), operator_codes=None,
+                 extra_names=None, denied_schemas=()):
         self.user_row = user_row
         self.scope_row = scope_row
         self.operator_rows = operator_rows
         self.operator_codes = operator_codes
         self.mro_names = list(mro_names)
         self.pop_names = list(pop_names)
+        self.extra_names = dict(extra_names or {})
+        self.denied_schemas = tuple(denied_schemas)
         self.executed = []
         self._one = None
         self._all = []
@@ -151,10 +160,15 @@ class _FakeCursor:
             if isinstance(self.operator_codes, Exception):
                 raise self.operator_codes
             self._one = (self.operator_codes,)
-        elif "FROM wyre.zone_mro" in sql:
-            self._all = self.mro_names
-        elif "FROM wyre.zone_pop" in sql:
-            self._all = self.pop_names
+        elif _ZONE_RE.search(sql):
+            schema, dim = _ZONE_RE.search(sql).groups()
+            if schema in self.denied_schemas:
+                raise _PgErr(f"permission denied for schema {schema}")
+            if schema == "wyre":
+                pair = (self.mro_names, self.pop_names)
+            else:
+                pair = self.extra_names.get(schema, ((), ()))
+            self._all = list(pair[0] if dim == "mro" else pair[1])
 
     def fetchone(self):
         return self._one
