@@ -68,7 +68,9 @@ from .bridge_operators import (
     OPERATORS_QUERY,
     SCOPE_CODES_QUERY,
     OperatorInfo,
+    is_safe_schema,
     parse_operator_rows,
+    parse_project_operators,
     preselect_operator,
     style_sources,
     usable_operators,
@@ -2398,6 +2400,29 @@ class ConstructelBridgePlugin:
         self._operators = usable_operators(registry, scope_codes)
         self._log("Operateurs utilisables : " + (", ".join(op.code for op in self._operators) or "aucun"))
 
+    def _scope_name_schemas(self) -> tuple[str, ...]:
+        """Schemas ou resoudre les noms MRO/POP du perimetre : operateurs
+        utilisables a identifiant sur (``is_safe_schema`` : le nom va dans le
+        SQL), dans l'ordre de ``_operators``. Registre illisible ou sans
+        operateur utilisable : ``("wyre",)``, comme en 1.8.4 (decision K8)."""
+        schemas = [] if self._operators_unavailable else [
+            op.schema for op in self._operators if is_safe_schema(op.schema)
+        ]
+        return tuple(dict.fromkeys(schemas)) or (FALLBACK_OPERATOR.schema,)
+
+    def _operator_schemas(self) -> frozenset[str]:
+        """Schemas dont les couches se verrouillent en lecture seule :
+        ``wyre``, les operateurs du registre, et ceux de l'identite du projet
+        (``bridge/operator``, decision K13 : un operateur du projet absent du
+        registre, inactif par exemple, reste verrouille)."""
+        schemas = {FALLBACK_OPERATOR.schema, *self._operator_registry}
+        try:
+            raw, _found = QgsProject.instance().readEntry("bridge", "operator", "")
+            schemas.update(parse_project_operators(raw))
+        except Exception as exc:  # noqa: BLE001 -- identite illisible : registre seul
+            self._log(f"Identite operateur du projet illisible : {exc}", Qgis.MessageLevel.Warning)
+        return frozenset(schemas)
+
     def _read_session_scope(self):
         """Lit le perimetre de la session nominative : role, capacites
         network.read/write, MRO/POP (lecture et ecriture) -- SELECT seul,
@@ -2413,21 +2438,27 @@ class ConstructelBridgePlugin:
             scope = parse_session_scope(cur.fetchone())
             self._scope = scope
             mro_names, pop_names = {}, {}
-            try:
-                if scope.mro_ids:
-                    cur.execute(
-                        "SELECT id::text, name FROM wyre.zone_mro WHERE id = ANY(%s::uuid[])",
-                        (scope.mro_ids,),
+            # Bridge 1.9 (O6) : les noms se resolvent dans chaque schema
+            # operateur utilisable ; un echec ne touche que son schema.
+            for schema in self._scope_name_schemas():
+                try:
+                    if scope.mro_ids:
+                        cur.execute(
+                            f"SELECT id::text, name FROM {schema}.zone_mro WHERE id = ANY(%s::uuid[])",
+                            (scope.mro_ids,),
+                        )
+                        mro_names.update({str(i): n for (i, n) in cur.fetchall()})
+                    if scope.pop_ids:
+                        cur.execute(
+                            f"SELECT id::text, code FROM {schema}.zone_pop WHERE id = ANY(%s::uuid[])",
+                            (scope.pop_ids,),
+                        )
+                        pop_names.update({str(i): c for (i, c) in cur.fetchall()})
+                except Exception as exc:  # noqa: BLE001 -- noms = confort d'affichage
+                    self._log(
+                        f"Noms des zones du perimetre illisibles : {schema} : {exc}",
+                        Qgis.MessageLevel.Warning,
                     )
-                    mro_names = {str(i): n for (i, n) in cur.fetchall()}
-                if scope.pop_ids:
-                    cur.execute(
-                        "SELECT id::text, code FROM wyre.zone_pop WHERE id = ANY(%s::uuid[])",
-                        (scope.pop_ids,),
-                    )
-                    pop_names = {str(i): c for (i, c) in cur.fetchall()}
-            except Exception as exc:  # noqa: BLE001 -- noms = confort d'affichage
-                self._log(f"Noms des zones du perimetre illisibles : {exc}", Qgis.MessageLevel.Warning)
             self._scope_names = (mro_names, pop_names)
             # Liste complete ici (diagnostic) ; la barre de messages tronque.
             self._log(
@@ -3512,6 +3543,7 @@ class ConstructelBridgePlugin:
         Retourne le nombre de couches verrouillees par cet appel."""
         scope = self._scope if (self._connected and self._auth_mode == AUTH_MODE_NOMINAL) else None
         known_hosts = {h for h in (DEFAULT_HOST, BE_HOST) if h}
+        operator_schemas = self._operator_schemas()
         if layers is None:
             layers = QgsProject.instance().mapLayers().values()
         locked, unlocked, busy = 0, 0, []
@@ -3521,7 +3553,7 @@ class ConstructelBridgePlugin:
             uri = QgsDataSourceUri(layer.source())
             try:
                 ours = _has_scope_lock(layer)
-                if uri.host() in known_hosts and should_lock_layer(uri.schema(), scope):
+                if uri.host() in known_hosts and should_lock_layer(uri.schema(), scope, operator_schemas):
                     if layer.isReadOnly():
                         continue  # deja verrouillee (par nous, ou par la personne)
                     if layer.setReadOnly(True):
