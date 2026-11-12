@@ -9,6 +9,7 @@ puis chargement des couches, styles, relations et basemaps.
 from __future__ import annotations
 
 import os
+from typing import Mapping
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtXml import QDomDocument
@@ -37,11 +38,13 @@ from qgis.core import (
 )
 
 from .bridge_operators import (
+    COMMON_GROUPS,
     COMMON_ROOT,
     GROUP_KIND_PROPERTY,
     GROUP_SCHEMA_PROPERTY,
     OPERATOR_GROUPS,
     OPERATOR_KEYS,
+    OPERATOR_TABLES,
     OPERATOR_TEMPLATE_SCHEMA,
     OperatorInfo,
     base_key,
@@ -696,6 +699,101 @@ def _layer_group(root, operator: OperatorInfo, group_name: str):
     if group_name in OPERATOR_GROUPS:
         return _ensure_child_group(ensure_operator_group(root, operator), group_name)
     return _ensure_child_group(ensure_common_group(root), group_name)
+
+
+# =====================================================================
+# PROJETS 1.8 — reorganisation au clic « Ajouter des couches » (§ 6.5)
+# Ouvrir un projet 1.8 ne le modifie jamais : seul _load_operator_layers
+# appelle reorganize_legacy_tree.
+# =====================================================================
+
+_LEGACY_KINDS = frozenset(OPERATOR_GROUPS) | frozenset(COMMON_GROUPS)
+
+
+def _legacy_kind(node) -> str | None:
+    """Groupe canonique du catalogue d'un groupe RACINE herite de 1.8 (sans
+    aucune propriete Bridge) : « Infrastructure » pour « Infraestrutura »,
+    « Chantier » pour « Chantier » (les groupes communs gardent leur nom).
+    None pour une couche, un groupe Bridge 1.9 ou un groupe hors catalogue."""
+    if (not _is_group(node) or node.customProperty(GROUP_SCHEMA_PROPERTY)
+            or node.customProperty(GROUP_KIND_PROPERTY)):
+        return None
+    kind = canonical_group(node.name(), GROUP_NAMES) or node.name()
+    return kind if kind in _LEGACY_KINDS else None
+
+
+def needs_reorganization(root) -> bool:
+    """True si la racine porte encore un groupe du catalogue a la mode 1.8
+    (Demand Points, Infrastructure, Zones, Chantier, OSIRIS, Cadastre UrbIS,
+    Urbanisme, sous n'importe quelle traduction)."""
+    return any(_legacy_kind(child) for child in root.children())
+
+
+def _legacy_group_schema(group) -> str:
+    """Schema de la premiere couche PostgreSQL d'une table operateur
+    contenue (recursivement) dans *group* ; ``wyre`` (seul operateur de 1.8)
+    s'il n'y en a aucune."""
+    for node in group.findLayers():
+        layer = node.layer()
+        provider = layer.dataProvider() if layer is not None else None
+        if provider is None or provider.name() != "postgres":
+            continue
+        uri = provider.uri()
+        if uri.table() in OPERATOR_TABLES and is_safe_schema(uri.schema()):
+            return uri.schema()
+    return OPERATOR_TEMPLATE_SCHEMA
+
+
+def _legacy_operator(schema: str, registry: Mapping[str, OperatorInfo], labels: Mapping[str, str]) -> OperatorInfo:
+    """Operateur d'un groupe herite : celui du registre, sinon (utilisateur
+    sans ce scope, D7) un operateur non lisible au libelle memorise dans
+    bridge/operator_labels, a defaut au schema capitalise."""
+    known = registry.get(schema)
+    if known is not None:
+        return known
+    return OperatorInfo(schema.upper(), labels.get(schema) or schema.capitalize(), schema, readable=False)
+
+
+def _move_group(group, target, kind: str) -> None:
+    """Deplace *group* sous *target* (clone : identifiants de couche
+    inchanges) avec la propriete GROUP_KIND_PROPERTY ; fusionne dans le
+    sous-groupe existant du meme type plutot que de le doubler."""
+    existing = find_child_group(target, kind)
+    if existing is None:
+        clone = group.clone()
+        clone.setCustomProperty(GROUP_KIND_PROPERTY, kind)
+        target.addChildNode(clone)
+    else:
+        for child in group.children():
+            existing.addChildNode(child.clone())
+    group.parent().removeChildNode(group)
+
+
+def reorganize_legacy_tree(project, registry: Mapping[str, OperatorInfo]) -> list[OperatorInfo]:
+    """Range les groupes racine d'un projet 1.8 dans la structure 1.9 (§ 6.5) :
+    Demand Points / Infrastructure / Zones dans le groupe de l'operateur de
+    leurs couches (``wyre`` par defaut), les groupes communs dans « Commun ».
+
+    Les groupes sont reconnus sous leur nom FR / EN / PT et gardent leur nom.
+    Les couches, groupes et couches personnels de la racine ne sont pas
+    touches. Retourne les operateurs concernes, dans l'ordre d'apparition ;
+    un second appel retourne [] et ne change rien."""
+    root = project.layerTreeRoot()
+    labels = parse_operator_labels(project.readEntry("bridge", "operator_labels", "")[0])
+    touched: list[OperatorInfo] = []
+    for child in root.children():
+        kind = _legacy_kind(child)
+        if kind is None:
+            continue
+        if kind in OPERATOR_GROUPS:
+            operator = _legacy_operator(_legacy_group_schema(child), registry, labels)
+            if operator not in touched:
+                touched.append(operator)
+            target = ensure_operator_group(root, operator)
+        else:
+            target = ensure_common_group(root)
+        _move_group(child, target, kind)
+    return touched
 
 
 class InitProjectDialog(QDialog):

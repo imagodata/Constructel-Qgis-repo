@@ -3792,6 +3792,7 @@ class ConstructelBridgePlugin:
             from .bridge_project_init import init_project
 
             conn_params, password = self._init_conn_params()
+            suffix = self._reorganize_legacy_project(operator, suffix)
 
             count = init_project(
                 conn_params, password, selected,
@@ -3827,6 +3828,34 @@ class ConstructelBridgePlugin:
             import traceback
             self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
             return 0
+
+    def _reorganize_legacy_project(self, operator: OperatorInfo, suffix: bool | None) -> bool | None:
+        """Au clic « Ajouter » seulement (spec 6.5) : range un projet 1.8 par
+        operateur (groupes de chaque operateur, « Commun »), inscrit ces
+        operateurs dans l'identite du projet et previent la personne.
+
+        Retourne le suffixe a transmettre au chargement : *suffix* tel quel,
+        sauf quand l'operateur ajoute differe d'un operateur du projet (au
+        moins deux operateurs : suffixe obligatoire, § 6.4). Sans groupe
+        herite, ne fait rien. Jamais appelee a l'ouverture d'un projet
+        (_on_project_read)."""
+        from .bridge_project_init import needs_reorganization, reorganize_legacy_tree, stamp_project
+
+        project = QgsProject.instance()
+        if not needs_reorganization(project.layerTreeRoot()):
+            return suffix
+        touched = reorganize_legacy_tree(project, self._operator_registry)
+        if any(op.schema != operator.schema for op in touched):
+            suffix = True
+        for op in touched:
+            stamp_project(op, suffix)
+        if touched:
+            message = tr("home.reorganized", operators=", ".join(op.label for op in touched))
+        else:  # seuls des groupes communs etaient a la racine
+            message = tr("home.reorganized_common")
+        self.iface.messageBar().pushMessage(
+            "Constructel Bridge", message, level=Qgis.MessageLevel.Info, duration=10)
+        return suffix
 
     # =====================================================================
     # Charger un projet depuis PostgreSQL

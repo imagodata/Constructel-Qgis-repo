@@ -435,6 +435,13 @@ class _StubSignal:
             slot(*args)
 
 
+class _StubLayerTreeRoot:
+    """Racine de l'arbre de couches du stub : aucun enfant."""
+
+    def children(self):
+        return []
+
+
 class QgsProject:
     _instance = None
 
@@ -465,6 +472,12 @@ class QgsProject:
 
     def mapLayer(self, layer_id):
         return self._layers.get(layer_id)
+
+    def layerTreeRoot(self):
+        # Arbre de couches vide (Bridge 1.9 tache 6 : _load_operator_layers
+        # cherche des groupes 1.8 a ranger) ; les tests d'arbre utilisent le
+        # FakeProject de fakes19.
+        return _StubLayerTreeRoot()
 
     def fileName(self):
         return getattr(self, "file_name", "")
