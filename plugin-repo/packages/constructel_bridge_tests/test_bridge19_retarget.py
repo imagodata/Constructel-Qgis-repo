@@ -385,9 +385,32 @@ def test_common_layer_follows_the_style_schema(sk, project):  # noqa: F811  # K7
     assert 'table="orange"."zone_pop"' in vr(interventions, 1)["LayerSource"]
 
 
-def test_common_layer_target_not_loaded_is_left_alone(sk, project):  # noqa: F811  # K7
+def test_common_layer_single_loaded_layer_becomes_the_target(sk, project):  # noqa: F811  # T4-I4
+    # Projet Orange seul : les QML figent wyre dans LayerSource ; wyre.zone_pop
+    # n'est pas chargee et orange.zone_pop est la seule couche de la table.
     stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    pop_or = project.add_pg("orange", "zone_pop", "Zones POP · Orange")
+    interventions = add_vr(
+        project.add_pg("chantier", "interventions", "Interventions"),
+        {"LayerName": "zone_pop", "LayerSource": source("wyre", "zone_pop"), "Key": "id",
+         "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"},
+    )
+
+    assert sk._sync_value_relation_layer_names(project) == 1
+
+    cfg = vr(interventions)
+    assert (cfg["Layer"], cfg["LayerName"]) == (pop_or.id(), "Zones POP · Orange")
+    assert 'table="orange"."zone_pop"' in cfg["LayerSource"]
+    assert cfg["Value"] == f"attribute(get_feature('{pop_or.id()}','id',zone_pop_id),'code')"
+    assert sk._sync_value_relation_layer_names(project) == 0  # stable
+
+
+def test_common_layer_several_layers_none_in_style_schema_left_alone(sk, project):  # noqa: F811  # T4-I4
+    # Deux operateurs charges, aucun dans le schema du style : rien ne
+    # permet de choisir, aucune reecriture.
+    stamp(project, ["orange", "proximus"], {"orange": "Orange", "proximus": "Proximus"})
     project.add_pg("orange", "zone_pop", "Zones POP · Orange")
+    project.add_pg("proximus", "zone_pop", "Zones POP · Proximus")
     original = {"LayerName": "zone_pop", "LayerSource": source("wyre", "zone_pop"), "Key": "id",
                 "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"}
     interventions = add_vr(project.add_pg("chantier", "interventions", "Interventions"), dict(original))
@@ -395,3 +418,124 @@ def test_common_layer_target_not_loaded_is_left_alone(sk, project):  # noqa: F81
     sk._sync_value_relation_layer_names(project)
 
     assert vr(interventions) == original
+
+
+def test_common_layer_without_source_never_targeted_by_suffix(sk, project):  # noqa: F811  # T4-I3
+    # Sans LayerSource, wyre n'est suppose que pour un nom sans suffixe ou
+    # suffixe wyre : « POP Zones · Orange » est refuse, jamais remappe sur wyre
+    # (ni sur orange : le suffixe sert a refuser, jamais a cibler).
+    stamp(project, ["wyre", "orange"], LABELS_TWO)
+    project.add_pg("wyre", "zone_pop", "Zones POP · Wyre")
+    project.add_pg("orange", "zone_pop", "Zones POP · Orange")
+    original = {"LayerName": "POP Zones · Orange", "Key": "id",
+                "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"}
+    interventions = add_vr(project.add_pg("chantier", "interventions", "Interventions"), dict(original))
+
+    sk.apply_all_translations("fr")
+
+    assert vr(interventions) == original
+
+
+# --- choix de la cible : copie filtree, ordre de l'arbre, couche invalide (T4-I1) --------
+
+
+def _cables_pointing_at_zone_pop(project, schema):
+    return add_vr(project.add_pg(schema, "cables"), {
+        "LayerName": "zone_pop", "LayerSource": source("wyre", "zone_pop"), "Key": "id",
+        "Value": "attribute(get_feature('zone_pop','id',zone_pop_id),'code')"})
+
+
+def test_filtered_copy_listed_first_is_never_the_target(sk, project):  # noqa: F811
+    # mapLayers() est trie par identifiant : la copie « Zones POP · Orange
+    # (filtre) » (Z avant z) y passe avant l'originale « zone_pop_<n> », et
+    # elle est aussi au-dessus dans l'arbre. La cible reste l'originale.
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    original = project.add_pg("orange", "zone_pop")  # identifiant zone_pop_<n>
+    original.setName("Zones POP · Orange")  # renommee : LayerName "zone_pop" = nom de table
+    copy = FakeLayer.pg("orange", "zone_pop", "Zones POP · Orange (filtre)")
+    copy.setSubsetString("\"code\" = 'BXL01'")
+    project.addMapLayer(copy, False)
+    project.layerTreeRoot().insertLayer(0, copy)
+    cables = _cables_pointing_at_zone_pop(project, "orange")
+    assert list(project.mapLayers())[0] == copy.id()
+
+    sk.retarget_operator_references(project)
+
+    assert (vr(cables)["Layer"], vr(cables)["LayerName"]) == (original.id(), original.name())
+    assert vr(cables)["Value"] == f"attribute(get_feature('{original.id()}','id',zone_pop_id),'code')"
+
+
+def test_tree_order_breaks_ties_between_unfiltered_layers(sk, project):  # noqa: F811
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    first_in_tree = project.add_pg("orange", "zone_pop")  # identifiant zone_pop_<n>
+    first_in_tree.setName("Zones POP · Orange")
+    lower = project.add_pg("orange", "zone_pop", "Zones POP · Orange (2)")  # identifiant classe avant
+    cables = _cables_pointing_at_zone_pop(project, "orange")
+    assert lower.id() < first_in_tree.id()
+    assert list(project.mapLayers())[0] == lower.id()
+
+    sk.retarget_operator_references(project)
+
+    assert vr(cables)["Layer"] == first_in_tree.id()
+
+
+def test_invalid_layer_is_never_targeted(sk, project):  # noqa: F811
+    # Couche PostgreSQL injoignable : fournisseur present, isValid() faux.
+    stamp(project, ["wyre", "orange"], LABELS_TWO)
+    project.add_pg("wyre", "zone_pop", "Zones POP · Wyre")
+    broken = project.add_pg("orange", "zone_pop", "Zones POP · Orange")
+    broken.isValid = lambda: False
+    cables = _cables_pointing_at_zone_pop(project, "orange")
+    original = vr(cables)
+
+    assert sk.retarget_operator_references(project) == 0
+    assert vr(cables) == original  # ni la couche invalide, ni wyre
+
+    valid = project.add_pg("orange", "zone_pop", "Zones POP · Orange (2)")
+    sk.retarget_operator_references(project)
+    assert vr(cables)["Layer"] == valid.id()
+
+
+# --- identifiants perimes (T4-I2) ----------------------------------------------------------
+
+
+def test_stale_ids_repaired_after_remove_and_reload(sk, project):  # noqa: F811
+    # « Ajouter » recharge orange.zone_pop supprimee : nouvel identifiant.
+    # L'infobulle et le Value de cables, qui citaient l'ancien, le suivent.
+    stamp(project, ["orange"], {"orange": "Orange"}, suffix="1")
+    old = project.add_pg("orange", "zone_pop")
+    cables = _cables_pointing_at_zone_pop(project, "orange")
+    cables.setMapTipTemplate("[% attribute(get_feature('zone_pop','id',\"zone_pop_id\"),'code') %]")
+    sk.apply_all_translations("fr")
+    assert f"get_feature('{old.id()}'," in cables.mapTipTemplate()
+
+    project.removeMapLayer(old.id())
+    new = project.add_pg("orange", "zone_pop")
+    sk.apply_all_translations("fr")
+
+    assert new.id() != old.id()
+    assert f"get_feature('{new.id()}'," in cables.mapTipTemplate()
+    assert vr(cables)["Value"] == f"attribute(get_feature('{new.id()}','id',zone_pop_id),'code')"
+    assert vr(cables)["Layer"] == new.id()
+
+
+def test_stale_id_without_own_target_is_left_alone(sk, project):  # noqa: F811
+    stamp(project, ["wyre", "orange"], LABELS_TWO)
+    project.add_pg("wyre", "zone_pop", "Zones POP · Wyre")
+    cables = project.add_pg("orange", "cables", "Cables · Orange")
+    tip = "[% attribute(get_feature('zone_pop_404','id',\"zone_pop_id\"),'code') %]"
+    cables.setMapTipTemplate(tip)
+
+    sk.retarget_operator_references(project)
+
+    assert cables.mapTipTemplate() == tip
+
+
+def test_get_feature_refs_and_layer_id_table():
+    assert bo.get_feature_refs("get_feature('a','id',1) || get_feature( 'd''O' ,'x',2)") == ["a", "d'O"]
+    assert bo.layer_id_table("zone_pop_8f3a2b1c_4d5e") == "zone_pop"
+    assert bo.layer_id_table("subducts_12") == "subducts"
+    assert bo.layer_id_table("v_duct_progress_3") == "v_duct_progress"
+    assert bo.layer_id_table("zone_pop") is None
+    assert bo.layer_id_table("zone_pop_") is None
+    assert bo.layer_id_table("interventions_3") is None

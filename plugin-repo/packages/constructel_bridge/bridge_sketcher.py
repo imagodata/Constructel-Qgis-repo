@@ -34,6 +34,8 @@ from .bridge_operators import (
     OPERATOR_TABLES,
     OPERATOR_TEMPLATE_SCHEMA,
     canonical_group,
+    get_feature_refs,
+    layer_id_table,
     operator_layer_name,
     parse_operator_labels,
     parse_project_operators,
@@ -400,10 +402,13 @@ _DISPLAY_NAME_TABLES = _display_name_tables()
 
 
 class _ProjectLayers:
-    """Couches vectorielles du projet dans l'ordre de ``project.mapLayers()``,
-    indexees par identifiant, par nom et par source PostgreSQL (schema, table)."""
+    """Couches vectorielles du projet, indexees par identifiant, par nom et
+    par source PostgreSQL (schema, table). ``project.mapLayers()`` est trie
+    par identifiant (QMap) : son ordre ne decide jamais d'une cible
+    (voir ``ranked``)."""
 
     def __init__(self, project):
+        self._project = project
         self.layers = [ly for ly in project.mapLayers().values() if isinstance(ly, QgsVectorLayer)]
         self.by_id: dict = {}
         self.by_name: dict = {}
@@ -419,20 +424,44 @@ class _ProjectLayers:
                 self._sources[layer.id()] = key
                 self.by_source.setdefault(key, []).append(layer)
         self.tables = {table for _schema, table in self.by_source}
-        self._labels = project_operator_naming(project)[0]
+        self.labels = project_operator_naming(project)[0]
+        self._tree_rank = None
         self._targets: dict = {}
 
     def source(self, layer):
         """(schema, table) de la source PostgreSQL, None pour une autre source."""
         return self._sources.get(layer.id())
 
-    def first(self, schema: str, table: str):
-        layers = self.by_source.get((schema, table))
-        return layers[0] if layers else None
-
     def _table_of(self, layer):
         source = self.source(layer)
         return source[1] if source else None
+
+    def ranked(self, layers) -> list:
+        """Couches VALIDES de *layers*, les meilleures cibles d'abord : sans
+        filtre (subsetString) avant une copie filtree, puis ordre de l'arbre
+        de couches (une couche hors de l'arbre apres), puis identifiant."""
+        valid = [ly for ly in layers if ly.isValid()]
+        if len(valid) < 2:
+            return valid
+        if self._tree_rank is None:
+            nodes = self._project.layerTreeRoot().findLayers()
+            self._tree_rank = {node.layerId(): rank for rank, node in enumerate(nodes)}
+        last = len(self._tree_rank)
+        return sorted(valid, key=lambda ly: (bool(ly.subsetString()), self._tree_rank.get(ly.id(), last), ly.id()))
+
+    def target(self, schema: str, table: str, *, unique_fallback: bool = False):
+        """Couche cible de (*schema*, *table*) : la meilleure de ``ranked``.
+        Aucune : None, sauf avec *unique_fallback* (couche commune) quand la
+        table n'a qu'une seule couche valide chargee, tous schemas
+        confondus."""
+        candidates = self.ranked(self.by_source.get((schema, table), []))
+        if candidates:
+            return candidates[0]
+        if unique_fallback:
+            loaded = self.ranked([ly for (_s, t), layers in self.by_source.items() if t == table for ly in layers])
+            if len(loaded) == 1:
+                return loaded[0]
+        return None
 
     def designated(self, config):
         """``(table, couches)`` qu'une ValueRelation designe : ``Layer``
@@ -455,35 +484,52 @@ class _ProjectLayers:
         table = _DISPLAY_NAME_TABLES.get(name) or _DISPLAY_NAME_TABLES.get(split_operator_suffix(name)[0])
         return table, []
 
-    def targets(self, schema: str) -> dict:
-        """Premier argument de get_feature -> identifiant de la couche de
-        (schema, t), pour chaque table operateur t chargee dans *schema* :
-        t, ses noms traduits avec et sans chaque suffixe connu
-        (``bridge/operator_labels``), noms et identifiants des couches de t
-        des autres schemas. Une cle qui designerait deux tables est ignoree."""
-        if schema in self._targets:
-            return self._targets[schema]
+    def targets(self, schema: str, *, unique_fallback: bool = False) -> dict:
+        """Premier argument de get_feature -> identifiant de la cible
+        (``target``) de chaque table operateur chargee : la table, ses noms
+        traduits avec et sans chaque suffixe connu (``bridge/operator_labels``),
+        noms et identifiants des couches de la table des autres schemas. Une
+        cle qui designerait deux tables est ignoree."""
+        cache_key = (schema, unique_fallback)
+        if cache_key in self._targets:
+            return self._targets[cache_key]
         targets: dict = {}
         ambiguous: set = set()
-        for (layer_schema, table), layers in self.by_source.items():
-            if layer_schema != schema or table not in OPERATOR_TABLES:
+        for table in sorted(self.tables & OPERATOR_TABLES):
+            target = self.target(schema, table, unique_fallback=unique_fallback)
+            if target is None:
                 continue
-            target_id = layers[0].id()
+            target_schema = self.source(target)[0]
             keys = {table}
             for translated in LAYER_DISPLAY_NAMES.get(table, {}).values():
                 keys.add(translated)
-                keys.update(operator_layer_name(translated, label) for label in self._labels.values())
+                keys.update(operator_layer_name(translated, label) for label in self.labels.values())
             for (other_schema, other_table), others in self.by_source.items():
-                if other_table == table and other_schema != schema:
+                if other_table == table and other_schema != target_schema:
                     for other in others:
                         keys.update((other.name(), other.id()))
             for key in keys:
-                if targets.setdefault(key, target_id) != target_id:
+                if targets.setdefault(key, target.id()) != target.id():
                     ambiguous.add(key)
         for key in ambiguous:
             targets.pop(key, None)
-        self._targets[schema] = targets
+        self._targets[cache_key] = targets
         return targets
+
+    def retarget_expression(self, expr: str, targets: dict) -> str:
+        """``retarget_get_feature`` avec *targets*, plus les identifiants
+        perimes : un premier argument absent du projet (ni identifiant ni
+        nom) de la forme ``<table>_<suffixe>`` (identifiant cree par le
+        Bridge, ``layer_id_table``) va vers la cible courante de cette table
+        (couche supprimee puis rechargee)."""
+        stale = {}
+        for ref in get_feature_refs(expr):
+            if ref in targets or ref in self.by_id or ref in self.by_name:
+                continue
+            table = layer_id_table(ref)
+            if table is not None and table in targets:
+                stale[ref] = targets[table]
+        return retarget_get_feature(expr, {**targets, **stale} if stale else targets)
 
 
 def _value_relations(layer):
@@ -495,39 +541,48 @@ def _value_relations(layer):
             yield i, dict(setup.config())
 
 
-def _retarget_value_relation(config: dict, schema: str, index: _ProjectLayers) -> bool:
+def _retarget_value_relation(config: dict, schema: str, index: _ProjectLayers, *,
+                             unique_fallback: bool = False) -> bool:
     """Oriente la ValueRelation *config* (modifiee en place) vers la couche de
-    (*schema*, t). Table t non operateur : rien. Couche deja designee de
-    (schema, t) (copie filtree comprise) : gardee, ``Layer`` et ``LayerName``
-    resynchronises sur elle ; sinon la premiere couche de (schema, t) ; aucune :
-    rien, jamais la couche d'un autre operateur. ``LayerSource`` (s'il existe)
-    passe dans *schema*. True si *config* a change."""
+    (*schema*, t). Table t non operateur : rien. Couche valide de (schema, t)
+    deja designee (copie filtree choisie comprise) : gardee, ``Layer`` et
+    ``LayerName`` resynchronises sur elle ; sinon ``index.target`` ; aucune :
+    rien, jamais la couche d'un autre operateur (sauf *unique_fallback*,
+    couche commune). ``LayerSource`` (s'il existe) passe dans le schema de la
+    cible. True si *config* a change."""
     table, designated = index.designated(config)
     if table not in OPERATOR_TABLES:
         return False
-    target = next((ly for ly in designated if index.source(ly) == (schema, table)), None)
+    target = next((ly for ly in designated if ly.isValid() and index.source(ly) == (schema, table)), None)
     if target is None:
-        target = index.first(schema, table)
+        target = index.target(schema, table, unique_fallback=unique_fallback)
     if target is None:
         return False
     wanted = {"Layer": target.id(), "LayerName": target.name()}
     layer_source = config.get("LayerSource") or ""
     if layer_source:
-        wanted["LayerSource"] = retarget_layer_source(layer_source, schema)
+        wanted["LayerSource"] = retarget_layer_source(layer_source, index.source(target)[0])
     changed = {key: value for key, value in wanted.items() if config.get(key) != value}
     config.update(changed)
     return bool(changed)
 
 
-def _style_schema(config: dict) -> str:
-    """Schema que le ``LayerSource`` d'une ValueRelation designe, tel que le
-    style l'a defini (K7) ; sans source lisible, le schema modele des QML
-    Farois (wyre)."""
+def _style_schema(config: dict, labels: dict):
+    """Schema d'une ValueRelation de couche commune : celui que son
+    ``LayerSource`` designe, tel que le style l'a defini. Sans source
+    lisible, le schema modele des QML Farois (wyre), mais seulement si
+    ``LayerName`` est sans suffixe ou porte le libelle de wyre ; sinon None :
+    aucune reecriture (le suffixe sert a refuser, jamais a cibler)."""
     from .bridge_nominatif import datasource_param
 
     table = datasource_param(config.get("LayerSource") or "", "table") or ""
     schema, sep, _table = table.partition(".")
-    return schema if sep and schema else OPERATOR_TEMPLATE_SCHEMA
+    if sep and schema:
+        return schema
+    label = split_operator_suffix(config.get("LayerName") or "")[1]
+    if label is None or label == labels.get(OPERATOR_TEMPLATE_SCHEMA):
+        return OPERATOR_TEMPLATE_SCHEMA
+    return None
 
 
 def _retarget_operator_layers(index: _ProjectLayers) -> int:
@@ -543,7 +598,7 @@ def _retarget_operator_layers(index: _ProjectLayers) -> int:
         for i, config in _value_relations(layer):
             dirty = _retarget_value_relation(config, schema, index)
             value = config.get("Value") or ""
-            new_value = retarget_get_feature(value, targets)
+            new_value = index.retarget_expression(value, targets)
             if new_value != value:
                 config["Value"] = new_value
                 dirty = True
@@ -551,12 +606,12 @@ def _retarget_operator_layers(index: _ProjectLayers) -> int:
                 layer.setEditorWidgetSetup(i, QgsEditorWidgetSetup("ValueRelation", config))
                 changed = True
         tip = layer.mapTipTemplate()
-        new_tip = retarget_get_feature(tip, targets)
+        new_tip = index.retarget_expression(tip, targets)
         if new_tip != tip:
             layer.setMapTipTemplate(new_tip)
             changed = True
         display = layer.displayExpression()
-        new_display = retarget_get_feature(display, targets)
+        new_display = index.retarget_expression(display, targets)
         if new_display != display:
             layer.setDisplayExpression(new_display)
             changed = True
@@ -571,12 +626,14 @@ def retarget_operator_references(project) -> int:
 
     - ses ValueRelation vers une table operateur : ``Layer`` (identifiant),
       ``LayerName`` (nom courant) et ``LayerSource`` (schema reecrit) de la
-      premiere couche du meme schema, une copie filtree deja designee etant
-      gardee ; cible absente de ce schema : rien, jamais un autre operateur ;
+      meilleure couche valide du meme schema (sans filtre, puis ordre de
+      l'arbre, puis identifiant), une couche deja designee etant gardee ;
+      cible absente de ce schema : rien, jamais un autre operateur ;
     - le premier argument de get_feature dans le ``Value`` de ses
       ValueRelation, son infobulle (``mapTipTemplate``) et son expression
-      d'affichage (``displayExpression``) : identifiant de la couche du meme
-      schema (voir ``_ProjectLayers.targets``).
+      d'affichage (``displayExpression``) : identifiant de la cible du meme
+      schema (voir ``_ProjectLayers.targets``), identifiants perimes compris
+      (``_ProjectLayers.retarget_expression``).
 
     Idempotent. Retourne le nombre de couches modifiees."""
     return _retarget_operator_layers(_ProjectLayers(project))
@@ -590,10 +647,11 @@ def _sync_value_relation_layer_names(project):
 
     - Couche operateur -> table operateur : retarget_operator_references
       (meme schema que la couche source, par identifiant).
-    - Couche commune (chantier...) -> table operateur : le schema est celui
-      que le LayerSource de la liste designe, tel que le style le definit
-      (K7) ; couche absente de ce schema : rien. Jamais « dernier gagnant »,
-      jamais un autre operateur.
+    - Couche commune (chantier...) -> table operateur : la couche de
+      (schema du LayerSource de la liste, table) si elle est chargee
+      (``_style_schema`` : sans LayerSource, wyre seulement pour un nom sans
+      suffixe ou suffixe wyre) ; sinon la seule couche chargee de la table,
+      tous schemas confondus ; sinon rien. Jamais « dernier gagnant ».
     - Toute couche -> table commune : LayerName remappe sur le nom courant
       seulement s'il ne se resout pas (une couche qui porte deja ce nom est
       la bonne : copie filtree, couche personnelle homonyme), get_feature
@@ -606,11 +664,12 @@ def _sync_value_relation_layer_names(project):
         return 0
     patched = _retarget_operator_layers(index)
 
-    # Tables communes : chargees une fois (la premiere couche l'emporte).
+    # Tables communes : chargees une fois (la meilleure couche l'emporte).
     common_names: dict[str, str] = {}
     for (_schema, table), layers in index.by_source.items():
-        if table not in OPERATOR_TABLES:
-            common_names.setdefault(table, layers[0].name())
+        best = index.ranked(layers) if table not in OPERATOR_TABLES else []
+        if best:
+            common_names.setdefault(table, best[0].name())
 
     for layer in index.layers:
         source = index.source(layer)
@@ -618,10 +677,10 @@ def _sync_value_relation_layer_names(project):
         for i, config in _value_relations(layer):
             dirty = False
             value = config.get("Value") or ""
-            if not operator_layer:
-                schema = _style_schema(config)
-                dirty = _retarget_value_relation(config, schema, index)
-                value = retarget_get_feature(value, index.targets(schema))
+            schema = None if operator_layer else _style_schema(config, index.labels)
+            if schema is not None:
+                dirty = _retarget_value_relation(config, schema, index, unique_fallback=True)
+                value = index.retarget_expression(value, index.targets(schema, unique_fallback=True))
             ref_name = config.get("LayerName") or ""
             if ref_name in common_names and ref_name not in index.by_name:
                 config["LayerName"] = common_names[ref_name]

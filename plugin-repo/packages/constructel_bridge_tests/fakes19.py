@@ -10,6 +10,9 @@ Fideles a QGIS sur ce que le plugin utilise :
     parent (QGIS l'ignore en silence ; ici une erreur, pour ne rien masquer) ;
     un index hors bornes ajoute en fin, comme QGIS ;
   * ``readEntry`` rend ``(valeur, trouvee)`` ;
+  * ``mapLayers()`` est trie par identifiant, comme la QMap de QGIS (une
+    copie « Zones_POP_<uuid> » passe avant « zone_pop_<uuid> ») ;
+    ``findLayers()`` rend les noeuds de couche dans l'ordre de l'arbre ;
   * ``FakeRelationManager.relation(id)`` rend une relation d'identifiant vide
     quand elle n'existe pas, et ``addRelation`` ignore une relation invalide.
 
@@ -162,6 +165,7 @@ class FakeLayer(_Properties):
         self._setups = {}
         self._map_tip = ""
         self._display_expression = ""
+        self._subset = ""
         self._read_only = False
         self.loaded_styles = []    # chemins passes a loadNamedStyle
         self.imported_styles = []  # documents passes a importNamedStyle
@@ -232,6 +236,13 @@ class FakeLayer(_Properties):
 
     def setDisplayExpression(self, expression):
         self._display_expression = expression
+
+    def subsetString(self):
+        return self._subset
+
+    def setSubsetString(self, subset):
+        self._subset = subset
+        return True
 
     # -- edition et styles ------------------------------------------------------
     def isReadOnly(self):
@@ -405,6 +416,17 @@ class FakeGroup(_Node):
                     return found
         return None
 
+    def findLayers(self):
+        """Noeuds de couche du sous-arbre, dans l'ordre de l'arbre (recursif),
+        comme QgsLayerTreeGroup.findLayers."""
+        nodes = []
+        for child in self._children:
+            if isinstance(child, FakeLayerNode):
+                nodes.append(child)
+            else:
+                nodes.extend(child.findLayers())
+        return nodes
+
     def clone(self):
         clone = self._copy_state(FakeGroup(self._name))
         for child in self._children:
@@ -519,10 +541,19 @@ class FakeProject:
         return layer
 
     def mapLayers(self):
-        return dict(self._layers)
+        # QMap<QString, QgsMapLayer*> : triee par identifiant.
+        return dict(sorted(self._layers.items()))
 
     def mapLayer(self, layer_id):
         return self._layers.get(layer_id)
+
+    def removeMapLayer(self, layer_or_id):
+        """Retire la couche du projet et son noeud de l'arbre."""
+        layer_id = layer_or_id if isinstance(layer_or_id, str) else layer_or_id.id()
+        if self._layers.pop(layer_id, None) is not None:
+            node = self._root.findLayer(layer_id)
+            if node is not None:
+                node.parent().removeChildNode(node)
 
     def mapLayersByName(self, name):
         return [ly for ly in self._layers.values() if ly.name() == name]

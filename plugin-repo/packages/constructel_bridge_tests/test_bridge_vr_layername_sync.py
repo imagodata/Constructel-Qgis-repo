@@ -9,6 +9,7 @@ affiche (traduit) de la couche. Constats de revue du 2026-10-26 :
   projet, Bridge ou non : LayerName revient au nom de table et doit etre
   resynchronise aussitot.
 """
+from __future__ import annotations
 
 import importlib
 import re
@@ -51,6 +52,12 @@ class FakeLayer:
 
     def id(self):
         return f"{self._name}@{self._table}"
+
+    def isValid(self):
+        return True
+
+    def subsetString(self):
+        return ""
 
     def name(self):
         return self._name
@@ -100,6 +107,8 @@ def _project(*layers):
         mapLayers=lambda: {str(i): layer for i, layer in enumerate(layers)},
         mapLayersByName=lambda name: [layer for layer in layers if layer.name() == name],
         readEntry=lambda scope, key, default="": (default, False),
+        layerTreeRoot=lambda: SimpleNamespace(
+            findLayers=lambda: [SimpleNamespace(layerId=layer.id) for layer in layers]),
     )
 
 

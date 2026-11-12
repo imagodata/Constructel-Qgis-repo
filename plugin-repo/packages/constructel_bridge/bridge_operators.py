@@ -262,6 +262,26 @@ def retarget_get_feature(expr: str, targets: Mapping[str, str]) -> str:
     return pattern.sub(lambda m: f"get_feature('{_expr_literal(literals[m.group(1)])}',", expr)
 
 
+_GET_FEATURE_REF_RE = re.compile(r"get_feature\(\s*'((?:[^']|'')*)'\s*,")
+
+
+def get_feature_refs(expr: str) -> list[str]:
+    """First arguments (between apostrophes, unescaped) of the
+    ``get_feature(...)`` calls of *expr*, in order."""
+    return [m.group(1).replace("''", "'") for m in _GET_FEATURE_REF_RE.finditer(expr or "")]
+
+
+def layer_id_table(layer_id: str) -> Optional[str]:
+    """Operator table a QGIS layer id was generated from: the Bridge names a
+    layer after its table when creating it, so its id is
+    ``"<table>_<suffix>"`` (``"zone_pop_8f3a..."`` -> ``"zone_pop"``).
+    None when the id does not start that way. Longest table first."""
+    for table in sorted(OPERATOR_TABLES, key=len, reverse=True):
+        if layer_id.startswith(f"{table}_") and len(layer_id) > len(table) + 1:
+            return table
+    return None
+
+
 _TABLE_TOKEN_RE = re.compile(r'table\s*=\s*"([^"]*)"(\s*\.\s*)"([^"]*)"')
 
 
