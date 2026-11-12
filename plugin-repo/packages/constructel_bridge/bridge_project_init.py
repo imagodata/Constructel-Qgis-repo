@@ -147,8 +147,10 @@ def stamp_project(operator: OperatorInfo, suffix: bool | None = None) -> None:
       None (sinon le choix deja enregistre est garde) ;
     - bridge/version, @bridge_version, @bridge_plugin.
 
-    init_project l'appelle AVANT le premier addMapLayer : le suffixe des
-    noms de couches (tache 3) est pose sur layersAdded et lit cette identite.
+    init_project l'appelle juste AVANT le premier addMapLayer d'une couche
+    operateur de *operator* (le suffixe des noms de couches, tache 3, est
+    pose sur layersAdded et lit cette identite), et jamais si aucune couche
+    operateur n'est ajoutee (decision T2-c3).
     """
     project = QgsProject.instance()
     from qgis.core import QgsExpressionContextUtils
@@ -164,9 +166,16 @@ def stamp_project(operator: OperatorInfo, suffix: bool | None = None) -> None:
     project.writeEntry("bridge", "operator_labels", format_operator_labels(labels))
     if suffix is not None:
         project.writeEntry("bridge", "operator_suffix", "1" if suffix else "0")
-    project.writeEntry("bridge", "version", WYRE_PROJECT_VERSION)
-    # Variables projet QGIS (expressions : @bridge_operator, ...)
+    # Variable projet QGIS (expressions : @bridge_operator)
     QgsExpressionContextUtils.setProjectVariable(project, "bridge_operator", operators_text)
+    _stamp_version(project)
+
+
+def _stamp_version(project) -> None:
+    """bridge/version, @bridge_version et @bridge_plugin : ecrits a chaque
+    chargement, avec ou sans couche operateur (is_bridge_project)."""
+    from qgis.core import QgsExpressionContextUtils
+    project.writeEntry("bridge", "version", WYRE_PROJECT_VERSION)
     QgsExpressionContextUtils.setProjectVariable(project, "bridge_version", WYRE_PROJECT_VERSION)
     QgsExpressionContextUtils.setProjectVariable(project, "bridge_plugin", _plugin_version())
 
@@ -981,8 +990,9 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     groupe de l'operateur ; les entrees communes, chargees une seule fois
     quel que soit le nombre d'operateurs, dans « Commun ». Une couche deja
     presente (meme schema.table, meme typename WFS) est reprise telle quelle.
-    L'identite du projet (stamp_project) est ecrite avant le premier
-    addMapLayer.
+    L'operateur n'entre dans l'identite du projet (stamp_project) que si
+    une de ses couches operateur est reellement ajoutee, juste avant son
+    addMapLayer ; version et plugin sont toujours ecrits.
 
     Returns
     -------
@@ -997,10 +1007,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     project.setCrs(crs)
     _log("CRS projet: EPSG:31370 (Belgium Lambert 72)")
 
-    # -- Tamponner le projet AVANT d'ajouter des couches ---------------------
-    stamp_project(operator, suffix)
-    _log(f"Projet identifie: operators={get_bridge_info()['operator']} "
-         f"version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
+    # -- Version et plugin : toujours (projet Bridge reconnu) ----------------
+    _stamp_version(project)
 
     root = project.layerTreeRoot()
     groups = {}
@@ -1010,6 +1018,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     loaded = {}  # layer_key ("cables@orange", "interventions") → couche
     count = 0
     skipped = 0
+    stamped = False
 
     # Iterer dans l'ordre du catalogue, pas dans l'ordre du set
     for entry in catalog:
@@ -1038,6 +1047,13 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             _log(f"Couche invalide: {schema}.{table}", Qgis.MessageLevel.Warning)
             continue
 
+        if key in OPERATOR_KEYS and not stamped:
+            # Identite AVANT le premier addMapLayer d'une couche operateur
+            # (suffixe pose sur layersAdded, tache 3) ; un operateur sans
+            # couche ajoutee n'y entre jamais (decision T2-c3).
+            stamp_project(operator, suffix)
+            stamped = True
+
         # Sans groupe : au projet seulement, hors arbre de couches.
         project.addMapLayer(layer, False)
         if group_name == _REFERENCE_GROUP:
@@ -1054,6 +1070,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     if skipped:
         _log(f"{skipped} couche(s) deja presente(s) — ignoree(s)")
     _log(f"{count} couche(s) chargee(s)")
+    _log(f"Projet identifie: operators={get_bridge_info()['operator'] or '-'} "
+         f"version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
 
     # -- Relations --------------------------------------------------------
     ensure_relations(loaded)
@@ -1076,7 +1094,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:
         basemap_group = _add_basemaps(root, selected_basemaps)
-        groups[_BASEMAPS_GROUP] = basemap_group
+        if basemap_group is not None:
+            groups[_BASEMAPS_GROUP] = basemap_group
 
     # -- Groupe Référence (en bas, apres les basemaps) --------------------
     # Seulement pour des couches presentes dans l'arbre (v_form_lists ajoutee
@@ -1208,12 +1227,12 @@ def _build_wfs_layer(typename: str, label: str):
 
 
 def _add_basemaps(root, selected_keys: set[str]):
-    """Ajoute les fonds de carte dans un groupe Basemaps."""
+    """Ajoute les fonds de carte dans un groupe Basemaps, cree au premier
+    fond ajoute (jamais de groupe vide). Retourne le groupe, ou None."""
     project = QgsProject.instance()
     existing_names = {ly.name() for ly in project.mapLayers().values()}
 
-    # Cree au besoin juste au-dessus de Reference (ordre § 9.1)
-    basemap_group = root.findGroup(_BASEMAPS_GROUP) or _insert_root_group(root, _BASEMAPS_GROUP, (3,))
+    basemap_group = root.findGroup(_BASEMAPS_GROUP)
     basemap_by_key = {bm["key"]: bm for bm in BASEMAPS}
     added = 0
 
@@ -1229,6 +1248,9 @@ def _add_basemaps(root, selected_keys: set[str]):
         layer = QgsRasterLayer(bm["source"], name, bm["provider"])
         if layer.isValid():
             project.addMapLayer(layer, False)
+            if basemap_group is None:
+                # Juste au-dessus de Reference (ordre § 9.1)
+                basemap_group = _insert_root_group(root, _BASEMAPS_GROUP, (3,))
             basemap_group.addLayer(layer)
             added += 1
         else:

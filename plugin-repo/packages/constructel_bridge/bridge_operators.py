@@ -42,6 +42,12 @@ class OperatorInfo:
     readable: bool = True
 
 
+# Loading fallback when the operator list could not be read at all (1.8.4
+# behaviour, controller decision T2-c4). A list read without any usable
+# operator never falls back (spec § 6.2).
+FALLBACK_OPERATOR = OperatorInfo("WYRE", "Wyre", OPERATOR_TEMPLATE_SCHEMA)
+
+
 OPERATORS_QUERY = """\
 SELECT o.code::text, o.label::text, o.schema_name::text,
        COALESCE(has_schema_privilege(to_regnamespace(o.schema_name)::oid, 'USAGE'), false)

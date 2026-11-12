@@ -6,7 +6,8 @@ from __future__ import annotations
 import pytest
 
 from constructel_bridge import bridge_operators as bo
-from constructel_bridge_tests.fakes19 import ORANGE, WYRE, FakeLayer, install_fake_project
+from constructel_bridge_tests.fakes19 import ORANGE, WYRE, FakeLayer, FakeRasterLayer, install_fake_project
+from constructel_bridge_tests.test_bridge18_connect import _FakeCursor, _make_plugin, _PgErr
 from constructel_bridge_tests.test_bridge18_layers import (  # noqa: F401  (pi = fixture)
     _FakeIface,
     _shared_plugin,
@@ -137,6 +138,29 @@ def test_basemaps_created_late_stay_above_reference(pi, monkeypatch):
     assert _names(project.layerTreeRoot()) == ["Wyre", "Orange", "Basemaps", "Référence"]
 
 
+def test_invalid_basemap_creates_no_group(pi, monkeypatch):
+    project = install_fake_project(pi, monkeypatch)
+
+    class _InvalidRaster(FakeRasterLayer):
+        def isValid(self):
+            return False
+
+    monkeypatch.setattr(pi, "QgsRasterLayer", _InvalidRaster)
+    pi.init_project({}, "", {"cables"}, selected_basemaps={"osm"}, operator=WYRE)
+    assert _names(project.layerTreeRoot()) == ["Wyre"]
+
+
+def test_basemap_present_elsewhere_creates_no_empty_group(pi, monkeypatch):
+    project = install_fake_project(pi, monkeypatch)
+    mine = project.layerTreeRoot().addGroup("Mes couches")
+    osm = FakeRasterLayer("type=xyz", "OpenStreetMap", "wms")
+    project.addMapLayer(osm, False)
+    mine.addLayer(osm)
+    pi.init_project({}, "", {"cables"}, selected_basemaps={"osm"}, operator=WYRE)
+    assert _names(project.layerTreeRoot()) == ["Mes couches", "Wyre"]
+    assert [ly.name() for ly in project.mapLayers().values()].count("OpenStreetMap") == 1
+
+
 def test_add_mode_after_translation_reuses_subgroups(pi, monkeypatch):
     project = install_fake_project(pi, monkeypatch)
     pi.init_project({}, "", {"demand_points"}, operator=WYRE)
@@ -224,6 +248,49 @@ def test_stamp_accumulates_operators_before_first_layer(pi, monkeypatch):
     # @bridge_operator : meme chaine que bridge/operator.
     assert project.customVariables()["bridge_operator"] == "wyre,orange"
     assert project.customVariables()["bridge_version"] == pi.WYRE_PROJECT_VERSION
+
+
+def test_common_only_load_leaves_identity_unchanged(pi, monkeypatch):
+    # Decision T2-c3 : un operateur n'entre dans l'identite que si une de ses
+    # couches operateur est reellement ajoutee ; version et plugin toujours.
+    project = install_fake_project(pi, monkeypatch)
+    pi.init_project({}, "", {"interventions", "v_form_lists"}, operator=ORANGE, suffix=True)
+    info = pi.get_bridge_info()
+    assert (info["operators"], info["operator_labels"], info["operator_suffix"]) == ([], {}, None)
+    assert info["version"] == pi.WYRE_PROJECT_VERSION and pi.is_bridge_project()
+    pi.init_project({}, "", {"cables"}, operator=WYRE)
+    pi.init_project({}, "", {"incidents"}, operator=ORANGE)
+    assert pi.get_bridge_info()["operators"] == ["wyre"]
+    assert project.customVariables()["bridge_operator"] == "wyre"
+    assert _names(project.layerTreeRoot()) == ["Wyre", "Commun", "Référence"]
+
+
+def test_operator_with_only_invalid_layers_stays_out_of_identity(pi, monkeypatch):
+    project = install_fake_project(pi, monkeypatch)
+    pi.init_project({}, "", {"cables"}, operator=WYRE)
+
+    class _InvalidOrange(FakeLayer):
+        def isValid(self):
+            return '"orange"' not in self.source()
+
+    monkeypatch.setattr(pi, "QgsVectorLayer", _InvalidOrange)
+    pi.init_project({}, "", {"cables", "zone_pop", "interventions"}, operator=ORANGE)
+    info = pi.get_bridge_info()
+    assert info["operators"] == ["wyre"] and info["operator_labels"] == {"wyre": "Wyre"}
+    assert project.count_pg("chantier", "interventions") == 1
+    assert "Orange" not in _names(project.layerTreeRoot())
+
+
+def test_operator_loaded_after_common_only_load_is_primary(pi, monkeypatch):
+    # Orange preselectionne, couches communes seules ; puis Wyre : Wyre est le
+    # principal et garde les identifiants historiques des relations.
+    project = install_fake_project(pi, monkeypatch)
+    pi.init_project({}, "", {"interventions"}, operator=ORANGE)
+    pi.init_project({}, "", {"cables", "zone_pop"}, operator=WYRE)
+    rels = project.relationManager().relations()
+    assert pi.get_bridge_info()["operators"] == ["wyre"]
+    assert "cables_to_pop" in rels and not any(i.endswith("__wyre") for i in rels)
+    assert rels["cables_to_pop"].referencingLayerId() == project.layer("wyre", "cables").id()
 
 
 def test_operator_suffix_entry_is_none_until_chosen(pi, monkeypatch):
@@ -358,10 +425,10 @@ def test_init_menu_without_usable_operator_warns(bp18, monkeypatch):
     assert warnings == [bp18.tr("home.no_operator")]
 
 
-def test_init_menu_loads_preselected_operator(bp18, pi, monkeypatch):
-    from qgis.core import QgsSettings
-
-    opened, loads = [], []
+def _fake_init_dialog(bp18, pi, monkeypatch):
+    """InitProjectDialog factice : accepte, couches cables + v_form_lists,
+    fond osm, sans styles. Rend la liste des operateurs recus."""
+    opened = []
 
     class _Dialog:
         def __init__(self, parent=None, operator=None):
@@ -383,6 +450,14 @@ def test_init_menu_loads_preselected_operator(bp18, pi, monkeypatch):
             return False
 
     monkeypatch.setattr(pi, "InitProjectDialog", _Dialog)
+    return opened
+
+
+def test_init_menu_loads_preselected_operator(bp18, pi, monkeypatch):
+    from qgis.core import QgsSettings
+
+    loads = []
+    opened = _fake_init_dialog(bp18, pi, monkeypatch)
     QgsSettings().setValue(bo.LAST_OPERATOR_KEY, "wyre")
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     plugin._connected, plugin._operators = True, [ORANGE, WYRE]
@@ -392,3 +467,35 @@ def test_init_menu_loads_preselected_operator(bp18, pi, monkeypatch):
 
     assert opened == [WYRE]
     assert loads == [(WYRE, {"cables", "v_form_lists"}, {"osm"}, False)]
+
+
+def test_unreadable_operator_list_falls_back_to_wyre(bp18, pi, monkeypatch, tmp_path):
+    # Decision T2-c4 : liste illisible (echec d'OPERATORS_QUERY) -> chargement
+    # Wyre, comme 1.8.4.
+    cur = _FakeCursor(operator_rows=_PgErr("permission denied for table operateurs"))
+    plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None], cursor=cur, stored_ad_pw="ad-pw")
+    plugin._auto_connect()
+    assert plugin._connected is True and plugin._operators == [] and plugin._operators_unavailable is True
+    loads = []
+    opened = _fake_init_dialog(bp18, pi, monkeypatch)
+    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+
+    plugin._on_init_project()
+
+    assert opened == [bo.OperatorInfo("WYRE", "Wyre", "wyre")] == [bo.FALLBACK_OPERATOR]
+    assert [call[0] for call in loads] == [bo.FALLBACK_OPERATOR]
+
+
+def test_readable_list_without_usable_operator_blocks_loading(bp18, pi, monkeypatch, tmp_path):
+    # Liste lue, aucun operateur utilisable : blocage home.no_operator (spec § 6.2).
+    cur = _FakeCursor(operator_rows=[("ORANGE", "Orange", "orange", True)], operator_codes=["WYRE"])
+    plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None], cursor=cur, stored_ad_pw="ad-pw")
+    plugin._auto_connect()
+    assert plugin._connected is True and plugin._operators == [] and plugin._operators_unavailable is False
+    warnings = []
+    monkeypatch.setattr(bp18.QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+    opened = _fake_init_dialog(bp18, pi, monkeypatch)
+
+    plugin._on_init_project()
+
+    assert warnings == [bp18.tr("home.no_operator")] and opened == []
