@@ -145,8 +145,11 @@ def test_wyre_group_label_without_wyre_scope(pi, monkeypatch):
     assert _names(project.layerTreeRoot())[0] == "Wyre"
 
 
-def test_unknown_schema_group_uses_stored_label_then_capitalized_schema(pi, monkeypatch):
+def test_known_schema_without_registry_uses_stored_label_then_capitalized_schema(pi, monkeypatch):
+    # Schema connu par l'identite du projet (bridge/operator) : operateur non
+    # lisible, libelle mémorise dans bridge/operator_labels, a defaut schema capitalise.
     project, _layers = legacy_project(pi, monkeypatch, schema="orange")
+    project.writeEntry("bridge", "operator", "orange")
     operators = pi.reorganize_legacy_tree(project, {})
     assert operators == [bo.OperatorInfo("ORANGE", "Orange", "orange", readable=False)]
     root = project.layerTreeRoot()
@@ -158,6 +161,17 @@ def test_unknown_schema_group_uses_stored_label_then_capitalized_schema(pi, monk
     assert _names(project.layerTreeRoot())[0] == "Orange BE"
 
 
+def test_schema_unknown_to_registry_and_identity_is_left_in_place(pi, monkeypatch):
+    project, _layers = legacy_project(pi, monkeypatch, schema="orange")
+    root = project.layerTreeRoot()
+    before = tree_names(project)
+    assert pi.reorganize_legacy_tree(project, {"wyre": WYRE}) == []
+    # Les groupes operateur restent a la racine ; seul « Chantier » (commun) est range.
+    assert _names(root) == ["Demand Points", "Infrastructure", "Zones", "Commun", "Basemaps", "Référence",
+                            "Mes couches", "ma_couche"]
+    assert tree_names(project) != before and pi.get_bridge_info()["operators"] == []
+
+
 def test_registry_operator_is_returned_as_is(pi, monkeypatch):
     project, _layers = legacy_project(pi, monkeypatch, schema="orange")
     custom = bo.OperatorInfo("ORANGE", "Orange Belgium", "orange")
@@ -165,12 +179,57 @@ def test_registry_operator_is_returned_as_is(pi, monkeypatch):
     assert _names(project.layerTreeRoot())[0] == "Orange Belgium"
 
 
-def test_legacy_operator_group_without_layer_defaults_to_wyre(pi, monkeypatch):
+def test_empty_legacy_operator_group_is_left_in_place(pi, monkeypatch):
     project = install_fake_project(pi, monkeypatch)
     root = project.layerTreeRoot()
     root.addGroup("Zones")
+    root.addGroup("Infrastructure")
+    assert pi.needs_reorganization(root) is False
+    assert pi.reorganize_legacy_tree(project, {"wyre": WYRE}) == []
+    assert _names(root) == ["Zones", "Infrastructure"]
+    assert root.children()[0].customProperty(bo.GROUP_SCHEMA_PROPERTY) is None
+    assert pi.get_bridge_info()["operators"] == []
+
+
+def test_legacy_operator_group_without_postgres_layer_is_left_in_place(pi, monkeypatch):
+    # Couche non PostgreSQL (WFS) et couche non chargee (node.layer() None).
+    project = install_fake_project(pi, monkeypatch)
+    root = project.layerTreeRoot()
+    zones = root.addGroup("Zones")
+    wfs = FakeLayer("typename=x", "wfs_zone", "WFS")
+    project.addMapLayer(wfs, False)
+    zones.addLayer(wfs)
+    broken = FakeLayer.pg("wyre", "cables")
+    infra = root.addGroup("Infrastructure")
+    node = infra.addLayer(broken)
+    node.layer = lambda: None  # couche non chargee : le noeud n'a plus de couche
+    assert pi.needs_reorganization(root) is False
+    assert pi.reorganize_legacy_tree(project, {"wyre": WYRE}) == []
+    assert _names(root) == ["Zones", "Infrastructure"]
+
+
+def test_legacy_group_with_only_non_operator_schema_creates_no_operator(pi, monkeypatch):
+    # public.structures / chantier.cables : table operateur, mais schema qui
+    # n'est ni dans le registre, ni dans l'identite, ni wyre -> pas d'operateur « Public ».
+    project = install_fake_project(pi, monkeypatch)
+    root = project.layerTreeRoot()
+    project.add_pg("public", "structures", group=root.addGroup("Infrastructure"))
+    project.add_pg("chantier", "cables", group=root.addGroup("Zones"))
+    assert pi.needs_reorganization(root, pi.known_operator_schemas(project, {"wyre": WYRE})) is False
+    assert pi.reorganize_legacy_tree(project, {"wyre": WYRE}) == []
+    assert _names(root) == ["Infrastructure", "Zones"]
+    assert pi.get_bridge_info()["operators"] == [] and pi.get_bridge_info()["operator_labels"] == {}
+
+
+def test_first_known_schema_decides_not_the_first_layer(pi, monkeypatch):
+    # public.structures d'abord, wyre.cables ensuite : le groupe va chez Wyre.
+    project = install_fake_project(pi, monkeypatch)
+    root = project.layerTreeRoot()
+    infra = root.addGroup("Infrastructure")
+    project.add_pg("public", "structures", group=infra)
+    project.add_pg("wyre", "cables", group=infra)
     assert pi.reorganize_legacy_tree(project, {"wyre": WYRE}) == [WYRE]
-    assert _names(root) == ["Wyre"] and _names(root.children()[0]) == ["Zones"]
+    assert _names(root) == ["Wyre"]
 
 
 def test_layer_ids_order_and_state_are_kept(pi, monkeypatch):
@@ -250,7 +309,11 @@ def test_needs_reorganization_cases(pi, monkeypatch):
         root.addGroup(name)
     project.add_pg("wyre", "cables")                                   # couche a la racine : pas un groupe
     assert pi.needs_reorganization(root) is False
-    root.addGroup("Infraestrutura")
+    infra = root.addGroup("Infraestrutura")
+    assert pi.needs_reorganization(root) is False                      # groupe operateur vide : reste en place
+    project.add_pg("wyre", "cables", group=infra)
+    assert pi.needs_reorganization(root) is True
+    root.addGroup("Chantier")                                          # groupe commun : toujours a ranger
     assert pi.needs_reorganization(root) is True
 
 
@@ -350,6 +413,29 @@ def test_legacy_group_message_lists_every_operator(bp18, pi, plugin18):
 
     assert plugin.iface.messageBar().messages[-2][2] == bp18.tr("home.reorganized", operators="Wyre, Orange")
     assert pi.get_bridge_info()["operators"] == ["wyre", "orange"]
+
+
+def test_phantom_legacy_group_neither_stamps_nor_forces_suffix(bp18, pi, plugin18):
+    # Seul un groupe « Zones » vide traine a la racine : aucun operateur Wyre
+    # n'est invente (identite inchangee, suffixe non force, pas de message).
+    plugin, project, _layers = plugin18
+    root = project.layerTreeRoot()
+    for layer in list(project.mapLayers().values()):
+        project.removeMapLayer(layer)
+    for node in root.children():
+        root.removeChildNode(node)
+    root.addGroup("Zones")
+    project.writeEntry("bridge", "operator", "")
+    messages = plugin.iface.messageBar().messages
+    plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
+
+    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+
+    info = pi.get_bridge_info()
+    assert info["operators"] == ["orange"] and info["operator_labels"] == {"orange": "Orange"}
+    assert info["operator_suffix"] is False
+    assert _names(root)[0] == "Zones" and _names(root)[1:] == ["Orange"]  # « Zones » reste a la racine
+    assert [m[2] for m in messages] == [bp18.tr("init.success", count=1)]
 
 
 def test_already_19_project_gets_no_reorganization(bp18, pi, plugin18, monkeypatch):

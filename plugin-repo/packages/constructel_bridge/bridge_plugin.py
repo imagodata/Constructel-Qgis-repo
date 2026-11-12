@@ -3839,10 +3839,16 @@ class ConstructelBridgePlugin:
         moins deux operateurs : suffixe obligatoire, § 6.4). Sans groupe
         herite, ne fait rien. Jamais appelee a l'ouverture d'un projet
         (_on_project_read)."""
-        from .bridge_project_init import needs_reorganization, reorganize_legacy_tree, stamp_project
+        from .bridge_project_init import (
+            known_operator_schemas,
+            needs_reorganization,
+            reorganize_legacy_tree,
+            stamp_project,
+        )
 
         project = QgsProject.instance()
-        if not needs_reorganization(project.layerTreeRoot()):
+        known = known_operator_schemas(project, self._operator_registry)
+        if not needs_reorganization(project.layerTreeRoot(), known):
             return suffix
         touched = reorganize_legacy_tree(project, self._operator_registry)
         if any(op.schema != operator.schema for op in touched):

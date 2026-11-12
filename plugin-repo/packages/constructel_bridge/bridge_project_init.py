@@ -722,26 +722,50 @@ def _legacy_kind(node) -> str | None:
     return kind if kind in _LEGACY_KINDS else None
 
 
-def needs_reorganization(root) -> bool:
-    """True si la racine porte encore un groupe du catalogue a la mode 1.8
-    (Demand Points, Infrastructure, Zones, Chantier, OSIRIS, Cadastre UrbIS,
-    Urbanisme, sous n'importe quelle traduction)."""
-    return any(_legacy_kind(child) for child in root.children())
+def known_operator_schemas(project, registry: Mapping[str, OperatorInfo]) -> set[str]:
+    """Schemas qu'un groupe herite peut designer : operateurs du registre,
+    de l'identite du projet (bridge/operator et bridge/operator_labels) et
+    ``wyre`` (seul operateur de 1.8). Un autre schema (public, chantier...)
+    ne fait jamais naitre d'operateur."""
+    labels = parse_operator_labels(project.readEntry("bridge", "operator_labels", "")[0])
+    operators = parse_project_operators(project.readEntry("bridge", "operator", "")[0])
+    return {*registry, *labels, *operators, OPERATOR_TEMPLATE_SCHEMA}
 
 
-def _legacy_group_schema(group) -> str:
+def _legacy_group_schema(group, known) -> str | None:
     """Schema de la premiere couche PostgreSQL d'une table operateur
-    contenue (recursivement) dans *group* ; ``wyre`` (seul operateur de 1.8)
-    s'il n'y en a aucune."""
+    contenue (recursivement) dans *group*, a condition qu'il soit dans
+    *known* ; None s'il n'y en a pas (groupe vide, couches non chargees ou
+    non PostgreSQL, table d'un schema inconnu comme public.structures)."""
     for node in group.findLayers():
         layer = node.layer()
         provider = layer.dataProvider() if layer is not None else None
         if provider is None or provider.name() != "postgres":
             continue
         uri = provider.uri()
-        if uri.table() in OPERATOR_TABLES and is_safe_schema(uri.schema()):
+        if uri.table() in OPERATOR_TABLES and uri.schema() in known:
             return uri.schema()
-    return OPERATOR_TEMPLATE_SCHEMA
+    return None
+
+
+def _movable(node, known) -> bool:
+    """Groupe racine a ranger : groupe commun herite, ou groupe operateur
+    herite dont on connait l'operateur. Un groupe operateur sans couche
+    operateur connue reste en place."""
+    kind = _legacy_kind(node)
+    if kind is None:
+        return False
+    return kind not in OPERATOR_GROUPS or _legacy_group_schema(node, known) is not None
+
+
+def needs_reorganization(root, known=()) -> bool:
+    """True si la racine porte un groupe du catalogue a la mode 1.8 a ranger
+    (Demand Points, Infrastructure, Zones, Chantier, OSIRIS, Cadastre UrbIS,
+    Urbanisme, sous n'importe quelle traduction). Un groupe operateur ne
+    compte que si le schema de ses couches est dans *known* (+ wyre ;
+    known_operator_schemas)."""
+    known = {*known, OPERATOR_TEMPLATE_SCHEMA}
+    return any(_movable(child, known) for child in root.children())
 
 
 def _legacy_operator(schema: str, registry: Mapping[str, OperatorInfo], labels: Mapping[str, str]) -> OperatorInfo:
@@ -772,7 +796,10 @@ def _move_group(group, target, kind: str) -> None:
 def reorganize_legacy_tree(project, registry: Mapping[str, OperatorInfo]) -> list[OperatorInfo]:
     """Range les groupes racine d'un projet 1.8 dans la structure 1.9 (§ 6.5) :
     Demand Points / Infrastructure / Zones dans le groupe de l'operateur de
-    leurs couches (``wyre`` par defaut), les groupes communs dans « Commun ».
+    leurs couches, les groupes communs dans « Commun ». Un groupe operateur
+    sans couche PostgreSQL d'une table operateur d'un schema connu
+    (known_operator_schemas) reste en place a la racine : aucun operateur
+    n'est invente pour lui.
 
     Les groupes sont reconnus sous leur nom FR / EN / PT et gardent leur nom.
     Les couches, groupes et couches personnels de la racine ne sont pas
@@ -780,13 +807,14 @@ def reorganize_legacy_tree(project, registry: Mapping[str, OperatorInfo]) -> lis
     un second appel retourne [] et ne change rien."""
     root = project.layerTreeRoot()
     labels = parse_operator_labels(project.readEntry("bridge", "operator_labels", "")[0])
+    known = known_operator_schemas(project, registry)
     touched: list[OperatorInfo] = []
     for child in root.children():
-        kind = _legacy_kind(child)
-        if kind is None:
+        if not _movable(child, known):
             continue
+        kind = _legacy_kind(child)
         if kind in OPERATOR_GROUPS:
-            operator = _legacy_operator(_legacy_group_schema(child), registry, labels)
+            operator = _legacy_operator(_legacy_group_schema(child, known), registry, labels)
             if operator not in touched:
                 touched.append(operator)
             target = ensure_operator_group(root, operator)
