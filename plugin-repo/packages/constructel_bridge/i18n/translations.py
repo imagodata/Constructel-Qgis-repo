@@ -109,6 +109,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.success": "Project initialized: {count} layers, styles and relations configured.",
         "init.error": "Initialization error:\n{error}",
         "home.no_operator": "No operator available: ask a Farois administrator for an operator scope.",
+        "home.reorganized": "Project reorganized by operator (groups {operators} and Common): save it to keep this organization.",
+        "home.reorganized_common": "Project reorganized (Common group): save it to keep this organization.",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "User profile",
@@ -417,6 +419,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.success": "Projet initialise : {count} couches, styles et relations configures.",
         "init.error": "Erreur d'initialisation :\n{error}",
         "home.no_operator": "Aucun opérateur accessible : demande un scope opérateur à un administrateur Farois.",
+        "home.reorganized": "Projet réorganisé par opérateur (groupes {operators} et Commun) : enregistre-le pour garder cette organisation.",
+        "home.reorganized_common": "Projet réorganisé (groupe Commun) : enregistre-le pour garder cette organisation.",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Profil utilisateur",
@@ -727,6 +731,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.success": "Projeto inicializado: {count} camadas, estilos e relacoes configurados.",
         "init.error": "Erro de inicializacao:\n{error}",
         "home.no_operator": "Nenhum operador acessivel: peca um scope de operador a um administrador Farois.",
+        "home.reorganized": "Projeto reorganizado por operador (grupos {operators} e Comum): guarde-o para manter esta organizacao.",
+        "home.reorganized_common": "Projeto reorganizado (grupo Comum): guarde-o para manter esta organizacao.",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Perfil do utilizador",
