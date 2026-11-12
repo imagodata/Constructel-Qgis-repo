@@ -112,11 +112,18 @@ class _FakeIface:
 
 
 class _FakeCursor:
-    """Answers _register_bridge_user, the scope query and the zone names."""
+    """Answers _register_bridge_user, the scope query, the zone names and
+    (Bridge 1.9) the operator registry / scope codes. *operator_rows* : lignes
+    de OPERATORS_QUERY, ou une Exception levee par execute ; *operator_codes* :
+    liste renvoyee par current_gis_operator_codes (None = NULL, ADMIN/MANAGER),
+    ou une Exception levee par execute."""
 
-    def __init__(self, user_row=USER_ROW, scope_row=None, mro_names=(), pop_names=()):
+    def __init__(self, user_row=USER_ROW, scope_row=None, mro_names=(), pop_names=(),
+                 operator_rows=(("WYRE", "Wyre", "wyre", True),), operator_codes=None):
         self.user_row = user_row
         self.scope_row = scope_row
+        self.operator_rows = operator_rows
+        self.operator_codes = operator_codes
         self.mro_names = list(mro_names)
         self.pop_names = list(pop_names)
         self.executed = []
@@ -136,6 +143,14 @@ class _FakeCursor:
             if self.scope_row is None:
                 raise _PgErr("permission denied for function current_gis_role")
             self._one = self.scope_row
+        elif "FROM ref.operateurs" in sql:
+            if isinstance(self.operator_rows, Exception):
+                raise self.operator_rows
+            self._all = list(self.operator_rows)
+        elif "current_gis_operator_codes" in sql:
+            if isinstance(self.operator_codes, Exception):
+                raise self.operator_codes
+            self._one = (self.operator_codes,)
         elif "FROM wyre.zone_mro" in sql:
             self._all = self.mro_names
         elif "FROM wyre.zone_pop" in sql:

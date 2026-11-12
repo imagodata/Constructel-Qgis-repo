@@ -1,0 +1,113 @@
+<style>
+  .qd { border:1px solid rgba(128,128,128,.45); border-radius:8px; overflow:hidden; font-size:13px; background:rgba(128,128,128,.04); }
+  .qd-title { padding:6px 10px; background:rgba(128,128,128,.14); font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .qd-body { padding:12px; }
+  .pill { display:inline-flex; gap:6px; align-items:center; padding:3px 9px; border-radius:999px; font-size:12px; border:1px solid rgba(128,128,128,.4); font-weight:400; }
+  .pill.ok { border-color:#2e9d5b; } .pill.ok b { color:#2e9d5b; }
+  .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.06em; opacity:.7; margin:0 0 5px; }
+  .seg { display:inline-flex; border:1px solid rgba(128,128,128,.5); border-radius:6px; overflow:hidden; }
+  .seg span { padding:5px 14px; border-right:1px solid rgba(128,128,128,.5); }
+  .seg span:last-child { border-right:0; }
+  .seg .on { background:#3b7dd8; color:#fff; font-weight:600; }
+  .seg .done { opacity:.5; }
+  .combo { display:inline-block; padding:4px 10px; border-radius:5px; border:1px solid rgba(128,128,128,.5); min-width:210px; }
+  .desc { font-size:11px; opacity:.65; margin-top:4px; }
+  .big { border:2px solid #3b7dd8; border-radius:8px; padding:12px; }
+  .top { display:grid; grid-template-columns:auto 1fr; gap:22px; align-items:start; margin-bottom:12px; }
+  .two { display:grid; grid-template-columns:1.45fr 1fr; gap:12px; }
+  .box { border:1px solid rgba(128,128,128,.4); border-radius:6px; padding:8px 10px; }
+  .box > .lbl { margin-bottom:6px; }
+  .tree { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.6; white-space:pre; }
+  .op { display:inline-block; font-family:system-ui,sans-serif; font-size:10px; padding:0 6px; border-radius:4px; background:#3b7dd8; color:#fff; margin-left:4px; vertical-align:1px; }
+  .op.or { background:#e07b1a; }
+  .com { font-family:system-ui,sans-serif; font-size:10px; opacity:.6; margin-left:4px; }
+  .dim { opacity:.42; }
+  .bar { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  .btn { padding:5px 12px; border-radius:5px; border:1px solid rgba(128,128,128,.5); font-size:12px; }
+  .primary { margin-left:auto; padding:8px 18px; border-radius:6px; background:#3b7dd8; color:#fff; font-weight:600; }
+  .primary.or { background:#e07b1a; }
+  .tiles { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:10px; }
+  .tile { border:1px solid rgba(128,128,128,.45); border-radius:6px; padding:8px; }
+  .tile b { display:block; font-size:12px; } .tile span { font-size:11px; opacity:.7; }
+  .loaded { display:inline-flex; gap:6px; align-items:center; padding:3px 9px; border-radius:6px; background:rgba(46,157,91,.14); font-size:12px; }
+  .note { font-size:12px; opacity:.78; margin-top:8px; }
+  h3.st { margin:24px 0 4px; }
+</style>
+
+<h2>Solution B, version 3 : le dialogue de sélection actuel dans la grande tuile</h2>
+<p class="subtitle">La sélection actuelle est conservée telle quelle : modèle, arbre des couches de travail, fonds de plan raster, styles, Tout/Rien. On ajoute seulement le choix d'un opérateur au-dessus. Ce choix ne change que les couches propres à l'opérateur ; Chantier, OSIRIS, Cadastre, Urbanisme et les fonds de plan sont communs à tous.</p>
+
+<h3 class="st">① Premier chargement</h3>
+<div class="qd">
+  <div class="qd-title"><span>Constructel Bridge</span><span class="pill ok"><b>●</b> christopherroland · Wyre : 10 MRO · écriture sur tout le périmètre</span></div>
+  <div class="qd-body">
+    <div class="big">
+      <div class="top">
+        <div><div class="lbl">Opérateur (selon tes scopes)</div><div class="seg"><span class="on">Wyre</span><span>Orange</span></div></div>
+        <div><div class="lbl">Modèle</div><span class="combo">Infrastructure ▾</span>
+          <div class="desc">Couches infra : zones, structures, câbles, conduites, segments de tranchée, DP, topologie</div></div>
+      </div>
+      <div class="two">
+        <div class="box"><div class="lbl">Couches de travail</div><div class="tree">▾ ☑ Points de demande <span class="op">Wyre</span>
+      ☑ Points de demande
+▾ ☑ Infrastructure <span class="op">Wyre</span>
+      ☑ Structures        ☑ Câbles
+      ☐ Sous-fourreaux    ☑ Conduites
+      ☑ Segments de tranchée
+      ☐ Avancement des fourreaux
+▾ ☑ Zones <span class="op">Wyre</span>
+      ☑ Drop  ☑ Distribution  ☑ POP  ☑ MRO
+▸ ☐ Chantier (7)<span class="com">commun</span>
+▸ ☐ OSIRIS (7)<span class="com">commun</span>
+▸ ☐ Cadastre UrbIS (4)<span class="com">commun · WFS</span>
+▸ ☐ Urbanisme (2)<span class="com">commun · WFS</span></div></div>
+        <div>
+          <div class="box"><div class="lbl">Fonds de plan</div><div class="tree">▾ UrbIS Brussels
+      ☑ UrbIS FR
+      ☑ UrbIS FR Gray
+▾ OpenStreetMap
+      ☑ OpenStreetMap
+▾ Google
+      ☐ Satellite
+      ☐ Hybrid
+      ☐ Roads</div></div>
+          <div style="margin-top:8px">☑ Appliquer les styles de la base</div>
+        </div>
+      </div>
+      <div class="bar"><span class="btn">Tout sélectionner</span><span class="btn">Tout désélectionner</span><span class="primary">Initialiser · Wyre</span></div>
+    </div>
+    <div class="tiles">
+      <div class="tile"><b>Projet enregistré</b><span>ouvrir un projet en base</span></div>
+      <div class="tile"><b>Check-in</b><span>extensions 5/6 · 1 à mettre à jour</span></div>
+      <div class="tile"><b>Diagnostic</b><span>plugin 1.8.4 · serveur joignable</span></div>
+      <div class="tile"><b>Langue</b><span>FR · EN · PT</span></div>
+    </div>
+  </div>
+</div>
+
+<h3 class="st">② Ajout d'un deuxième opérateur (Wyre déjà chargé)</h3>
+<p class="subtitle">Même tuile, en mode « Ajouter des couches » comme aujourd'hui. On passe sur Orange : seules ses couches opérateur sont à cocher, tout ce qui est commun et déjà chargé reste grisé.</p>
+<div class="qd">
+  <div class="qd-title"><span>Constructel Bridge</span><span class="pill ok"><b>●</b> christopherroland</span></div>
+  <div class="qd-body">
+    <div class="big" style="border-color:#e07b1a">
+      <div class="top">
+        <div><div class="lbl">Opérateur</div><div class="seg"><span class="done">Wyre ✓</span><span class="on" style="background:#e07b1a">Orange</span></div></div>
+        <div><div class="lbl">Déjà dans le projet</div><span class="loaded">✓ Wyre · Infrastructure · 14 couches · 3 fonds de plan</span></div>
+      </div>
+      <div class="two">
+        <div class="box"><div class="lbl">Couches de travail</div><div class="tree">▾ ☑ Points de demande <span class="op or">Orange</span>
+▾ ☑ Infrastructure <span class="op or">Orange</span>
+      ☑ Structures  ☑ Câbles  ☑ Conduites …
+▾ ☑ Zones <span class="op or">Orange</span>
+<span class="dim">▸ ☐ Chantier (7)        <span class="com">commun</span>
+▸ ☐ OSIRIS (7)          <span class="com">commun</span></span></div></div>
+        <div class="box"><div class="lbl">Fonds de plan</div><div class="tree dim">☑ UrbIS FR        déjà chargé
+☑ UrbIS FR Gray   déjà chargé
+☑ OpenStreetMap   déjà chargé</div></div>
+      </div>
+      <div class="bar"><span class="btn">Tout sélectionner</span><span class="btn">Tout désélectionner</span><span class="primary or">Ajouter les couches · Orange</span></div>
+    </div>
+    <div class="note">Résultat dans le panneau Couches : un groupe <b>Wyre</b> et un groupe <b>Orange</b> pour les couches opérateur ; Chantier, OSIRIS, Cadastre et les fonds de plan restent une seule fois.</div>
+  </div>
+</div>
