@@ -836,8 +836,28 @@ def test_failed_start_is_not_remembered(onb, monkeypatch):  # noqa: F811
     from qgis.core import QgsSettings
 
     monkeypatch.setattr(onb, "startPlugin", lambda pid: False)
-    onb.install_or_activate_plugin("b")
+    with pytest.raises(RuntimeError):  # M4 : demarrage refuse = echec
+        onb.install_or_activate_plugin("b")
     assert QgsSettings().value("PythonPlugins/b") is None
+
+
+def test_refused_start_is_reported_by_the_diagnostic(bp18, onb, monkeypatch):  # noqa: F811
+    # Relecture finale M4 : « Activer » dont startPlugin rend False affiche
+    # l'erreur de l'extension, et le reglage PythonPlugins n'est pas ecrit.
+    from qgis.core import QgsSettings
+
+    shown = []
+    monkeypatch.setattr(bp18.QMessageBox, "warning", lambda *a, **k: shown.append(a[2]), raising=False)
+    monkeypatch.setattr(onb, "startPlugin", lambda pid: False)
+    with pytest.raises(RuntimeError) as refused:
+        onb.install_or_activate_plugin("b")
+    plugin = _offline_plugin(bp18)
+
+    checks = plugin._run_diagnostic_action(bd.Check("plugin", "warning", "diag.plugin_inactive", {}, "activate", "b"))
+
+    assert shown == [bp18.tr("onboard.action.plugin_error", pid="b", error=str(refused.value))]
+    assert QgsSettings().value("PythonPlugins/b") is None
+    assert len(checks) == 7
 
 
 def test_installed_and_started_plugin_is_remembered(onb, monkeypatch):  # noqa: F811

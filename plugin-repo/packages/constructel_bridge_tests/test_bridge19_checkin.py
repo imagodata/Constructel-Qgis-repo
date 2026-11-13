@@ -266,6 +266,25 @@ def test_install_failure_raises(onb):
         onb.install_or_activate_plugin("c")
 
 
+def test_refused_start_raises_and_is_reported_as_an_error(onb, monkeypatch):
+    # Relecture finale M4 : startPlugin rend False -> echec leve, jamais
+    # "activated" ; l'assistant affiche l'erreur de ce plugin et n'ecrit pas
+    # PythonPlugins/<id>.
+    from qgis.core import QgsSettings
+
+    monkeypatch.setattr(onb, "startPlugin", lambda pid: False)
+    with pytest.raises(RuntimeError, match="b") as refused:
+        onb.install_or_activate_plugin("b")
+    assert QgsSettings().value("PythonPlugins/b") is None
+
+    w = onb.OnboardingWizard(None, "", "", False, include_profile=False)
+    w._page_plugins = _Page(["b"])
+    w._install_selected_plugins()
+
+    assert w._actions_done == [onb.tr("onboard.action.plugin_error", pid="b", error=str(refused.value))]
+    assert QgsSettings().value("PythonPlugins/b") is None
+
+
 def test_missing_installer_raises(onb, monkeypatch):
     monkeypatch.setitem(sys.modules, "pyplugin_installer", None)  # ImportError
     with pytest.raises(onb.PluginInstallerUnavailable):
