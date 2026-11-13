@@ -42,7 +42,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.connect_first": "Connect first via Constructel Bridge > Database connection.",
 
         # -- Status --
-        "status.title": "Constructel Bridge - Status",
         "status.not_connected": "Not connected.\nUse Constructel Bridge > Database connection.",
         "status.connected_to": "Connected to: {host}:{port}/{dbname}\n"
                                "Role: {user}\n"
@@ -90,8 +89,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.list_error": "Error listing projects:\n{error}",
 
         # -- Init project --
-        "init.title": "Constructel Bridge - Initialize project",
-        "init.title_add": "Constructel Bridge - Add layers",
         "init.group_template": "Template",
         "init.group_layers": "Layers",
         "init.group_basemaps": "Basemaps",
@@ -402,7 +399,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.connect_first": "Connectez-vous d'abord via Constructel Bridge > Connexion base de donnees.",
 
         # -- Status --
-        "status.title": "Constructel Bridge - Statut",
         "status.not_connected": "Non connecte.\nUtilisez Constructel Bridge > Connexion base de donnees.",
         "status.connected_to": "Connecte a: {host}:{port}/{dbname}\n"
                                "Role: {user}\n"
@@ -450,8 +446,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.list_error": "Erreur lors du listage des projets:\n{error}",
 
         # -- Init projet --
-        "init.title": "Constructel Bridge - Initialiser projet",
-        "init.title_add": "Constructel Bridge - Ajouter des couches",
         "init.group_template": "Template",
         "init.group_layers": "Couches",
         "init.group_basemaps": "Fonds de carte",
@@ -764,7 +758,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.connect_first": "Ligue-se primeiro via Constructel Bridge > Ligacao a base de dados.",
 
         # -- Status --
-        "status.title": "Constructel Bridge - Estado",
         "status.not_connected": "Nao ligado.\nUse Constructel Bridge > Ligacao a base de dados.",
         "status.connected_to": "Ligado a: {host}:{port}/{dbname}\n"
                                "Papel: {user}\n"
@@ -812,8 +805,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.list_error": "Erro ao listar os projetos:\n{error}",
 
         # -- Init projeto --
-        "init.title": "Constructel Bridge - Inicializar projeto",
-        "init.title_add": "Constructel Bridge - Adicionar camadas",
         "init.group_template": "Template",
         "init.group_layers": "Camadas",
         "init.group_basemaps": "Mapas base",
