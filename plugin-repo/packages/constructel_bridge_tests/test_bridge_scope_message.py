@@ -235,7 +235,7 @@ class _StrictCursor(_FakeCursor):
     qu'une liste d'UUID (1.8.3 : les caractères du littéral)."""
 
     def execute(self, sql, params=None):
-        if "FROM wyre.zone_mro" in sql or "FROM wyre.zone_pop" in sql:
+        if 'FROM "wyre".zone_mro' in sql or 'FROM "wyre".zone_pop' in sql:
             for value in params[0]:
                 try:
                     uuid.UUID(str(value))
@@ -255,9 +255,9 @@ def test_connexion_cas_reel_noms_resolus_et_liste_complete_au_journal(bp18, monk
     plugin._auto_connect()
 
     assert not [m for m in _logs(Qgis.MessageLevel.Warning) if "illisible" in m]
-    name_queries = [p for (s, p) in cur.executed if "FROM wyre.zone_mro" in s]
+    name_queries = [p for (s, p) in cur.executed if 'FROM "wyre".zone_mro' in s]
     assert name_queries == [(MRO_IDS,)]
-    assert not [s for (s, _p) in cur.executed if "FROM wyre.zone_pop" in s]
+    assert not [s for (s, _p) in cur.executed if 'FROM "wyre".zone_pop' in s]
     success = [m for (k, _t, m) in plugin.iface.messageBar().messages if k == "success"]
     assert success == [bp18.tr(
         "conn.connected_nominal", login=LOGIN,

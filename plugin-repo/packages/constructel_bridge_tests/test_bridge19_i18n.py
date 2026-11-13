@@ -144,3 +144,17 @@ def test_190_changelog_is_ascii_and_mentions_the_delivered_features():
                  "projet enregistre", "lecture seule", "ref.operateurs", "current_gis_operator_codes",
                  "repli sur le comportement 1.8"):
         assert word in entry.lower(), word
+
+
+def test_190_changelog_final_review_wording():
+    # Relecture finale M3 : correction du chargement sous Python 3.9 / QGIS
+    # 3.28 citee ; ouvrir un projet 1.8 ne reorganise jamais l'arbre (les
+    # noms de couches sont traduits, comme en 1.8 : « ne les modifie jamais »
+    # etait inexact).
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    entry = meta[meta.index("changelog=v1.9.0 - "):meta.index("\n    v1.8.4 - ")]
+    lowered = entry.lower()
+    assert "python 3.9" in lowered and "qgis 3.28" in lowered
+    assert "str | none" in lowered and "from __future__" in lowered and "typeerror" in lowered
+    assert "l arbre n est jamais reorganise a l ouverture" in lowered
+    assert "ne les modifie jamais" not in lowered

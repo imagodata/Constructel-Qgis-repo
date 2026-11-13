@@ -932,6 +932,18 @@ def _auth_config_ids() -> set:
         return set()
 
 
+def _delete_dialog(dialog) -> None:
+    """Detruit un dialogue modal apres exec() (relecture finale M5) : enfant de
+    la fenetre principale, il restait sinon en memoire jusqu'a la fin de la
+    session. Suppression differee (boucle d'evenements) ; un objet C++ deja
+    detruit (fenetre principale fermee pendant exec) leve RuntimeError cote
+    sip : rien a faire."""
+    try:
+        dialog.deleteLater()
+    except RuntimeError:
+        pass
+
+
 class ConstructelBridgePlugin:
     """Plugin QGIS — point d'entree."""
 
@@ -2483,17 +2495,19 @@ class ConstructelBridgePlugin:
             mro_names, pop_names = {}, {}
             # Bridge 1.9 (O6) : les noms se resolvent dans chaque schema
             # operateur utilisable ; un echec ne touche que son schema.
+            # Schema filtre par is_safe_schema (sans guillemet) puis quote :
+            # un mot reserve (user, order...) reste un identifiant valide.
             for schema in self._scope_name_schemas():
                 try:
                     if scope.mro_ids:
                         cur.execute(
-                            f"SELECT id::text, name FROM {schema}.zone_mro WHERE id = ANY(%s::uuid[])",
+                            f'SELECT id::text, name FROM "{schema}".zone_mro WHERE id = ANY(%s::uuid[])',
                             (scope.mro_ids,),
                         )
                         mro_names.update({str(i): n for (i, n) in cur.fetchall()})
                     if scope.pop_ids:
                         cur.execute(
-                            f"SELECT id::text, code FROM {schema}.zone_pop WHERE id = ANY(%s::uuid[])",
+                            f'SELECT id::text, code FROM "{schema}".zone_pop WHERE id = ANY(%s::uuid[])',
                             (scope.pop_ids,),
                         )
                         pop_names.update({str(i): c for (i, c) in cur.fetchall()})
@@ -3814,7 +3828,10 @@ class ConstructelBridgePlugin:
             self._log("Liste des operateurs indisponible : chargement des couches Wyre (repli 1.8.4)",
                       Qgis.MessageLevel.Warning)
         dialog = HomeDialog(self._home_actions(), self.iface.mainWindow())
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            _delete_dialog(dialog)
 
     def _home_actions(self):
         from .bridge_home_model import HomeActions
@@ -4073,14 +4090,15 @@ class ConstructelBridgePlugin:
         import tempfile
 
         password = getattr(self, "_password", None) or _DEFAULT_PW
-        # Validate schema against whitelist to prevent SQL injection
+        # Validate schema against whitelist to prevent SQL injection ; quote
+        # ensuite (mot reserve : user, order...), le filtre exclut les guillemets.
         if schema not in self._project_schemas():
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
         cur = self._conn.cursor()
         try:
             cur.execute(
-                f"SELECT content FROM {schema}.qgis_projects WHERE name = %s",
+                f'SELECT content FROM "{schema}".qgis_projects WHERE name = %s',
                 (name,),
             )
             row = cur.fetchone()
@@ -4205,38 +4223,52 @@ class ConstructelBridgePlugin:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.
 
         Cherche la table ``qgis_projects`` dans les schemas des operateurs
-        utilisables et dans public.
+        utilisables et dans public. Un schema en echec est journalise et
+        saute, les autres restent listes (relecture finale M1) ; l'erreur
+        n'est affichee que si aucun projet n'a pu etre liste.
         """
         cur = self._conn.cursor()
         try:
             results: list[dict] = []
+            errors: list[Exception] = []
             for schema in self._project_schemas():
-                cur.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables
-                        WHERE table_schema = %s AND table_name = 'qgis_projects'
+                try:
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM information_schema.tables
+                            WHERE table_schema = %s AND table_name = 'qgis_projects'
+                        )
+                        """,
+                        (schema,),
                     )
-                    """,
-                    (schema,),
-                )
-                if not cur.fetchone()[0]:
-                    continue
-                cur.execute(
-                    f"""
-                    SELECT name,
-                           metadata->>'description' AS description,
-                           metadata->>'last_modified_time' AS updated,
-                           %s AS schema
-                    FROM {schema}.qgis_projects
-                    ORDER BY name
-                    """,
-                    (schema,),
-                )
-                columns = [desc[0] for desc in cur.description]
-                results.extend(dict(zip(columns, row)) for row in cur.fetchall())
+                    if not cur.fetchone()[0]:
+                        continue
+                    cur.execute(
+                        f"""
+                        SELECT name,
+                               metadata->>'description' AS description,
+                               metadata->>'last_modified_time' AS updated,
+                               %s AS schema
+                        FROM "{schema}".qgis_projects
+                        ORDER BY name
+                        """,
+                        (schema,),
+                    )
+                    columns = [desc[0] for desc in cur.description]
+                    results.extend(dict(zip(columns, row)) for row in cur.fetchall())
+                except Exception as exc:  # noqa: BLE001 -- un schema illisible ne masque pas les autres
+                    errors.append(exc)
+                    self._log(f"list_db_projects : schema {schema} ignore ({exc})", Qgis.MessageLevel.Warning)
 
             if not results:
+                if errors:  # rien de liste et au moins un schema en echec
+                    QMessageBox.warning(
+                        self.iface.mainWindow(),
+                        tr("project.title"),
+                        tr("project.list_error", error=errors[0]),
+                    )
+                    return None
                 QMessageBox.information(
                     self.iface.mainWindow(),
                     tr("project.title"),
@@ -4338,6 +4370,7 @@ class ConstructelBridgePlugin:
         from .bridge_onboarding import PluginInstallerSession
 
         self._diagnostic_session = PluginInstallerSession()
+        dialog = None
         try:
             dialog = DiagnosticDialog(
                 self.iface.mainWindow(),
@@ -4354,6 +4387,10 @@ class ConstructelBridgePlugin:
             dialog.exec()
         finally:
             self._diagnostic_session = None
+            if dialog is not None:
+                # La tache reseau en cours survit au dialogue (gardee par
+                # bridge_diagnostic_dialog) ; son resultat tardif est ignore.
+                _delete_dialog(dialog)
 
     def _run_diagnostic_action(self, check) -> list:
         """Action d'une ligne du Diagnostic, puis verifications locales

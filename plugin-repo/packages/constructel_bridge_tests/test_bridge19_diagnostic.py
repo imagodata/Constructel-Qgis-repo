@@ -193,6 +193,34 @@ def pki(tmp_path_factory):
     return types.SimpleNamespace(ca=str(d / "ca.crt"), server_context=context)
 
 
+_SERVER_EXT_NO_KEY_IDS = """basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1
+subjectKeyIdentifier = none
+authorityKeyIdentifier = none
+"""
+
+
+@pytest.fixture(scope="module")
+def pki_no_key_ids(tmp_path_factory):
+    """CA de test + certificat serveur SANS Authority Key Identifier : valide
+    pour libpq (verify-full), refuse par OpenSSL en mode VERIFY_X509_STRICT."""
+    d = tmp_path_factory.mktemp("diag_pki_lax")
+    cnf, ext = d / "ca.cnf", d / "server.ext"
+    cnf.write_text(_CA_CNF)
+    ext.write_text(_SERVER_EXT_NO_KEY_IDS)
+    ec = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes")
+    _openssl("req", "-x509", "-config", cnf, *ec, "-days", "3650", "-keyout", d / "ca.key", "-out", d / "ca.crt")
+    _openssl("req", "-new", "-config", cnf, *ec, "-subj", "/CN=diag-test-lax",
+             "-keyout", d / "server.key", "-out", d / "server.csr")
+    _openssl("x509", "-req", "-in", d / "server.csr", "-CA", d / "ca.crt", "-CAkey", d / "ca.key",
+             "-CAcreateserial", "-days", "3650", "-extfile", ext, "-out", d / "server.crt")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(d / "server.crt"), str(d / "server.key"))
+    return types.SimpleNamespace(ca=str(d / "ca.crt"), server_context=context)
+
+
 def _postgres_tls(context, outcome):
     """Serveur PostgreSQL minimal : SSLRequest -> 'S' -> poignee de main TLS.
     *outcome* recoit "ok" ou l'erreur cote serveur (certificat refuse par le
@@ -436,6 +464,70 @@ def test_probe_server_checks_the_host_name(pki):
     assert "localhost" in outcome[1] or "mismatch" in outcome[1].lower()
 
 
+def test_probe_server_clears_the_strict_x509_flag_of_python_313(pki_no_key_ids, monkeypatch):
+    # Relecture finale M7 : sous Python >= 3.13, create_default_context active
+    # VERIFY_X509_STRICT, que libpq n'applique pas. Un certificat accepte par
+    # libpq (ici sans Authority Key Identifier) ne doit pas etre annonce refuse.
+    contexts = []
+    real_create = ssl.create_default_context
+
+    def python313_context(*args, **kwargs):
+        context = real_create(*args, **kwargs)
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(bd.ssl, "create_default_context", python313_context)
+    server_side = []
+    with _server(_postgres_tls(pki_no_key_ids.server_context, server_side)) as port:
+        outcome = bd.probe_server("127.0.0.1", port, pki_no_key_ids.ca, timeout=2.0)
+    assert outcome == ("ok", "")
+    assert len(contexts) == 1 and not contexts[0].verify_flags & ssl.VERIFY_X509_STRICT
+
+
+def _postgres_tls_close(context, outcome):
+    """Comme _postgres_tls, puis attend la fin de session TLS du client :
+    "close_notify" si le client ferme proprement (unwrap), sinon l'erreur
+    (EOF brutal : la ligne « SSL error » du journal PostgreSQL)."""
+    def handler(conn, stop):
+        assert _recv_exact(conn, 8) == SSL_REQUEST
+        conn.sendall(b"S")
+        try:
+            with context.wrap_socket(conn, server_side=True, suppress_ragged_eofs=False) as tls:
+                data = tls.recv(1)
+                outcome.append("close_notify" if data == b"" else data)
+        except (ssl.SSLError, OSError) as exc:
+            outcome.append(exc)
+    return handler
+
+
+def test_probe_server_closes_the_tls_session_cleanly(pki):
+    # Relecture finale M7 : close_notify avant la fermeture du socket ; sans
+    # lui, PostgreSQL journalise une erreur SSL a chaque Diagnostic.
+    server_side = []
+    with _server(_postgres_tls_close(pki.server_context, server_side)) as port:
+        outcome = bd.probe_server("127.0.0.1", port, pki.ca, timeout=2.0)
+    assert outcome == ("ok", "")
+    assert server_side == ["close_notify"]
+
+
+def test_probe_server_tls_shutdown_stays_within_the_deadline(pki):   # K9
+    # Le serveur ne repond jamais au close_notify : unwrap est borne par
+    # l'echeance restante, l'issue reste "ok".
+    def mute_after_handshake(conn, stop):
+        assert _recv_exact(conn, 8) == SSL_REQUEST
+        conn.sendall(b"S")
+        with pki.server_context.wrap_socket(conn, server_side=True):
+            stop.wait(10)
+
+    with _server(mute_after_handshake) as port:
+        start = time.monotonic()
+        outcome = bd.probe_server("127.0.0.1", port, pki.ca, timeout=1.0)
+        elapsed = time.monotonic() - start
+    assert outcome == ("ok", "")
+    assert elapsed < 1.4
+
+
 def test_probe_server_missing_ca_file_is_cert_invalid():
     def accept_tls(conn, stop):
         _recv_exact(conn, 8)
@@ -595,12 +687,19 @@ class _RecordingDialog:
         self.executed = 0
         self.script = []  # actions jouees pendant exec()
         self.results = []
+        self.events = []  # "exec", "deleteLater"
+        self.deleted = False
 
     def exec(self):
         self.executed += 1
+        self.events.append("exec")
         for check in self.script:
             self.results.append(self.on_action(check))
         return 0
+
+    def deleteLater(self):
+        self.events.append("deleteLater")
+        self.deleted = True
 
 
 @pytest.fixture
@@ -690,6 +789,27 @@ def test_diagnostic_opens_offline_with_local_checks(bp18, onb, dialogs, monkeypa
         "host": bp18.DEFAULT_HOST, "port": bp18.DEFAULT_PORT,
         "cafile": str(bp18.ca_bundle_path(PLUGIN_DIR)), "installed_version": bp18.PLUGIN_VERSION}
     assert dialog.on_action == plugin._run_diagnostic_action
+
+
+def test_diagnostic_dialog_is_deleted_after_exec(bp18, onb, dialogs):  # noqa: F811
+    # Relecture finale M5 : enfant de la fenetre principale, le dialogue
+    # restait en memoire jusqu'a la fin de la session.
+    plugin = _offline_plugin(bp18)
+    plugin._on_diagnostic()
+    assert dialogs.created[0].events == ["exec", "deleteLater"]
+    assert plugin._diagnostic_session is None
+
+
+def test_diagnostic_dialog_already_destroyed_is_not_an_error(bp18, onb, dialogs, monkeypatch):  # noqa: F811
+    # Objet C++ deja detruit (fenetre principale fermee pendant exec) : sip
+    # leve RuntimeError sur deleteLater, rien a faire.
+    def already_deleted(self):
+        raise RuntimeError("wrapped C/C++ object of type DiagnosticDialog has been deleted")
+
+    monkeypatch.setattr(_RecordingDialog, "deleteLater", already_deleted)
+    plugin = _offline_plugin(bp18)
+    plugin._on_diagnostic()
+    assert dialogs.created[0].executed == 1 and plugin._diagnostic_session is None
 
 
 def test_local_checks_read_plugins_installer_cache_and_auth_ids(bp18, onb, monkeypatch):  # noqa: F811
@@ -836,8 +956,28 @@ def test_failed_start_is_not_remembered(onb, monkeypatch):  # noqa: F811
     from qgis.core import QgsSettings
 
     monkeypatch.setattr(onb, "startPlugin", lambda pid: False)
-    onb.install_or_activate_plugin("b")
+    with pytest.raises(RuntimeError):  # M4 : demarrage refuse = echec
+        onb.install_or_activate_plugin("b")
     assert QgsSettings().value("PythonPlugins/b") is None
+
+
+def test_refused_start_is_reported_by_the_diagnostic(bp18, onb, monkeypatch):  # noqa: F811
+    # Relecture finale M4 : « Activer » dont startPlugin rend False affiche
+    # l'erreur de l'extension, et le reglage PythonPlugins n'est pas ecrit.
+    from qgis.core import QgsSettings
+
+    shown = []
+    monkeypatch.setattr(bp18.QMessageBox, "warning", lambda *a, **k: shown.append(a[2]), raising=False)
+    monkeypatch.setattr(onb, "startPlugin", lambda pid: False)
+    with pytest.raises(RuntimeError) as refused:
+        onb.install_or_activate_plugin("b")
+    plugin = _offline_plugin(bp18)
+
+    checks = plugin._run_diagnostic_action(bd.Check("plugin", "warning", "diag.plugin_inactive", {}, "activate", "b"))
+
+    assert shown == [bp18.tr("onboard.action.plugin_error", pid="b", error=str(refused.value))]
+    assert QgsSettings().value("PythonPlugins/b") is None
+    assert len(checks) == 7
 
 
 def test_installed_and_started_plugin_is_remembered(onb, monkeypatch):  # noqa: F811
@@ -1089,6 +1229,41 @@ def test_result_is_ignored_once_the_dialog_is_closed(dlg):
     dialog.reject()
     dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
     assert dialog._rows is rows and _rows(dialog)[0][1] == dlg.tr("diag.running")
+
+
+def test_pending_task_outlives_the_deleted_dialog(dlg):
+    # Relecture finale M5 : le dialogue ferme est detruit (deleteLater) ; la
+    # tache en cours reste referencee par le module jusqu'a sa fin (sinon le
+    # wrapper Python de la QgsTask pourrait etre collecte en plein travail),
+    # puis est relachee. Son resultat tardif reste ignore.
+    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    task = dlg.tasks[0]
+    assert task in dlg._PENDING_TASKS
+    rows = dialog._rows
+    dialog.reject()
+    dialog.deleteLater()
+    del dialog
+
+    task.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+
+    assert task not in dlg._PENDING_TASKS
+    assert not rows.deleted and rows.layout.cells[(0, 1)].text() == dlg.tr("diag.running")
+
+
+def test_result_is_ignored_after_exec_however_it_ended(dlg):
+    # exec() peut finir sans done() (dialogue cache par QGIS) : le dialogue
+    # va etre detruit, un resultat tardif ne doit plus toucher ses widgets.
+    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    rows = dialog._rows
+    dialog.exec()
+    dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert dialog._rows is rows and not rows.deleted
+
+
+def test_finished_task_is_released_while_the_dialog_is_open(dlg):
+    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dialog._on_network_done(Exception("Task canceled"))
+    assert dialog._task not in dlg._PENDING_TASKS
 
 
 def test_failed_or_cancelled_task_shows_both_network_checks_failed(dlg):

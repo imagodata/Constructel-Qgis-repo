@@ -143,11 +143,11 @@ def test_scope_names_resolved_in_every_usable_schema(bp18, monkeypatch, tmp_path
     assert plugin._scope_names[0] == {M1: "Anderlecht", M2: "Gent"}
     assert plugin._scope_names[1] == {P1: "POP_01", P2: "POP_02"}
     assert _zone_sql(cur, "mro") == [
-        "SELECT id::text, name FROM orange.zone_mro WHERE id = ANY(%s::uuid[])",
-        "SELECT id::text, name FROM wyre.zone_mro WHERE id = ANY(%s::uuid[])"]
+        'SELECT id::text, name FROM "orange".zone_mro WHERE id = ANY(%s::uuid[])',
+        'SELECT id::text, name FROM "wyre".zone_mro WHERE id = ANY(%s::uuid[])']
     assert _zone_sql(cur, "pop") == [
-        "SELECT id::text, code FROM orange.zone_pop WHERE id = ANY(%s::uuid[])",
-        "SELECT id::text, code FROM wyre.zone_pop WHERE id = ANY(%s::uuid[])"]
+        'SELECT id::text, code FROM "orange".zone_pop WHERE id = ANY(%s::uuid[])',
+        'SELECT id::text, code FROM "wyre".zone_pop WHERE id = ANY(%s::uuid[])']
     assert all(p == ([M1, M2],) for (s, p) in cur.executed if ".zone_mro" in s)
 
 
@@ -181,7 +181,7 @@ def test_names_fall_back_to_wyre_when_registry_unreadable(bp18, monkeypatch, tmp
 
     assert plugin._operators_unavailable is True
     assert plugin._scope_names == ({M1: "Anderlecht"}, {P1: "POP_01"})
-    assert len(_zone_sql(cur, "mro")) == 1 and "wyre.zone_mro" in _zone_sql(cur, "mro")[0]
+    assert len(_zone_sql(cur, "mro")) == 1 and '"wyre".zone_mro' in _zone_sql(cur, "mro")[0]
 
 
 def test_names_fall_back_to_wyre_when_no_usable_operator(bp18, monkeypatch, tmp_path):
@@ -190,7 +190,7 @@ def test_names_fall_back_to_wyre_when_no_usable_operator(bp18, monkeypatch, tmp_
 
     assert plugin._operators == []
     assert plugin._scope_names[0] == {M1: "Anderlecht"}
-    assert "wyre.zone_mro" in _zone_sql(cur, "mro")[0]
+    assert '"wyre".zone_mro' in _zone_sql(cur, "mro")[0]
 
 
 def test_unsafe_schema_is_never_interpolated(bp18, monkeypatch, tmp_path):
@@ -204,5 +204,21 @@ def test_unsafe_schema_is_never_interpolated(bp18, monkeypatch, tmp_path):
 
     plugin._read_session_scope()
 
-    assert _zone_sql(cur, "mro") == ["SELECT id::text, name FROM orange.zone_mro WHERE id = ANY(%s::uuid[])"]
+    assert _zone_sql(cur, "mro") == ['SELECT id::text, name FROM "orange".zone_mro WHERE id = ANY(%s::uuid[])']
     assert not any("drop" in s for s in cur.sql())
+
+
+def test_reserved_word_schema_is_quoted(bp18, monkeypatch, tmp_path):
+    # Relecture finale M2 : un schema operateur nomme comme un mot reserve
+    # (user, order...) passe is_safe_schema ; non quote, le SQL echouerait.
+    cur = _FakeCursor(scope_row=SCOPE, mro_names=[(M1, "Anderlecht")])
+    plugin, _calls, _asked, _cur = _make_plugin(bp18, monkeypatch, tmp_path, [None], cursor=cur, stored_ad_pw="ad-pw")
+    plugin._auto_connect()
+    plugin._operators = [bo.OperatorInfo("USER", "User", "user", True)]
+    plugin._operators_unavailable = False
+    cur.executed.clear()
+
+    plugin._read_session_scope()
+
+    assert _zone_sql(cur, "mro") == ['SELECT id::text, name FROM "user".zone_mro WHERE id = ANY(%s::uuid[])']
+    assert _zone_sql(cur, "pop") == ['SELECT id::text, code FROM "user".zone_pop WHERE id = ANY(%s::uuid[])']

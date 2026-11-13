@@ -135,7 +135,8 @@ def install_or_activate_plugin(pid: str, upgrade: bool = False, session=None) ->
 
     Retour : "active" (deja actif), "activated" (installe mais inactif :
     loadPlugin + startPlugin), "installed" (absent : installPlugin) ou
-    "updated" (installe, reinstalle car *upgrade*).
+    "updated" (installe, reinstalle car *upgrade*). Un startPlugin qui rend
+    False leve RuntimeError (l'appelant affiche l'erreur de ce plugin).
 
     Seul chemin d'installation du plugin : ``_install_selected_plugins`` et le
     Diagnostic l'appellent. *session* (``PluginInstallerSession``) partage le
@@ -156,8 +157,11 @@ def install_or_activate_plugin(pid: str, upgrade: bool = False, session=None) ->
         if pid in qu.active_plugins:
             return "active"
         loadPlugin(pid)
-        if startPlugin(pid):
-            _remember_enabled(pid)
+        if not startPlugin(pid):
+            # Demarrage refuse (relecture finale M4) : un echec, jamais
+            # "activated" ; PythonPlugins/<pid> n'est pas ecrit.
+            raise RuntimeError(f"demarrage refuse : startPlugin({pid}) a echoue")
+        _remember_enabled(pid)
         return "activated"
 
     (session or PluginInstallerSession()).installer().installPlugin(pid)

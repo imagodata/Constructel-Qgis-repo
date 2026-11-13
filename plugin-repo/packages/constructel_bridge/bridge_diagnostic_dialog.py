@@ -90,6 +90,20 @@ def _network_job(task, network_args: dict) -> list:
     return run_network_checks(**network_args)
 
 
+# Taches reseau en cours, gardees jusqu'a leur fin independamment du
+# dialogue : le plugin detruit le dialogue ferme (deleteLater, relecture
+# finale M5) et le wrapper Python d'une QgsTask non referencee peut etre
+# collecte en plein travail. Liste (identite), relachee dans on_finished.
+_PENDING_TASKS: list = []
+
+
+def _release_task(task) -> None:
+    for index, pending in enumerate(_PENDING_TASKS):
+        if pending is task:
+            del _PENDING_TASKS[index]
+            return
+
+
 class DiagnosticDialog(QDialog):
     def __init__(self, parent, status_text: str, local_checks: list, network_args: dict,
                  on_action: Callable[[Check], list]):
@@ -117,12 +131,14 @@ class DiagnosticDialog(QDialog):
         buttons.rejected.connect(self.reject)
         self._layout.addWidget(buttons)
 
-        # Reference gardee : sans elle, le wrapper Python de la tache peut
-        # etre collecte avant la fin du travail.
+        # Reference gardee (dialogue ET module) : sans elle, le wrapper Python
+        # de la tache peut etre collecte avant la fin du travail, y compris
+        # apres la destruction du dialogue ferme.
         self._task = QgsTask.fromFunction(
             tr("diag.title"), _network_job,
             network_args=dict(self._network_args), on_finished=self._on_network_done,
         )
+        _PENDING_TASKS.append(self._task)
         QgsApplication.taskManager().addTask(self._task)
 
     def _build_rows(self) -> QWidget:
@@ -167,7 +183,9 @@ class DiagnosticDialog(QDialog):
 
     def _on_network_done(self, exception, result=None) -> None:
         """Fil de l'interface. QgsTaskWrapper appelle on_finished(exception)
-        sans resultat si la tache a echoue ou a ete annulee."""
+        sans resultat si la tache a echoue ou a ete annulee. Dialogue ferme
+        (peut-etre deja detruit) : seuls des attributs Python sont lus."""
+        _release_task(self._task)
         if self._closed:
             return
         if exception is not None or not result:
@@ -188,3 +206,11 @@ class DiagnosticDialog(QDialog):
         # Fermeture (bouton, Echap, croix) : un resultat reseau tardif est ignore.
         self._closed = True
         super().done(result)
+
+    def exec(self) -> int:
+        # exec() peut aussi finir sans done() (dialogue cache) ; le plugin
+        # detruit ensuite le dialogue (deleteLater) : resultat tardif ignore.
+        try:
+            return super().exec()
+        finally:
+            self._closed = True

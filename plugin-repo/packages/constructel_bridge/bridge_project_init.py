@@ -1234,6 +1234,9 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     root = project.layerTreeRoot()
     groups = {}
     existing = _existing_layer_index(project)
+    # Couches deja a la racine avant l'appel (couches personnelles...) : le
+    # nettoyage des fantomes ne retire que les noeuds apparus pendant l'appel.
+    root_layers_before = _root_layer_ids(root)
 
     # Couches du catalogue deja presentes pour cet operateur et couches
     # communes presentes : reliees, jamais restylees (T9-c2b).
@@ -1337,10 +1340,12 @@ def init_project(conn_params: dict, password: str, selected: set[str],
 
     # -- Groupe Référence (en bas, apres les basemaps) --------------------
     # Seulement pour des couches presentes dans l'arbre (v_form_lists ajoutee
-    # cachee par le plugin n'a pas de noeud) : jamais de groupe vide.
+    # cachee par le plugin n'a pas de noeud) : jamais de groupe vide. Couches
+    # ajoutees ET deja presentes (related) : une couche Documents deja a la
+    # racine, jamais recochee (T9-c2b), y est rangee aussi.
     ref_nodes = []
     for entry in catalog:
-        layer = loaded.get(entry[0]) if entry[1] == _REFERENCE_GROUP else None
+        layer = related.get(layer_key(entry[0], entry[2])) if entry[1] == _REFERENCE_GROUP else None
         node = root.findLayer(layer.id()) if layer is not None else None
         if node is not None:
             ref_nodes.append(node)
@@ -1357,7 +1362,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         ref_group.setItemVisibilityChecked(False)
 
     # -- Nettoyer les couches fantomes a la racine -------------------------
-    _cleanup_ghost_layers(root, groups)
+    _cleanup_ghost_layers(root, groups, keep=root_layers_before)
 
     return count
 
@@ -1403,12 +1408,20 @@ def _build_uri(conn_params, password, schema, table, geom_col, pk):
     return uri
 
 
-def _cleanup_ghost_layers(root, groups):
+def _root_layer_ids(root) -> set[str]:
+    """Identifiants des couches posees directement a la racine de l'arbre."""
+    return {child.layerId() for child in root.children() if hasattr(child, "layerId")}
+
+
+def _cleanup_ghost_layers(root, groups, keep=frozenset()):
     """Supprime les couches fantomes a la racine du layer tree.
 
     Les styles QML contiennent des references de relations qui peuvent
     pousser QGIS a creer des couches fantomes (sans groupe, a la racine).
-    On les detecte et les supprime.
+    On les detecte et les supprime. Les couches de *keep* (identifiants des
+    couches deja a la racine avant le chargement : couches personnelles)
+    ne sont jamais des fantomes : retirer leur noeud retirerait la couche du
+    projet, editions comprises (relecture finale I1).
     """
     group_set = set(groups.values())
     removed = 0
@@ -1416,8 +1429,8 @@ def _cleanup_ghost_layers(root, groups):
         # Ne toucher qu'aux couches directement a la racine (pas dans un groupe)
         if child in group_set:
             continue
-        if hasattr(child, "layerId"):
-            # C'est un noeud de couche a la racine — c'est un fantome
+        if hasattr(child, "layerId") and child.layerId() not in keep:
+            # Noeud de couche apparu a la racine pendant l'appel : un fantome
             root.removeChildNode(child)
             removed += 1
     if removed:
