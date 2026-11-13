@@ -441,6 +441,10 @@ class _StubLayerTreeRoot:
     def children(self):
         return []
 
+    def findLayers(self):
+        # Bridge 1.9 tache 9 : l'ecran d'accueil compte les couches de l'arbre.
+        return []
+
 
 class QgsProject:
     _instance = None
