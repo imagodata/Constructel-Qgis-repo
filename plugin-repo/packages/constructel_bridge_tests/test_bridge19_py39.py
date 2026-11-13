@@ -2,6 +2,8 @@
 qu'a partir de 3.10 ; sans `from __future__ import annotations` elle leve
 TypeError a l'import. On l'interdit donc dans tout module du paquet qui ne
 porte pas l'import differe (plan 2026-11-12, tache 1, decision K10)."""
+from __future__ import annotations
+
 import ast
 from pathlib import Path
 
@@ -48,6 +50,6 @@ def test_pep604_annotations_need_future_import():
 def test_planned_modules_carry_the_future_import():
     # D16 : modules du plan deja touches ; les nouveaux modules s'ajoutent ici.
     for name in ("bridge_plugin.py", "bridge_project_init.py", "bridge_sketcher.py", "bridge_operators.py",
-                 "bridge_onboarding.py"):
+                 "bridge_onboarding.py", "bridge_diagnostic.py", "bridge_diagnostic_dialog.py"):
         tree = ast.parse((PKG / name).read_text(encoding="utf-8"))
         assert _has_future_annotations(tree), name
