@@ -2495,17 +2495,19 @@ class ConstructelBridgePlugin:
             mro_names, pop_names = {}, {}
             # Bridge 1.9 (O6) : les noms se resolvent dans chaque schema
             # operateur utilisable ; un echec ne touche que son schema.
+            # Schema filtre par is_safe_schema (sans guillemet) puis quote :
+            # un mot reserve (user, order...) reste un identifiant valide.
             for schema in self._scope_name_schemas():
                 try:
                     if scope.mro_ids:
                         cur.execute(
-                            f"SELECT id::text, name FROM {schema}.zone_mro WHERE id = ANY(%s::uuid[])",
+                            f'SELECT id::text, name FROM "{schema}".zone_mro WHERE id = ANY(%s::uuid[])',
                             (scope.mro_ids,),
                         )
                         mro_names.update({str(i): n for (i, n) in cur.fetchall()})
                     if scope.pop_ids:
                         cur.execute(
-                            f"SELECT id::text, code FROM {schema}.zone_pop WHERE id = ANY(%s::uuid[])",
+                            f'SELECT id::text, code FROM "{schema}".zone_pop WHERE id = ANY(%s::uuid[])',
                             (scope.pop_ids,),
                         )
                         pop_names.update({str(i): c for (i, c) in cur.fetchall()})
@@ -4088,14 +4090,15 @@ class ConstructelBridgePlugin:
         import tempfile
 
         password = getattr(self, "_password", None) or _DEFAULT_PW
-        # Validate schema against whitelist to prevent SQL injection
+        # Validate schema against whitelist to prevent SQL injection ; quote
+        # ensuite (mot reserve : user, order...), le filtre exclut les guillemets.
         if schema not in self._project_schemas():
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
         cur = self._conn.cursor()
         try:
             cur.execute(
-                f"SELECT content FROM {schema}.qgis_projects WHERE name = %s",
+                f'SELECT content FROM "{schema}".qgis_projects WHERE name = %s',
                 (name,),
             )
             row = cur.fetchone()
@@ -4243,7 +4246,7 @@ class ConstructelBridgePlugin:
                            metadata->>'description' AS description,
                            metadata->>'last_modified_time' AS updated,
                            %s AS schema
-                    FROM {schema}.qgis_projects
+                    FROM "{schema}".qgis_projects
                     ORDER BY name
                     """,
                     (schema,),

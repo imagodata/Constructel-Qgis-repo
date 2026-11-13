@@ -156,7 +156,30 @@ def test_projet_dun_operateur_utilisable_est_lu(plugin):
     cursor.execute = lambda sql, *_a, **_k: queries.append(sql)
     plugin._conn.cursor = lambda: cursor
     assert plugin._read_and_clean_project(QgsProject.instance(), "orange", "proj") is True
-    assert "FROM orange.qgis_projects" in queries[0]
+    assert 'FROM "orange".qgis_projects' in queries[0]
+
+
+def test_schema_mot_reserve_entre_guillemets(plugin, fake_cursor):
+    # Relecture finale M2 : schema operateur « order » (mot reserve, mais
+    # identifiant sur) : quote dans la liste et dans la lecture du projet.
+    from qgis.core import QgsProject
+
+    plugin._operators = [bo.OperatorInfo("ORDER", "Order", "order", True)]
+    listed = []
+    real_execute = fake_cursor.execute
+    fake_cursor.execute = lambda sql, params=None: listed.append(sql) or real_execute(sql, params)
+    assert [p["schema"] for p in plugin._list_db_projects()] == ["order", "public"]
+    assert any('FROM "order".qgis_projects' in sql for sql in listed)
+    assert any('FROM "public".qgis_projects' in sql for sql in listed)
+
+    plugin._auth_mode = ""
+    plugin._password = "shared-pw"
+    cursor = _XmlCursor("<qgis></qgis>")
+    queries = []
+    cursor.execute = lambda sql, *_a, **_k: queries.append(sql)
+    plugin._conn.cursor = lambda: cursor
+    assert plugin._read_and_clean_project(QgsProject.instance(), "order", "proj") is True
+    assert 'FROM "order".qgis_projects' in queries[0]
 
 
 def test_projet_wyre_et_public_acceptes_sans_liste_d_operateurs(plugin):

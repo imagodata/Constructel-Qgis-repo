@@ -112,7 +112,7 @@ class _FakeIface:
         pass
 
 
-_ZONE_RE = re.compile(r"FROM (\w+)\.zone_(mro|pop)\b")
+_ZONE_RE = re.compile(r'FROM "?(\w+)"?\.zone_(mro|pop)\b')  # schema entre guillemets (M2)
 
 
 class _FakeCursor:
