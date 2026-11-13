@@ -938,12 +938,19 @@ class _RecordingHome:
         self.executed = 0
         self.script = []
         self.loads = []
+        self.events = []  # "exec", "deleteLater"
+        self.deleted = False
 
     def exec(self):
         self.executed += 1
+        self.events.append("exec")
         for step in self.script:
             step(self)
         return 0
+
+    def deleteLater(self):
+        self.events.append("deleteLater")
+        self.deleted = True
 
 
 @pytest.fixture
@@ -981,6 +988,29 @@ def test_home_opens_offline(bp18, pi, homes, monkeypatch):            # O1
     plugin._on_home()
     assert len(homes.created) == 1 and homes.created[0].executed == 1
     assert homes.created[0].actions.snapshot().connected is False
+
+
+def test_home_dialog_is_deleted_after_exec(bp18, pi, homes, monkeypatch):
+    # Relecture finale M5 : enfant de la fenetre principale, l'ecran restait
+    # en memoire jusqu'a la fin de la session (un par clic).
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    plugin._connected = False
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    plugin._on_home()
+    plugin._on_home()
+    assert [h.events for h in homes.created] == [["exec", "deleteLater"]] * 2
+
+
+def test_home_dialog_already_destroyed_is_not_an_error(bp18, pi, homes, monkeypatch):
+    def already_deleted(self):
+        raise RuntimeError("wrapped C/C++ object of type HomeDialog has been deleted")
+
+    monkeypatch.setattr(_RecordingHome, "deleteLater", already_deleted)
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    plugin._connected = False
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    plugin._on_home()
+    assert homes.created[0].executed == 1
 
 
 def test_home_offline_never_touches_the_database(bp18, pi, onb, homes, monkeypatch):  # noqa: F811

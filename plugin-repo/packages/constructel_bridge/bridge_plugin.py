@@ -932,6 +932,18 @@ def _auth_config_ids() -> set:
         return set()
 
 
+def _delete_dialog(dialog) -> None:
+    """Detruit un dialogue modal apres exec() (relecture finale M5) : enfant de
+    la fenetre principale, il restait sinon en memoire jusqu'a la fin de la
+    session. Suppression differee (boucle d'evenements) ; un objet C++ deja
+    detruit (fenetre principale fermee pendant exec) leve RuntimeError cote
+    sip : rien a faire."""
+    try:
+        dialog.deleteLater()
+    except RuntimeError:
+        pass
+
+
 class ConstructelBridgePlugin:
     """Plugin QGIS — point d'entree."""
 
@@ -3814,7 +3826,10 @@ class ConstructelBridgePlugin:
             self._log("Liste des operateurs indisponible : chargement des couches Wyre (repli 1.8.4)",
                       Qgis.MessageLevel.Warning)
         dialog = HomeDialog(self._home_actions(), self.iface.mainWindow())
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            _delete_dialog(dialog)
 
     def _home_actions(self):
         from .bridge_home_model import HomeActions
@@ -4338,6 +4353,7 @@ class ConstructelBridgePlugin:
         from .bridge_onboarding import PluginInstallerSession
 
         self._diagnostic_session = PluginInstallerSession()
+        dialog = None
         try:
             dialog = DiagnosticDialog(
                 self.iface.mainWindow(),
@@ -4354,6 +4370,10 @@ class ConstructelBridgePlugin:
             dialog.exec()
         finally:
             self._diagnostic_session = None
+            if dialog is not None:
+                # La tache reseau en cours survit au dialogue (gardee par
+                # bridge_diagnostic_dialog) ; son resultat tardif est ignore.
+                _delete_dialog(dialog)
 
     def _run_diagnostic_action(self, check) -> list:
         """Action d'une ligne du Diagnostic, puis verifications locales

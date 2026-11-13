@@ -595,12 +595,19 @@ class _RecordingDialog:
         self.executed = 0
         self.script = []  # actions jouees pendant exec()
         self.results = []
+        self.events = []  # "exec", "deleteLater"
+        self.deleted = False
 
     def exec(self):
         self.executed += 1
+        self.events.append("exec")
         for check in self.script:
             self.results.append(self.on_action(check))
         return 0
+
+    def deleteLater(self):
+        self.events.append("deleteLater")
+        self.deleted = True
 
 
 @pytest.fixture
@@ -690,6 +697,27 @@ def test_diagnostic_opens_offline_with_local_checks(bp18, onb, dialogs, monkeypa
         "host": bp18.DEFAULT_HOST, "port": bp18.DEFAULT_PORT,
         "cafile": str(bp18.ca_bundle_path(PLUGIN_DIR)), "installed_version": bp18.PLUGIN_VERSION}
     assert dialog.on_action == plugin._run_diagnostic_action
+
+
+def test_diagnostic_dialog_is_deleted_after_exec(bp18, onb, dialogs):  # noqa: F811
+    # Relecture finale M5 : enfant de la fenetre principale, le dialogue
+    # restait en memoire jusqu'a la fin de la session.
+    plugin = _offline_plugin(bp18)
+    plugin._on_diagnostic()
+    assert dialogs.created[0].events == ["exec", "deleteLater"]
+    assert plugin._diagnostic_session is None
+
+
+def test_diagnostic_dialog_already_destroyed_is_not_an_error(bp18, onb, dialogs, monkeypatch):  # noqa: F811
+    # Objet C++ deja detruit (fenetre principale fermee pendant exec) : sip
+    # leve RuntimeError sur deleteLater, rien a faire.
+    def already_deleted(self):
+        raise RuntimeError("wrapped C/C++ object of type DiagnosticDialog has been deleted")
+
+    monkeypatch.setattr(_RecordingDialog, "deleteLater", already_deleted)
+    plugin = _offline_plugin(bp18)
+    plugin._on_diagnostic()
+    assert dialogs.created[0].executed == 1 and plugin._diagnostic_session is None
 
 
 def test_local_checks_read_plugins_installer_cache_and_auth_ids(bp18, onb, monkeypatch):  # noqa: F811
@@ -1109,6 +1137,41 @@ def test_result_is_ignored_once_the_dialog_is_closed(dlg):
     dialog.reject()
     dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
     assert dialog._rows is rows and _rows(dialog)[0][1] == dlg.tr("diag.running")
+
+
+def test_pending_task_outlives_the_deleted_dialog(dlg):
+    # Relecture finale M5 : le dialogue ferme est detruit (deleteLater) ; la
+    # tache en cours reste referencee par le module jusqu'a sa fin (sinon le
+    # wrapper Python de la QgsTask pourrait etre collecte en plein travail),
+    # puis est relachee. Son resultat tardif reste ignore.
+    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    task = dlg.tasks[0]
+    assert task in dlg._PENDING_TASKS
+    rows = dialog._rows
+    dialog.reject()
+    dialog.deleteLater()
+    del dialog
+
+    task.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+
+    assert task not in dlg._PENDING_TASKS
+    assert not rows.deleted and rows.layout.cells[(0, 1)].text() == dlg.tr("diag.running")
+
+
+def test_result_is_ignored_after_exec_however_it_ended(dlg):
+    # exec() peut finir sans done() (dialogue cache par QGIS) : le dialogue
+    # va etre detruit, un resultat tardif ne doit plus toucher ses widgets.
+    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    rows = dialog._rows
+    dialog.exec()
+    dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert dialog._rows is rows and not rows.deleted
+
+
+def test_finished_task_is_released_while_the_dialog_is_open(dlg):
+    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dialog._on_network_done(Exception("Task canceled"))
+    assert dialog._task not in dlg._PENDING_TASKS
 
 
 def test_failed_or_cancelled_task_shows_both_network_checks_failed(dlg):
