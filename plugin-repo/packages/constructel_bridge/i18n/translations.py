@@ -15,7 +15,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "en": {
         # -- Menu / Actions --
         "menu.connect": "Database connection",
-        "menu.status": "Connection status",
+        "menu.status": "Status and diagnostics",
         "menu.onboarding": "Initial setup",
         "menu.load_project": "Load project",
         "menu.init_project": "Initialize project",
@@ -111,6 +111,30 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.no_operator": "No operator available: ask a Farois administrator for an operator scope.",
         "home.reorganized": "Project reorganized by operator (groups {operators} and Common): save it to keep this organization.",
         "home.reorganized_common": "Project reorganized (Common group): save it to keep this organization.",
+
+        # -- Bridge 1.9: Diagnostics (status menu entry, usable offline) --
+        "diag.title": "Constructel Bridge - Diagnostics",
+        "diag.running": "Checking…",
+        "diag.section_connection": "Connection",
+        "diag.version_ok": "Constructel Bridge plugin {installed}: up to date",
+        "diag.version_update": "Constructel Bridge plugin {installed}: version {latest} is available",
+        "diag.version_unknown": "Constructel Bridge plugin {installed}: Constructel repository unreachable or unreadable ({error})",
+        "diag.plugin_ok": "Plugin {name}: installed and enabled",
+        "diag.plugin_update": "Plugin {name}: update available",
+        "diag.plugin_inactive": "Plugin {name}: installed but disabled",
+        "diag.plugin_missing": "Plugin {name}: not installed",
+        "diag.server_ok": "Farois server {host}:{port}: reachable, valid certificate",
+        "diag.server_unreachable": "Farois server {host}:{port}: unreachable or not responding ({error})",
+        "diag.server_tls_refused": "Farois server {host}:{port}: encrypted connection (TLS) refused",
+        "diag.server_cert_invalid": "Farois server {host}:{port}: certificate rejected ({error})",
+        "diag.identity_ok": "Personal login {login}: memorized, password stored in QGIS",
+        "diag.identity_no_password": "Personal login {login}: password not stored on this workstation (Database connection)",
+        "diag.identity_derived": "Personal login {login}: derived from the workstation user name, not yet confirmed by a connection",
+        "diag.identity_none": "No usable personal login on this workstation: enter your Windows login in Database connection",
+        "diag.action_install": "Install",
+        "diag.action_update": "Update",
+        "diag.action_activate": "Enable",
+        "diag.action_plugin_manager": "Plugin manager",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "User profile",
@@ -326,7 +350,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "fr": {
         # -- Menu / Actions --
         "menu.connect": "Connexion base de donnees",
-        "menu.status": "Statut connexion",
+        "menu.status": "Statut et diagnostic",
         "menu.onboarding": "Configuration initiale",
         "menu.load_project": "Charger un projet",
         "menu.init_project": "Initialiser projet",
@@ -422,6 +446,30 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.no_operator": "Aucun opérateur accessible : demande un scope opérateur à un administrateur Farois.",
         "home.reorganized": "Projet réorganisé par opérateur (groupes {operators} et Commun) : enregistre-le pour garder cette organisation.",
         "home.reorganized_common": "Projet réorganisé (groupe Commun) : enregistre-le pour garder cette organisation.",
+
+        # -- Bridge 1.9 : Diagnostic (entree Statut, utilisable hors connexion) --
+        "diag.title": "Constructel Bridge - Diagnostic",
+        "diag.running": "Vérification en cours…",
+        "diag.section_connection": "Connexion",
+        "diag.version_ok": "Plugin Constructel Bridge {installed} : à jour",
+        "diag.version_update": "Plugin Constructel Bridge {installed} : la version {latest} est disponible",
+        "diag.version_unknown": "Plugin Constructel Bridge {installed} : dépôt Constructel injoignable ou illisible ({error})",
+        "diag.plugin_ok": "Extension {name} : installée et activée",
+        "diag.plugin_update": "Extension {name} : mise à jour disponible",
+        "diag.plugin_inactive": "Extension {name} : installée mais désactivée",
+        "diag.plugin_missing": "Extension {name} : non installée",
+        "diag.server_ok": "Serveur Farois {host}:{port} : joignable, certificat valide",
+        "diag.server_unreachable": "Serveur Farois {host}:{port} : injoignable ou sans réponse ({error})",
+        "diag.server_tls_refused": "Serveur Farois {host}:{port} : connexion chiffrée (TLS) refusée",
+        "diag.server_cert_invalid": "Serveur Farois {host}:{port} : certificat refusé ({error})",
+        "diag.identity_ok": "Identifiant nominatif {login} : mémorisé, mot de passe enregistré dans QGIS",
+        "diag.identity_no_password": "Identifiant nominatif {login} : mot de passe non enregistré sur ce poste (Connexion base de données)",
+        "diag.identity_derived": "Identifiant nominatif {login} : déduit du nom d'utilisateur du poste, pas encore validé par une connexion",
+        "diag.identity_none": "Aucun identifiant nominatif utilisable sur ce poste : saisis ton login Windows dans Connexion base de données",
+        "diag.action_install": "Installer",
+        "diag.action_update": "Mettre à jour",
+        "diag.action_activate": "Activer",
+        "diag.action_plugin_manager": "Gestionnaire d'extensions",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Profil utilisateur",
@@ -639,7 +687,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "pt": {
         # -- Menu / Actions --
         "menu.connect": "Ligacao a base de dados",
-        "menu.status": "Estado da ligacao",
+        "menu.status": "Estado e diagnóstico",
         "menu.onboarding": "Configuracao inicial",
         "menu.load_project": "Carregar projeto",
         "menu.init_project": "Inicializar projeto",
@@ -735,6 +783,30 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.no_operator": "Nenhum operador acessivel: peca um scope de operador a um administrador Farois.",
         "home.reorganized": "Projeto reorganizado por operador (grupos {operators} e Comum): guarde-o para manter esta organizacao.",
         "home.reorganized_common": "Projeto reorganizado (grupo Comum): guarde-o para manter esta organizacao.",
+
+        # -- Bridge 1.9: Diagnostico (entrada Estado, utilizavel sem ligacao) --
+        "diag.title": "Constructel Bridge - Diagnóstico",
+        "diag.running": "Verificação em curso…",
+        "diag.section_connection": "Ligação",
+        "diag.version_ok": "Plugin Constructel Bridge {installed}: atualizado",
+        "diag.version_update": "Plugin Constructel Bridge {installed}: a versão {latest} está disponível",
+        "diag.version_unknown": "Plugin Constructel Bridge {installed}: repositório Constructel inacessível ou ilegível ({error})",
+        "diag.plugin_ok": "Extensão {name}: instalada e ativada",
+        "diag.plugin_update": "Extensão {name}: atualização disponível",
+        "diag.plugin_inactive": "Extensão {name}: instalada mas desativada",
+        "diag.plugin_missing": "Extensão {name}: não instalada",
+        "diag.server_ok": "Servidor Farois {host}:{port}: acessível, certificado válido",
+        "diag.server_unreachable": "Servidor Farois {host}:{port}: inacessível ou sem resposta ({error})",
+        "diag.server_tls_refused": "Servidor Farois {host}:{port}: ligação cifrada (TLS) recusada",
+        "diag.server_cert_invalid": "Servidor Farois {host}:{port}: certificado recusado ({error})",
+        "diag.identity_ok": "Identificador nominativo {login}: memorizado, palavra-passe guardada no QGIS",
+        "diag.identity_no_password": "Identificador nominativo {login}: palavra-passe não guardada neste posto (Ligação à base de dados)",
+        "diag.identity_derived": "Identificador nominativo {login}: deduzido do nome de utilizador do posto, ainda não confirmado por uma ligação",
+        "diag.identity_none": "Nenhum identificador nominativo utilizável neste posto: introduza o seu login Windows em Ligação à base de dados",
+        "diag.action_install": "Instalar",
+        "diag.action_update": "Atualizar",
+        "diag.action_activate": "Ativar",
+        "diag.action_plugin_manager": "Gestor de extensões",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Perfil do utilizador",

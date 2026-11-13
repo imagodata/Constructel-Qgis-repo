@@ -47,6 +47,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
+from .bridge_diagnostic import identity_check, plugin_checks, plugin_version_from_metadata
 from .bridge_expressions import register_expressions, unregister_expressions
 from .bridge_identity import (
     build_pgoptions,
@@ -832,10 +833,7 @@ def _get_plugin_version() -> str:
     """Read current plugin version from metadata.txt."""
     meta_path = os.path.join(os.path.dirname(__file__), "metadata.txt")
     with open(meta_path, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.startswith("version="):
-                return line.strip().split("=", 1)[1]
-    return ""
+        return plugin_version_from_metadata(f.read())
 
 
 PLUGIN_VERSION = _get_plugin_version()
@@ -896,6 +894,39 @@ def _apply_cached_audit_identity(log) -> bool:
     return _apply_audit_identity(cached, log)
 
 
+def _plugin_lists() -> tuple[set, set]:
+    """Extensions disponibles et actives, lues a chaud (QGIS reassigne ces
+    listes a chaque installation / activation, cf. T7-I2)."""
+    import qgis.utils as qu
+
+    return set(qu.available_plugins), set(qu.active_plugins)
+
+
+def _installer_statuses() -> dict | None:
+    """Statut de chaque extension dans le CACHE de l'installeur QGIS
+    (« upgradeable » = mise a jour connue), sans telechargement ; None si
+    l'installeur est indisponible ou si aucun depot n'a encore ete lu."""
+    try:
+        from pyplugin_installer.installer_data import plugins
+
+        data = plugins.all()
+    except Exception:  # noqa: BLE001 -- cache optionnel : mises a jour inconnues
+        return None
+    statuses = {pid: info.get("status") for pid, info in (data or {}).items() if isinstance(info, dict)}
+    return statuses or None
+
+
+def _auth_config_ids() -> set:
+    """Identifiants des configs Auth Manager. configIds() lit la liste sans
+    dechiffrer : ni mot de passe maitre demande, ni secret lu (Diagnostic)."""
+    try:
+        return set(QgsApplication.authManager().configIds())
+    except Exception as exc:  # noqa: BLE001 -- Auth Manager indisponible : aucune config
+        QgsMessageLog.logMessage(f"Diagnostic : configs Auth Manager illisibles ({exc})", TAG,
+                                 level=Qgis.MessageLevel.Warning)
+        return set()
+
+
 class ConstructelBridgePlugin:
     """Plugin QGIS — point d'entree."""
 
@@ -943,6 +974,9 @@ class ConstructelBridgePlugin:
         # Revue 29/10 (M6) : slots raiseError par id de couche. Le verrou
         # D2, lui, est marque SUR la couche (SCOPE_LOCK_PROPERTY).
         self._layer_error_slots = {}
+        # Bridge 1.9 : session de l'installeur QGIS partagee par les actions
+        # d'une meme execution du Diagnostic (un seul fetch, K12).
+        self._diagnostic_session = None
 
     # =====================================================================
     # QGIS Plugin lifecycle
@@ -985,7 +1019,7 @@ class ConstructelBridgePlugin:
         self._action_retry = action_retry
 
         action_status = QAction(icon_status, tr("menu.status"), parent)
-        action_status.triggered.connect(self._on_status)
+        action_status.triggered.connect(self._on_diagnostic)
         self._actions.append(action_status)
 
         action_onboarding = QAction(icon_onboarding, tr("menu.onboarding"), parent)
@@ -4170,30 +4204,98 @@ class ConstructelBridgePlugin:
         self._run_onboarding(is_new_user=False, include_profile=self._connected)
 
     # =====================================================================
-    # Status
+    # Statut et diagnostic (spec 2026-11-12 § 6.6, D13, D15)
     # =====================================================================
 
-    def _on_status(self):
+    def _status_text(self) -> str:
+        """Message de l'ancien « Statut connexion », en tete du Diagnostic."""
         if not self._connected:
-            msg = tr("status.not_connected")
-        else:
-            nominal = self._auth_mode == AUTH_MODE_NOMINAL
-            msg = tr(
-                "status.connected_to",
-                host=DEFAULT_HOST,
-                port=DEFAULT_PORT,
-                dbname=DEFAULT_DBNAME,
-                user=self._pg_login if nominal else DEFAULT_USER,
-                bridge_user=self._bridge_user,
-                bridge_user_id=self._bridge_user_id,
-                hooks=self._layer_hooks_installed,
+            return tr("status.not_connected")
+        nominal = self._auth_mode == AUTH_MODE_NOMINAL
+        msg = tr(
+            "status.connected_to",
+            host=DEFAULT_HOST,
+            port=DEFAULT_PORT,
+            dbname=DEFAULT_DBNAME,
+            user=self._pg_login if nominal else DEFAULT_USER,
+            bridge_user=self._bridge_user,
+            bridge_user_id=self._bridge_user_id,
+            hooks=self._layer_hooks_installed,
+        )
+        mode = (
+            tr("nominal.mode_nominal", login=self._pg_login) if nominal
+            else tr("nominal.mode_shared", user=DEFAULT_USER)
+        )
+        return f"{msg}\n{mode}\n{self._scope_text()}"
+
+    def _diagnostic_local_checks(self) -> list:
+        """Verifications sans reseau : extensions recommandees (listes QGIS et
+        cache de l'installeur) puis identifiant nominatif (login memorise,
+        identifiants des configs Auth Manager seulement)."""
+        from .bridge_onboarding import RECOMMENDED_PLUGINS
+
+        available, active = _plugin_lists()
+        checks = plugin_checks(RECOMMENDED_PLUGINS, available, active, _installer_statuses())
+        memorized = normalize_login(QgsSettings().value(NOMINAL_SETTINGS_KEYS["pg_login"], "") or "")
+        checks.append(identity_check(
+            memorized, self._nominal_login(), _auth_config_ids(),
+            _FIXED_AUTH_CFG_IDS["ad"], _FIXED_AUTH_CFG_IDS["wyre"],
+        ))
+        return checks
+
+    def _on_diagnostic(self) -> None:
+        """Entree « Statut et diagnostic » : utilisable hors connexion. Aucune
+        session PostgreSQL (la sonde serveur s'arrete apres la poignee de
+        main TLS), aucun secret de l'Auth Manager lu."""
+        from .bridge_diagnostic_dialog import DiagnosticDialog
+        from .bridge_onboarding import PluginInstallerSession
+
+        self._diagnostic_session = PluginInstallerSession()
+        try:
+            dialog = DiagnosticDialog(
+                self.iface.mainWindow(),
+                self._status_text(),
+                self._diagnostic_local_checks(),
+                {
+                    "host": DEFAULT_HOST,
+                    "port": DEFAULT_PORT,
+                    "cafile": str(ca_bundle_path(os.path.dirname(__file__))),
+                    "installed_version": PLUGIN_VERSION,
+                },
+                self._run_diagnostic_action,
             )
-            mode = (
-                tr("nominal.mode_nominal", login=self._pg_login) if nominal
-                else tr("nominal.mode_shared", user=DEFAULT_USER)
+            dialog.exec()
+        finally:
+            self._diagnostic_session = None
+
+    def _run_diagnostic_action(self, check) -> list:
+        """Action d'une ligne du Diagnostic, puis verifications locales
+        recalculees. Installation / activation / mise a jour : UNIQUEMENT via
+        install_or_activate_plugin (K12), session partagee par l'execution."""
+        if check.action == "plugin_manager":
+            self.iface.actionManagePlugins().trigger()
+        elif check.action in ("install", "update", "activate"):
+            from .bridge_onboarding import (
+                PluginInstallerSession,
+                PluginInstallerUnavailable,
+                install_or_activate_plugin,
             )
-            msg = f"{msg}\n{mode}\n{self._scope_text()}"
-        QMessageBox.information(self.iface.mainWindow(), tr("status.title"), msg)
+
+            session = self._diagnostic_session or PluginInstallerSession()
+            try:
+                outcome = install_or_activate_plugin(
+                    check.target, upgrade=(check.action == "update"), session=session,
+                )
+                self._log(f"Diagnostic : extension {check.target} -> {outcome}")
+            except PluginInstallerUnavailable as exc:
+                self._log(f"Diagnostic : installeur QGIS indisponible ({exc})", Qgis.MessageLevel.Warning)
+                QMessageBox.warning(self.iface.mainWindow(), tr("diag.title"),
+                                    tr("onboard.action.installer_unavailable", error=exc))
+            except Exception as exc:  # noqa: BLE001 -- echec par extension, affiche
+                self._log(f"Diagnostic : extension {check.target} en echec ({exc})", Qgis.MessageLevel.Warning)
+                QMessageBox.warning(self.iface.mainWindow(), tr("diag.title"),
+                                    tr("onboard.action.plugin_error", pid=check.target, error=exc))
+        return self._diagnostic_local_checks()
 
     # =====================================================================
     # Logging
