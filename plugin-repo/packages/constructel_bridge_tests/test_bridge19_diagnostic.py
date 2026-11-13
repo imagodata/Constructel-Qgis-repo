@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import types
+import urllib.request
 import warnings
 from pathlib import Path
 
@@ -145,13 +146,6 @@ def _no_leaked_socket():
                 assert not thread.is_alive(), thread.name
         gc.collect()
     assert [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)] == []
-
-
-@pytest.fixture(autouse=True)
-def _no_proxy(monkeypatch):
-    # urllib suit les variables de proxy : jamais pour les serveurs locaux du test.
-    for name in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
-        monkeypatch.delenv(name, raising=False)
 
 
 # --- PKI jetable (openssl, comme test_bridge_mtls) ------------------------------
@@ -501,6 +495,29 @@ def test_fetch_latest_version_deadline_is_global_on_a_slow_body():   # K9
     assert elapsed < 0.9
 
 
+def test_fetch_ignores_system_proxies_and_the_global_opener(monkeypatch):   # T8-c3
+    # Le depot est sur le reseau local : connexion directe, comme le
+    # gestionnaire reseau de QGIS par defaut. Ni les variables de proxy (ou le
+    # registre WinINET sous Windows), ni un opener installe par une autre
+    # extension (install_opener) ne s'appliquent.
+    dead_proxy = f"http://127.0.0.1:{_free_port()}"
+    for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(name, dead_proxy)
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(urllib.request, "_opener", None)  # un opener global relirait ces proxys
+    with _server(_http_body(XML.encode())) as port:
+        assert bd.fetch_latest_version(f"http://127.0.0.1:{port}/plugins.xml", timeout=2.0) == ("1.8.4", "")
+
+    class _ForeignOpener:
+        def open(self, *_args, **_kwargs):
+            raise AssertionError("opener global d'une autre extension utilise")
+
+    monkeypatch.setattr(urllib.request, "_opener", _ForeignOpener())
+    with _server(_http_body(XML.encode())) as port:
+        assert bd.fetch_latest_version(f"http://127.0.0.1:{port}/plugins.xml", timeout=2.0) == ("1.8.4", "")
+
+
 def test_run_network_checks_returns_version_then_server(pki):
     server_side = []
     with _server(_http_body(XML.encode())) as http_port, \
@@ -801,6 +818,47 @@ def test_update_action_upgrades_through_install_or_activate_plugin(bp18, onb, mo
     assert [(pid, upgrade) for pid, upgrade, _s in seen] == [("a", True), ("b", False)]
     assert all(isinstance(s, onb.PluginInstallerSession) for _p, _u, s in seen)
     assert [c.key for c in checks] == ["plugin"] * 6 + ["identity"]
+
+
+def test_activation_is_remembered_after_a_qgis_restart(bp18, onb):  # noqa: F811
+    # T8-I2 : comme le gestionnaire d'extensions de QGIS, « Activer » ecrit
+    # PythonPlugins/<id> = True ; sinon l'extension redevient desactivee au
+    # prochain lancement et le Diagnostic la signale encore.
+    from qgis.core import QgsSettings
+
+    plugin = _offline_plugin(bp18)
+    plugin._run_diagnostic_action(bd.Check("plugin", "warning", "diag.plugin_inactive", {}, "activate", "b"))
+    assert onb.started == ["b"]
+    assert QgsSettings().value("PythonPlugins/b") is True
+
+
+def test_failed_start_is_not_remembered(onb, monkeypatch):  # noqa: F811
+    from qgis.core import QgsSettings
+
+    monkeypatch.setattr(onb, "startPlugin", lambda pid: False)
+    onb.install_or_activate_plugin("b")
+    assert QgsSettings().value("PythonPlugins/b") is None
+
+
+def test_installed_and_started_plugin_is_remembered(onb, monkeypatch):  # noqa: F811
+    from qgis.core import QgsSettings
+
+    install = onb.installer.installPlugin
+
+    def install_and_start(pid):  # QGIS demarre l'extension qu'il vient d'installer
+        install(pid)
+        onb.utils.active_plugins = onb.utils.active_plugins + [pid]
+
+    monkeypatch.setattr(onb.installer, "installPlugin", install_and_start)
+    assert onb.install_or_activate_plugin("c") == "installed"
+    assert QgsSettings().value("PythonPlugins/c") is True
+
+
+def test_installed_but_not_started_plugin_is_not_remembered(onb):  # noqa: F811
+    from qgis.core import QgsSettings
+
+    assert onb.install_or_activate_plugin("c") == "installed"  # disponible, pas demarree
+    assert QgsSettings().value("PythonPlugins/c") is None
 
 
 def test_plugin_manager_action_opens_qgis_plugin_manager(bp18, onb):  # noqa: F811

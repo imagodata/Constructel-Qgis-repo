@@ -146,19 +146,30 @@ def install_or_activate_plugin(pid: str, upgrade: bool = False, session=None) ->
     installPlugin signale souvent son echec par une boite de dialogue sans
     lever : le plugin doit ensuite figurer dans qgis.utils.available_plugins
     (relu a chaud), sinon RuntimeError.
+
+    Un plugin active ou installe PUIS demarre est memorise active
+    (PythonPlugins/<pid>), comme le fait le gestionnaire d'extensions de
+    QGIS : sinon il redevient desactive au prochain lancement (T8-I2).
     """
     installed = pid in qu.available_plugins
     if installed and not upgrade:
         if pid in qu.active_plugins:
             return "active"
         loadPlugin(pid)
-        startPlugin(pid)
+        if startPlugin(pid):
+            _remember_enabled(pid)
         return "activated"
 
     (session or PluginInstallerSession()).installer().installPlugin(pid)
     if pid not in qu.available_plugins:
         raise RuntimeError(f"installation non confirmee : {pid} absent des extensions disponibles")
+    if not installed and pid in qu.active_plugins:
+        _remember_enabled(pid)
     return "updated" if installed else "installed"
+
+
+def _remember_enabled(pid: str) -> None:
+    QgsSettings().setValue(f"PythonPlugins/{pid}", True)
 
 
 # =========================================================================

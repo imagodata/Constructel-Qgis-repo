@@ -45,6 +45,13 @@ PLUGIN_REPO_URL = os.environ.get(
 PLUGIN_NAME = "Constructel Bridge"
 NETWORK_TIMEOUT = 3.0
 
+# Opener DEDIE, sans proxy (T8-c3) : l'opener global d'urllib lit getproxies()
+# (environnement, registre WinINET sous Windows) une fois pour toutes et peut
+# avoir ete remplace par une autre extension (install_opener). Le depot
+# Constructel est sur le reseau local : connexion directe, comme le
+# gestionnaire reseau de QGIS par defaut.
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 # Premier message du protocole PostgreSQL pour demander TLS (longueur 8,
 # code 80877103) : le serveur repond 'S' (TLS accepte) ou 'N'.
 SSL_REQUEST = struct.pack("!ii", 8, 80877103)
@@ -293,7 +300,7 @@ def server_check(host: str, port: int, outcome: str, detail: str) -> Check:
 
 def _read_url(url: str, deadline: _Deadline) -> str:
     try:
-        response = urllib.request.urlopen(url, timeout=deadline.remaining())
+        response = _DIRECT_OPENER.open(url, timeout=deadline.remaining())
     except urllib.error.HTTPError as exc:
         exc.close()  # HTTPError (404...) garde la reponse, et son socket, ouverte
         raise
