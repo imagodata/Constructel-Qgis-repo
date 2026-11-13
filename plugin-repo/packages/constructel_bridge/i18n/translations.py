@@ -237,6 +237,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- Onboarding: Actions --
         "onboard.action.profile_updated": "Profile updated: {first_name} {last_name} ({email})",
         "onboard.action.profile_error": "Profile update error: {error}",
+        "onboard.action.profile_offline": "Profile: available once connected",
         "onboard.action.no_plugins": "No additional plugins selected",
         "onboard.action.installer_unavailable": "Plugin installer unavailable ({error}). "
                                                 "Install plugins manually via Extensions > Install.",
@@ -549,6 +550,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- Onboarding: Actions --
         "onboard.action.profile_updated": "Profil mis a jour: {first_name} {last_name} ({email})",
         "onboard.action.profile_error": "Erreur mise a jour profil: {error}",
+        "onboard.action.profile_offline": "Profil : disponible une fois connecté",
         "onboard.action.no_plugins": "Aucun plugin supplementaire selectionne",
         "onboard.action.installer_unavailable": "Installeur de plugins indisponible ({error}). "
                                                 "Installez les plugins manuellement via Extensions > Installer.",
@@ -861,6 +863,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- Onboarding: Actions --
         "onboard.action.profile_updated": "Perfil atualizado: {first_name} {last_name} ({email})",
         "onboard.action.profile_error": "Erro na atualizacao do perfil: {error}",
+        "onboard.action.profile_offline": "Perfil: disponível depois de ligar",
         "onboard.action.no_plugins": "Nenhum plugin adicional selecionado",
         "onboard.action.installer_unavailable": "Instalador de plugins indisponivel ({error}). "
                                                 "Instale os plugins manualmente via Extensoes > Instalar.",
