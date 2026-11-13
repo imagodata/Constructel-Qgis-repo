@@ -52,6 +52,28 @@ class OperatorInfo:
 FALLBACK_OPERATOR = OperatorInfo("WYRE", "Wyre", OPERATOR_TEMPLATE_SCHEMA)
 
 
+# Schemas du navigateur QGIS et des projets enregistres (spec 6.7). Repli
+# historique (1.8) quand la liste des operateurs est vide.
+BROWSER_EXTRA_SCHEMAS = ("osiris",)
+PROJECT_EXTRA_SCHEMAS = ("public",)
+
+
+def browser_schemas(operators: Sequence[OperatorInfo]) -> str:
+    """Valeur « Restreindre aux schemas » de la connexion ``wyre`` du
+    navigateur QGIS : schemas des operateurs (ordre recu), puis ``osiris``,
+    separes par des virgules. Liste vide : ``"wyre,osiris"`` (1.8)."""
+    schemas = [op.schema for op in operators] or [OPERATOR_TEMPLATE_SCHEMA]
+    return ",".join(dict.fromkeys([*schemas, *BROWSER_EXTRA_SCHEMAS]))
+
+
+def project_schemas(operators: Sequence[OperatorInfo]) -> tuple[str, ...]:
+    """Schemas ou lister et charger les ``qgis_projects`` : schemas des
+    operateurs (ordre recu), puis ``public``. Liste vide :
+    ``("wyre", "public")`` (1.8)."""
+    schemas = [op.schema for op in operators] or [OPERATOR_TEMPLATE_SCHEMA]
+    return tuple(dict.fromkeys([*schemas, *PROJECT_EXTRA_SCHEMAS]))
+
+
 OPERATORS_QUERY = """\
 SELECT o.code::text, o.label::text, o.schema_name::text,
        COALESCE(has_schema_privilege(to_regnamespace(o.schema_name)::oid, 'USAGE'), false)
