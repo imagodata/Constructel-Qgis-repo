@@ -70,10 +70,12 @@ from .bridge_operators import (
     SCOPE_CODES_QUERY,
     SUFFIX_SETTINGS_KEY,
     OperatorInfo,
+    browser_schemas,
     is_safe_schema,
     parse_operator_rows,
     parse_project_operators,
     parse_suffix_flag,
+    project_schemas,
     style_sources,
     usable_operators,
 )
@@ -236,6 +238,8 @@ _PG_CONNECTIONS = {
         "dbname": DEFAULT_DBNAME,
         "user": DEFAULT_USER,
         "sslmode": DEFAULT_SSLMODE,
+        # Valeur de repli : la valeur ecrite suit les operateurs utilisables
+        # (bridge_operators.browser_schemas, spec 6.7).
         "schemas": "wyre,osiris",
         "schema": "wyre",
         # Restriction multi-schema (wyre+osiris) : la case "Seulement le
@@ -2190,6 +2194,7 @@ class ConstructelBridgePlugin:
         # Bridge 1.9 : operateurs utilisables, dans les deux modes ; jamais
         # bloquant (_load_operators ne leve pas).
         self._load_operators()
+        self._refresh_browser_schemas()
 
         if nominal:
             self._read_session_scope()
@@ -3080,6 +3085,32 @@ class ConstructelBridgePlugin:
                 ),
             )
 
+    def _browser_schemas_for(self, conn: str) -> str:
+        """Valeur du champ « Restreindre aux schemas » de la connexion *conn*.
+        ``wyre`` : operateurs utilisables puis osiris (spec 6.7) ; liste
+        vide ou illisible : repli ``wyre,osiris`` de ``_PG_CONNECTIONS``.
+        Les autres connexions (``be``) gardent leur valeur fixe."""
+        if conn != "wyre":
+            return _PG_CONNECTIONS[conn]["schemas"]
+        operators = [] if self._operators_unavailable else getattr(self, "_operators", [])
+        return browser_schemas(operators)
+
+    def _refresh_browser_schemas(self) -> None:
+        """Reecrit ``PostgreSQL/connections/<wyre>/schemas`` avec les schemas
+        des operateurs utilisables (apres ``_load_operators``). N'ecrit QUE si
+        l'entree du navigateur existe deja (``host`` ou ``service``) : jamais
+        d'entree partielle, par exemple quand la config mTLS est invalide et
+        que rien n'a ete ecrit. Ne touche jamais l'entree ``be``. Jamais
+        bloquant."""
+        try:
+            base = f"PostgreSQL/connections/{_PG_CONNECTIONS['wyre']['name']}"
+            settings = QgsSettings()
+            if not (settings.value(f"{base}/host") or settings.value(f"{base}/service")):
+                return
+            settings.setValue(f"{base}/schemas", self._browser_schemas_for("wyre"))
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Schemas du navigateur QGIS non mis a jour : {exc}", Qgis.MessageLevel.Warning)
+
     def _setup_qgis_pg_connection_mtls(self, conn: str, password: str):
         """PKI-Paths variant of _setup_qgis_pg_connection (mTLS active).
 
@@ -3121,7 +3152,7 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/publicOnly", params.get("public_only", False))
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
-        settings.setValue(f"{base}/schemas", params["schemas"])
+        settings.setValue(f"{base}/schemas", self._browser_schemas_for(conn))
         settings.setValue(f"{base}/schema", params["schema"])
         settings.setValue(f"{base}/authcfg", cfg_id)
         settings.setValue(f"{base}/saveUsername", True)
@@ -3187,7 +3218,7 @@ class ConstructelBridgePlugin:
         settings.setValue(f"{base}/publicOnly", params.get("public_only", False))
         settings.setValue(f"{base}/projectsInDatabase", True)
         settings.setValue(f"{base}/metadataInDatabase", True)
-        settings.setValue(f"{base}/schemas", params["schemas"])
+        settings.setValue(f"{base}/schemas", self._browser_schemas_for(conn))
         settings.setValue(f"{base}/schema", params["schema"])
 
         if use_authcfg:
@@ -4016,7 +4047,14 @@ class ConstructelBridgePlugin:
                 tr("project.load_error", name=proj_name, error=error),
             )
 
-    _PROJECT_SCHEMAS = ("wyre", "public")
+    def _project_schemas(self) -> tuple[str, ...]:
+        """Schemas des ``qgis_projects`` : operateurs utilisables puis
+        ``public`` (spec 6.7). Liste vide ou illisible : ``("wyre", "public")``
+        (1.8). Les schemas viennent de ``OperatorInfo`` (deja valides par
+        ``is_safe_schema``) : c'est la liste blanche anti-injection de
+        ``_read_and_clean_project``."""
+        operators = [] if self._operators_unavailable else getattr(self, "_operators", [])
+        return project_schemas(operators)
 
     def _read_and_clean_project(self, project, schema: str, name: str) -> bool:
         """Lit le XML du projet depuis PG, nettoie les authcfg, et charge.
@@ -4036,7 +4074,7 @@ class ConstructelBridgePlugin:
 
         password = getattr(self, "_password", None) or _DEFAULT_PW
         # Validate schema against whitelist to prevent SQL injection
-        if schema not in self._PROJECT_SCHEMAS:
+        if schema not in self._project_schemas():
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
         cur = self._conn.cursor()
@@ -4166,12 +4204,13 @@ class ConstructelBridgePlugin:
     def _list_db_projects(self) -> list[dict] | None:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.
 
-        Cherche la table ``qgis_projects`` dans les schemas public et wyre.
+        Cherche la table ``qgis_projects`` dans les schemas des operateurs
+        utilisables et dans public.
         """
         cur = self._conn.cursor()
         try:
             results: list[dict] = []
-            for schema in self._PROJECT_SCHEMAS:
+            for schema in self._project_schemas():
                 cur.execute(
                     """
                     SELECT EXISTS (
