@@ -13,6 +13,7 @@ from constructel_bridge_tests.test_bridge18_layers import (  # noqa: F401  (pi =
     _shared_plugin,
     pi,
 )
+from constructel_bridge_tests.test_bridge19_home import click_load, hm, homes  # noqa: F401  (homes = fixture)
 
 
 def _names(group):
@@ -433,60 +434,43 @@ def test_load_operator_layers_never_raises(bp18, pi, monkeypatch, tmp_path):
     assert QgsSettings().value(bo.LAST_OPERATOR_KEY) is None
 
 
-def test_init_menu_without_usable_operator_warns(bp18, monkeypatch):
-    warnings = []
-    monkeypatch.setattr(bp18.QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+# Decision K2 (tache 9) : l'ecran d'accueil (_on_home) remplace _on_init_project ;
+# les quatre tests ci-dessous en gardent l'intention sur le nouveau point
+# d'entree. L'ecran est un enregistreur ; click_load = l'utilisateur garde
+# l'operateur preselectionne et clique le bouton principal s'il est actif.
+
+
+def test_init_menu_without_usable_operator_warns(bp18, pi, homes, monkeypatch):
+    loads = []
+    homes.script.append(click_load())
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     plugin._connected, plugin._operators = True, []
-    plugin._on_init_project()
-    assert warnings == [bp18.tr("home.no_operator")]
+    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    plugin._on_home()
+    state = hm.home_state(homes.created[0].actions.snapshot())
+    assert (state.message_key, state.load_enabled) == ("home.no_operator", False)
+    assert loads == []
 
 
-def _fake_init_dialog(bp18, pi, monkeypatch):
-    """InitProjectDialog factice : accepte, couches cables + v_form_lists,
-    fond osm, sans styles. Rend la liste des operateurs recus."""
-    opened = []
-
-    class _Dialog:
-        def __init__(self, parent=None, operator=None):
-            opened.append(operator)
-
-        def exec(self):
-            return bp18.QDialog.DialogCode.Accepted
-
-        def selected_layers(self):
-            return {"cables", "v_form_lists"}
-
-        def want_basemap(self):
-            return True
-
-        def selected_basemaps(self):
-            return {"osm"}
-
-        def want_styles(self):
-            return False
-
-    monkeypatch.setattr(pi, "InitProjectDialog", _Dialog)
-    return opened
-
-
-def test_init_menu_loads_preselected_operator(bp18, pi, monkeypatch):
+def test_init_menu_loads_preselected_operator(bp18, pi, homes, monkeypatch):
     from qgis.core import QgsSettings
 
     loads = []
-    opened = _fake_init_dialog(bp18, pi, monkeypatch)
+    homes.script.append(click_load())
     QgsSettings().setValue(bo.LAST_OPERATOR_KEY, "wyre")
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     plugin._connected, plugin._operators = True, [ORANGE, WYRE]
     monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
 
-    plugin._on_init_project()
+    plugin._on_home()
 
-    assert opened == [WYRE]
-    assert loads == [(WYRE, {"cables", "v_form_lists"}, {"osm"}, False)]
+    assert hm.home_state(homes.created[0].actions.snapshot()).preselected == WYRE
+    assert loads == [(WYRE, {"cables", "v_form_lists"}, {"osm"}, False, False)]
 
 
-def test_unreadable_operator_list_falls_back_to_wyre(bp18, pi, monkeypatch, tmp_path):
+def test_unreadable_operator_list_falls_back_to_wyre(bp18, pi, homes, monkeypatch, tmp_path):
     # Decision T2-c4 : liste illisible (echec d'OPERATORS_QUERY) -> chargement
     # Wyre, comme 1.8.4.
     cur = _FakeCursor(operator_rows=_PgErr("permission denied for table operateurs"))
@@ -494,25 +478,30 @@ def test_unreadable_operator_list_falls_back_to_wyre(bp18, pi, monkeypatch, tmp_
     plugin._auto_connect()
     assert plugin._connected is True and plugin._operators == [] and plugin._operators_unavailable is True
     loads = []
-    opened = _fake_init_dialog(bp18, pi, monkeypatch)
+    homes.script.append(click_load())
     monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
 
-    plugin._on_init_project()
+    plugin._on_home()
 
-    assert opened == [bo.OperatorInfo("WYRE", "Wyre", "wyre")] == [bo.FALLBACK_OPERATOR]
+    snapshot = homes.created[0].actions.snapshot()
+    assert snapshot.operators == (bo.OperatorInfo("WYRE", "Wyre", "wyre"),) == (bo.FALLBACK_OPERATOR,)
     assert [call[0] for call in loads] == [bo.FALLBACK_OPERATOR]
 
 
-def test_readable_list_without_usable_operator_blocks_loading(bp18, pi, monkeypatch, tmp_path):
+def test_readable_list_without_usable_operator_blocks_loading(bp18, pi, homes, monkeypatch, tmp_path):
     # Liste lue, aucun operateur utilisable : blocage home.no_operator (spec § 6.2).
     cur = _FakeCursor(operator_rows=[("ORANGE", "Orange", "orange", True)], operator_codes=["WYRE"])
     plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None], cursor=cur, stored_ad_pw="ad-pw")
     plugin._auto_connect()
     assert plugin._connected is True and plugin._operators == [] and plugin._operators_unavailable is False
-    warnings = []
-    monkeypatch.setattr(bp18.QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
-    opened = _fake_init_dialog(bp18, pi, monkeypatch)
+    loads = []
+    homes.script.append(click_load())
+    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
 
-    plugin._on_init_project()
+    plugin._on_home()
 
-    assert warnings == [bp18.tr("home.no_operator")] and opened == []
+    state = hm.home_state(homes.created[0].actions.snapshot())
+    assert (state.message_key, state.load_enabled, state.selector) == ("home.no_operator", False, "none")
+    assert loads == []

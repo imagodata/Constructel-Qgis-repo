@@ -47,7 +47,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
-from .bridge_diagnostic import identity_check, plugin_checks, plugin_version_from_metadata
+from .bridge_diagnostic import identity_check, plugin_checks, plugin_summary, plugin_version_from_metadata
 from .bridge_expressions import register_expressions, unregister_expressions
 from .bridge_identity import (
     build_pgoptions,
@@ -68,11 +68,12 @@ from .bridge_operators import (
     LAST_OPERATOR_KEY,
     OPERATORS_QUERY,
     SCOPE_CODES_QUERY,
+    SUFFIX_SETTINGS_KEY,
     OperatorInfo,
     is_safe_schema,
     parse_operator_rows,
     parse_project_operators,
-    preselect_operator,
+    parse_suffix_flag,
     style_sources,
     usable_operators,
 )
@@ -1032,7 +1033,8 @@ class ConstructelBridgePlugin:
 
         icon_init = theme("/mActionNewMap.svg")
         action_init_project = QAction(icon_init, tr("menu.init_project"), parent)
-        action_init_project.triggered.connect(self._on_init_project)
+        # Bridge 1.9 (D15) : « Accueil · charger les couches » ouvre l'accueil.
+        action_init_project.triggered.connect(self._on_home)
         self._actions.append(action_init_project)
 
         action_language = QAction(icon_language, tr("menu.language"), parent)
@@ -1070,7 +1072,9 @@ class ConstructelBridgePlugin:
         self._tool_button.setToolTip("Constructel Bridge")
         self._tool_button.setMenu(self._toolbar_menu)
         self._tool_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._tool_button.clicked.connect(self._on_init_project)
+        # Bridge 1.9 (O1) : le clic principal ouvre l'ecran d'accueil,
+        # connecte ou non.
+        self._tool_button.clicked.connect(self._on_home)
 
         self._toolbar_action = self.iface.addToolBarWidget(self._tool_button)
 
@@ -3766,53 +3770,88 @@ class ConstructelBridgePlugin:
 
 
     # =====================================================================
-    # Initialiser un projet vierge avec toutes les couches WYRE
+    # Ecran d'accueil (spec 2026-11-12 § 6.1, § 6.2, § 6.6 ; tache 9)
     # =====================================================================
 
-    def _on_init_project(self):
-        """Ouvre le dialog de selection et charge les couches de l'operateur
-        preselectionne (provisoire, plan 1.9.0 tache 2 : l'ecran d'accueil
-        de la tache 9 portera le choix de l'operateur)."""
-        if not self._connected:
-            QMessageBox.warning(
-                self.iface.mainWindow(),
-                "Constructel Bridge",
-                tr("conn.connect_first"),
-            )
-            return
+    def _on_home(self):
+        """Clic principal et « Accueil · charger les couches » : ecran
+        d'accueil, connecte ou non (O1). Hors connexion, rien ne tente la
+        base : l'instantane ne lit que le projet et le poste."""
+        from .bridge_home import HomeDialog
 
-        operator = self._loading_operator()
-        if operator is None:
-            QMessageBox.warning(
-                self.iface.mainWindow(),
-                "Constructel Bridge",
-                tr("home.no_operator"),
-            )
-            return
-
-        from .bridge_project_init import InitProjectDialog
-
-        dlg = InitProjectDialog(self.iface.mainWindow(), operator=operator)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        selected = dlg.selected_layers()
-        if not selected - {"v_form_lists"}:
-            return  # rien selectionne
-
-        basemaps = dlg.selected_basemaps() if dlg.want_basemap() else set()
-        self._load_operator_layers(operator, selected, basemaps, dlg.want_styles())
-
-    def _loading_operator(self) -> OperatorInfo | None:
-        """Operateur propose au chargement (decision T2-c4) : liste des
-        operateurs illisible -> Wyre, comme 1.8.4 ; sinon le dernier charge
-        sur le poste s'il est utilisable, puis le premier ; liste lue sans
-        operateur utilisable -> None (spec 6.2)."""
-        if self._operators_unavailable:
+        if self._connected and self._operators_unavailable:
             self._log("Liste des operateurs indisponible : chargement des couches Wyre (repli 1.8.4)",
                       Qgis.MessageLevel.Warning)
-            return FALLBACK_OPERATOR
-        return preselect_operator(self._operators, QgsSettings().value(LAST_OPERATOR_KEY, "") or "")
+        dialog = HomeDialog(self._home_actions(), self.iface.mainWindow())
+        dialog.exec()
+
+    def _home_actions(self):
+        from .bridge_home_model import HomeActions
+
+        return HomeActions(
+            snapshot=self.home_snapshot,
+            connect=self._on_connect,
+            load=self._load_operator_layers,
+            open_saved_project=self._on_load_project,
+            checkin=self._on_onboarding,
+            diagnostic=self._on_diagnostic,
+            change_language=self._on_change_language,
+        )
+
+    def home_snapshot(self):
+        """Etat de l'ecran d'accueil, sans aucun acces reseau : session en
+        memoire, projet courant, reglages du poste.
+
+        Operateurs proposes : aucun hors connexion ; Wyre seul si la liste n'a
+        pas pu etre lue (decision T2-c4, comme 1.8.4) ; sinon les utilisables
+        (§ 6.2). Couches deja chargees : schemas operateur connus seulement
+        (registre, identite du projet, wyre), un operateur hors scopes dont
+        les couches sont dans le projet compris (K14)."""
+        from .bridge_home_model import HomeSnapshot
+        from .bridge_project_init import count_loaded_layers, get_bridge_info, known_operator_schemas
+
+        project = QgsProject.instance()
+        info = get_bridge_info()
+        connected = bool(self._connected)
+        if not connected:
+            operators = ()
+        elif self._operators_unavailable:
+            operators = (FALLBACK_OPERATOR,)
+        else:
+            operators = tuple(self._operators)
+        labels = dict(info["operator_labels"])
+        labels.update({schema: op.label for schema, op in self._operator_registry.items()})
+        labels.update({op.schema: op.label for op in operators})
+        settings = QgsSettings()
+        return HomeSnapshot(
+            connected=connected,
+            header=self._home_header() if connected else "",
+            operators=operators,
+            counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry)),
+            labels=labels,
+            last_schema=settings.value(LAST_OPERATOR_KEY, "") or "",
+            project_suffix=info["operator_suffix"],
+            last_suffix=parse_suffix_flag(settings.value(SUFFIX_SETTINGS_KEY, False)),
+            plugin_summary=self._home_plugin_summary(),
+            plugin_version=PLUGIN_VERSION,
+            project_operators=tuple(info["operators"]),
+        )
+
+    def _home_header(self) -> str:
+        """« login · perimetre » (en-tete de l'accueil, § 6.1)."""
+        login = self._pg_login if self._auth_mode == AUTH_MODE_NOMINAL else (self._bridge_user or "")
+        scope = self._scope_text()
+        return f"{login} · {scope}" if login else scope
+
+    def _home_plugin_summary(self):
+        """Resume des extensions recommandees (tuile Check-in, K3), calcule
+        sans reseau ; None si les listes de QGIS sont illisibles (l'ecran
+        s'ouvre quand meme)."""
+        try:
+            return plugin_summary(self._diagnostic_local_checks())
+        except Exception as exc:  # noqa: BLE001 -- sous-titre de tuile, jamais bloquant
+            self._log(f"Accueil : extensions recommandees illisibles ({exc})", Qgis.MessageLevel.Warning)
+            return None
 
     def _load_operator_layers(self, operator: OperatorInfo, selected: set, basemaps: set,
                               apply_styles: bool, suffix: bool | None = None) -> int:
@@ -3820,14 +3859,21 @@ class ConstructelBridgePlugin:
         *operator*, les fonds de plan *basemaps*, puis traductions, sources
         des listes de valeurs, hooks d'edition et lecture seule. Memorise
         l'operateur sur le poste (LAST_OPERATOR_KEY). Ne leve jamais :
-        erreur -> init.error, retour 0. Retourne le nombre de couches
-        ajoutees."""
+        erreur -> init.error, retour 0.
+
+        Retourne le nombre de couches ET de fonds de plan ajoutes (un fond
+        seul donne 1, decision T9-c1b) ; 0 si rien de nouveau (avertissement
+        init.nothing_added). Ni couche (v_form_lists seule, toujours incluse
+        par la selection) ni fond demandes : ne fait rien et rend 0 (K2)."""
+        if not set(selected) - {"v_form_lists"} and not basemaps:
+            return 0
         try:
-            from .bridge_project_init import init_project
+            from .bridge_project_init import _detect_existing_basemaps, init_project
 
             conn_params, password = self._init_conn_params()
             suffix = self._reorganize_legacy_project(operator, suffix)
 
+            basemaps_before = _detect_existing_basemaps()
             count = init_project(
                 conn_params, password, selected,
                 add_basemap=bool(basemaps),
@@ -3836,6 +3882,7 @@ class ConstructelBridgePlugin:
                 operator=operator,
                 suffix=suffix,
             )
+            added_basemaps = len(_detect_existing_basemaps() - basemaps_before)
             QgsSettings().setValue(LAST_OPERATOR_KEY, operator.schema)
 
             # Appliquer les traductions i18n
@@ -3846,13 +3893,14 @@ class ConstructelBridgePlugin:
             self._hook_layers()
             self._apply_scope_to_layers()
 
-            self.iface.messageBar().pushMessage(
-                "Constructel Bridge",
-                tr("init.success", count=count),
-                level=Qgis.MessageLevel.Success,
-                duration=5,
-            )
-            return count
+            if count:
+                message, level = tr("init.success", count=count), Qgis.MessageLevel.Success
+            elif added_basemaps:
+                message, level = tr("init.success_basemaps", count=added_basemaps), Qgis.MessageLevel.Success
+            else:
+                message, level = tr("init.nothing_added"), Qgis.MessageLevel.Warning
+            self.iface.messageBar().pushMessage("Constructel Bridge", message, level=level, duration=5)
+            return count + added_basemaps
         except Exception as exc:  # noqa: BLE001 -- jamais bloquant
             QMessageBox.critical(
                 self.iface.mainWindow(),

@@ -2,22 +2,22 @@
 """
 Constructel Bridge — Initialisation de projet QGIS WYRE FTTH.
 
-Dialog de selection de couches avec templates pre-configures,
-puis chargement des couches, styles, relations et basemaps.
+Widget de selection de couches avec templates pre-configures (grande tuile
+de l'ecran d'accueil, Bridge 1.9), puis chargement des couches, styles,
+relations et basemaps.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Mapping
+from dataclasses import dataclass
+from typing import Iterable, Mapping, Optional
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtXml import QDomDocument
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -25,6 +25,7 @@ from qgis.PyQt.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 from qgis.core import (
     Qgis,
@@ -58,7 +59,7 @@ from .bridge_operators import (
     relation_id,
     style_sources,
 )
-from .i18n import tr
+from .i18n import get_language, tr
 from .i18n.layer_translations import GROUP_NAMES
 
 TAG = "Constructel Bridge"
@@ -568,7 +569,7 @@ def _log(msg, level=Qgis.MessageLevel.Info):
 
 
 # =====================================================================
-# DIALOG — selection des couches avec templates
+# DEJA CHARGE — couches et fonds de plan presents dans le projet
 # =====================================================================
 
 def _catalog_table_id(entry) -> str:
@@ -577,25 +578,32 @@ def _catalog_table_id(entry) -> str:
     return entry[3] if entry[0] in WFS_KEYS else f"{entry[2]}.{entry[3]}"
 
 
+def _layer_table_ids(layer) -> list[str]:
+    """Identifiants « deja chargee » d'une couche : schema.table pour une
+    couche PostgreSQL, typename(s) du catalogue contenus dans la source d'une
+    couche WFS ; [] pour le reste (raster, couche sans fournisseur...)."""
+    if not isinstance(layer, QgsVectorLayer):
+        return []
+    prov = layer.dataProvider()
+    if not prov:
+        return []
+    if prov.name() == "postgres":
+        uri = prov.uri()
+        return [f"{uri.schema()}.{uri.table()}"]
+    if prov.name() == "WFS":
+        src = prov.uri().uri()
+        return [entry[3] for entry in LAYER_CATALOG if entry[2] == "wfs" and entry[3] in src]
+    return []
+
+
 def _existing_layer_index(project) -> dict:
     """Couches vectorielles du projet par identifiant « deja chargee »
     (schema.table PostgreSQL, typename WFS du catalogue). La premiere couche
     trouvee l'emporte."""
     index = {}
     for ly in project.mapLayers().values():
-        if not isinstance(ly, QgsVectorLayer):
-            continue
-        prov = ly.dataProvider()
-        if not prov:
-            continue
-        if prov.name() == "postgres":
-            uri = prov.uri()
-            index.setdefault(f"{uri.schema()}.{uri.table()}", ly)
-        elif prov.name() == "WFS":
-            src = prov.uri().uri()
-            for entry in LAYER_CATALOG:
-                if entry[2] == "wfs" and entry[3] in src:
-                    index.setdefault(entry[3], ly)
+        for table_id in _layer_table_ids(ly):
+            index.setdefault(table_id, ly)
     return index
 
 
@@ -605,6 +613,61 @@ def _detect_existing_layers(schema: str = OPERATOR_TEMPLATE_SCHEMA) -> set[str]:
     schema, une couche commune compte pour tous les operateurs."""
     index = _existing_layer_index(QgsProject.instance())
     return {entry[0] for entry in catalog_for(schema) if _catalog_table_id(entry) in index}
+
+
+def _loaded_layer_names(project) -> set[str]:
+    """Noms des couches du projet (arbre ou non) : un fond de plan de ce nom
+    est deja charge (regle unique de _add_basemaps et de l'ecran, D12)."""
+    return {ly.name() for ly in project.mapLayers().values()}
+
+
+def _detect_existing_basemaps() -> set[str]:
+    """Cles de BASEMAPS deja chargees dans le projet courant, selon la regle
+    de nom de _add_basemaps (qui ne les ajouterait pas une seconde fois)."""
+    names = _loaded_layer_names(QgsProject.instance())
+    return {bm["key"] for bm in BASEMAPS if bm["name"] in names}
+
+
+# Couches techniques du catalogue : jamais comptees comme couches de travail.
+_TECHNICAL_KEYS = frozenset({"v_form_lists", "docs_elements"})
+
+
+@dataclass(frozen=True)
+class LoadedCounts:
+    per_operator: dict   # schema -> couches operateur presentes dans l'arbre de couches
+    common: int          # couches communes de travail (hors v_form_lists, docs_elements)
+    basemaps: int        # fonds de plan de BASEMAPS presents (chacun compte une fois)
+
+
+def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> LoadedCounts:
+    """Ce que le projet contient deja, pour l'ecran d'accueil (§ 6.2) : seules
+    les couches qui ont un noeud dans l'arbre comptent (les couches fantomes
+    creees par les relations des QML n'en ont pas). *per_operator* suit
+    l'ordre de l'arbre. *known* (schemas operateur connus, voir
+    known_operator_schemas) : une table operateur d'un autre schema (copie
+    dans public...) ne fait pas naitre d'operateur ; None = tout schema."""
+    known = None if known is None else set(known)
+    common_ids = {_catalog_table_id(e) for e in LAYER_CATALOG
+                  if e[1] not in OPERATOR_GROUPS and e[0] not in _TECHNICAL_KEYS}
+    basemap_names = {bm["name"] for bm in BASEMAPS}
+    per_operator: dict[str, int] = {}
+    common = 0
+    basemaps: set[str] = set()
+    seen: set[str] = set()
+    for node in project.layerTreeRoot().findLayers():
+        layer = node.layer()
+        if layer is None or layer.id() in seen:
+            continue
+        seen.add(layer.id())
+        if layer.name() in basemap_names:
+            basemaps.add(layer.name())
+        for table_id in _layer_table_ids(layer):
+            schema, dot, table = table_id.partition(".")
+            if table_id in common_ids:
+                common += 1
+            elif dot and table in OPERATOR_TABLES and (known is None or schema in known):
+                per_operator[schema] = per_operator.get(schema, 0) + 1
+    return LoadedCounts(per_operator, common, len(basemaps))
 
 
 # =====================================================================
@@ -824,27 +887,32 @@ def reorganize_legacy_tree(project, registry: Mapping[str, OperatorInfo]) -> lis
     return touched
 
 
-class InitProjectDialog(QDialog):
-    """Dialog de selection des couches avec templates pre-configures.
+class LayerSelectionWidget(QWidget):
+    """Selection des couches de la grande tuile de l'ecran d'accueil (spec
+    § 6.1), ex-InitProjectDialog dont elle garde toutes les capacites (§ 4) :
+    modeles et « Selection manuelle » avec leur description, arbre par
+    groupe, couches deja chargees grisees, Tout / Rien, arbre des fonds de
+    plan, « Appliquer les styles de la base ».
 
-    Provisoire (plan 1.9.0, tache 2) : charge les couches de *operator*
-    (schema modele si absent) ; remplacee par l'ecran d'accueil en tache 9.
+    set_operator() est obligatoire avant usage : il remplit l'arbre avec les
+    couches de l'operateur choisi (couches operateur grisees pour ce seul
+    operateur, couches communes deja chargees toujours grisees). Une couche
+    deja chargee est grisee ET decochee (decision T9-c2b) : un modele, Tout
+    ou Rien ne la cochent jamais, et selected_layers() ne la rend jamais,
+    quel que soit l'etat de sa case (en Qt, ItemIsAutoTristate propage
+    l'etat d'un groupe a ses enfants desactives). Idem pour les fonds de
+    plan deja charges (meme regle de nom que _add_basemaps, D12) et
+    selected_basemaps().
     """
 
-    def __init__(self, parent=None, operator: OperatorInfo | None = None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._operator = operator or OperatorInfo(
-            OPERATOR_TEMPLATE_SCHEMA.upper(), OPERATOR_TEMPLATE_SCHEMA.capitalize(), OPERATOR_TEMPLATE_SCHEMA,
-        )
-        self._existing = _detect_existing_layers(self._operator.schema)
-        # Mode ajout : couches de cet operateur, communes, ou autre operateur
-        # deja charge (identite du projet).
-        self._has_layers = (bool(self._existing - {"v_form_lists", "docs_elements"})
-                            or bool(get_bridge_info()["operators"]))
-        title = tr("init.title_add") if self._has_layers else tr("init.title")
-        self.setWindowTitle(f"{title} · {self._operator.label}")
-        self.setMinimumWidth(560)
-        self.setMinimumHeight(620)
+        self._schema = OPERATOR_TEMPLATE_SCHEMA
+        self._label = ""
+        self._existing: set[str] = set()
+        self._items = {}  # key → QTreeWidgetItem
+        self._basemap_items = {}  # key → QTreeWidgetItem
+        self._existing_basemaps = _detect_existing_basemaps()
         self._build_ui()
 
     def _build_ui(self):
@@ -868,40 +936,80 @@ class InitProjectDialog(QDialog):
 
         layout.addWidget(tmpl_box)
 
-        # -- Layer tree (checkable) -------------------------------------------
+        # -- Couches de travail | fonds de plan et styles (maquette v3) ------
+        columns = QHBoxLayout()
+
         layers_box = QGroupBox(tr("init.group_layers"))
         layers_layout = QVBoxLayout(layers_box)
-
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
+        layers_layout.addWidget(self._tree)
 
-        # Build tree from catalog
-        self._items = {}  # key → QTreeWidgetItem
-        self._group_items = {}  # group_name → QTreeWidgetItem
+        # Select all / none buttons
+        btn_layout = QHBoxLayout()
+        self._btn_all = QPushButton(tr("init.select_all"))
+        self._btn_all.clicked.connect(lambda _checked=False: self._set_all(True))
+        self._btn_none = QPushButton(tr("init.select_none"))
+        self._btn_none.clicked.connect(lambda _checked=False: self._set_all(False))
+        btn_layout.addWidget(self._btn_all)
+        btn_layout.addWidget(self._btn_none)
+        btn_layout.addStretch()
+        layers_layout.addLayout(btn_layout)
+        columns.addWidget(layers_box, 3)
 
-        for key, group, schema, table, geom, pk, label in catalog_for(self._operator.schema):
-            if group is None:
-                # Reference layers — always included, not shown
-                continue
+        side = QVBoxLayout()
+        basemap_box = QGroupBox(tr("init.group_basemaps"))
+        basemap_layout = QVBoxLayout(basemap_box)
+        self._basemap_tree = QTreeWidget()
+        self._basemap_tree.setHeaderHidden(True)
+        self._basemap_tree.setRootIsDecorated(True)
+        self._fill_basemaps()
+        basemap_layout.addWidget(self._basemap_tree)
+        side.addWidget(basemap_box)
 
-            if group not in self._group_items:
-                gi = QTreeWidgetItem(self._tree, [group])
+        # -- Options ----------------------------------------------------------
+        self._chk_styles = QCheckBox(tr("init.apply_styles"))
+        self._chk_styles.setChecked(True)
+        side.addWidget(self._chk_styles)
+        side.addStretch()
+        columns.addLayout(side, 2)
+
+        layout.addLayout(columns)
+
+        # Pre-select first template (arbre rempli par set_operator)
+        self._combo.setCurrentIndex(1)
+
+    def _group_caption(self, group: str) -> str:
+        """Nom du groupe dans la langue courante ; badge de l'operateur sur
+        un groupe operateur, mention « commun » sur un groupe commun."""
+        name = GROUP_NAMES.get(group, {}).get(get_language(), group)
+        if group in OPERATOR_GROUPS:
+            return f"{name}  [{self._label}]"
+        if group in COMMON_GROUPS:
+            return f"{name}  ({tr('home.common_tag')})"
+        return name
+
+    def _fill_layers(self):
+        """(Re)construit l'arbre des couches pour l'operateur courant."""
+        self._tree.clear()
+        self._items = {}
+        group_items = {}  # group_name → QTreeWidgetItem
+        for key, group, schema, table, _geom, _pk, label in catalog_for(self._schema):
+            if group not in group_items:
+                gi = QTreeWidgetItem(self._tree, [self._group_caption(group)])
                 gi.setFlags(gi.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate)
                 gi.setCheckState(0, Qt.CheckState.Unchecked)
                 gi.setExpanded(True)
-                self._group_items[group] = gi
+                group_items[group] = gi
 
             already = key in self._existing
             suffix = "  ✔" if already else ""
-            item = QTreeWidgetItem(
-                self._group_items[group],
-                [f"{label}  ({schema}.{table}){suffix}"],
-            )
+            item = QTreeWidgetItem(group_items[group], [f"{label}  ({schema}.{table}){suffix}"])
             if already:
-                # Deja charge — cocher et desactiver (non modifiable)
+                # Deja chargee — grisee et decochee, jamais selectionnee (T9-c2b)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Checked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
                 item.setToolTip(0, tr("init.already_loaded"))
                 item.setDisabled(True)
             else:
@@ -910,33 +1018,8 @@ class InitProjectDialog(QDialog):
             item.setData(0, Qt.ItemDataRole.UserRole, key)
             self._items[key] = item
 
-        layers_layout.addWidget(self._tree)
-
-        # Select all / none buttons
-        btn_layout = QHBoxLayout()
-        btn_all = QPushButton(tr("init.select_all"))
-        btn_all.clicked.connect(lambda: self._set_all(True))
-        btn_none = QPushButton(tr("init.select_none"))
-        btn_none.clicked.connect(lambda: self._set_all(False))
-        btn_layout.addWidget(btn_all)
-        btn_layout.addWidget(btn_none)
-        btn_layout.addStretch()
-        layers_layout.addLayout(btn_layout)
-
-        layout.addWidget(layers_box)
-
-        # -- Fonds de carte ---------------------------------------------------
-        basemap_box = QGroupBox(tr("init.group_basemaps"))
-        basemap_layout = QVBoxLayout(basemap_box)
-
-        self._basemap_tree = QTreeWidget()
-        self._basemap_tree.setHeaderHidden(True)
-        self._basemap_tree.setRootIsDecorated(True)
-        self._basemap_tree.setMaximumHeight(160)
-
-        self._basemap_items = {}  # key → QTreeWidgetItem
+    def _fill_basemaps(self):
         basemap_groups = {}  # group → QTreeWidgetItem
-
         for bm in BASEMAPS:
             grp_name = bm.get("group", "Autres")
             if grp_name not in basemap_groups:
@@ -946,32 +1029,35 @@ class InitProjectDialog(QDialog):
                 gi.setExpanded(True)
                 basemap_groups[grp_name] = gi
 
-            item = QTreeWidgetItem(basemap_groups[grp_name], [bm["name"]])
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.CheckState.Checked if bm.get("default") else Qt.CheckState.Unchecked)
+            already = bm["key"] in self._existing_basemaps
+            item = QTreeWidgetItem(basemap_groups[grp_name], [bm["name"] + ("  ✔" if already else "")])
+            if already:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
+                item.setToolTip(0, tr("init.already_loaded"))
+                item.setDisabled(True)
+            else:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.CheckState.Checked if bm.get("default") else Qt.CheckState.Unchecked)
             item.setData(0, Qt.ItemDataRole.UserRole, bm["key"])
             self._basemap_items[bm["key"]] = item
 
-        basemap_layout.addWidget(self._basemap_tree)
-
-        layout.addWidget(basemap_box)
-
-        # -- Options ----------------------------------------------------------
-        self._chk_styles = QCheckBox(tr("init.apply_styles"))
-        self._chk_styles.setChecked(True)
-        layout.addWidget(self._chk_styles)
-
-        # -- Buttons ----------------------------------------------------------
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
-            tr("init.btn_add") if self._has_layers else tr("init.btn_init")
-        )
-        layout.addWidget(buttons)
-
-        # Pre-select first template
-        self._combo.setCurrentIndex(1)
+    def set_operator(self, schema: str, label: str) -> None:
+        """Couches de l'operateur *schema* (libelle *label* sur le badge des
+        groupes operateur). Le modele choisi est reapplique ; en « Selection
+        manuelle », les couches cochees a la main le restent."""
+        manual = {key for key, item in self._items.items()
+                  if key not in self._existing and item.checkState(0) == Qt.CheckState.Checked}
+        self._schema, self._label = schema, label
+        self._existing = _detect_existing_layers(schema)
+        self._fill_layers()
+        key = self._combo.currentData()
+        if key == "custom":
+            for item_key in manual - self._existing:
+                if item_key in self._items:
+                    self._items[item_key].setCheckState(0, Qt.CheckState.Checked)
+        else:
+            self._apply_template(key)
 
     def _on_template_changed(self, idx):
         key = self._combo.currentData()
@@ -981,33 +1067,37 @@ class InitProjectDialog(QDialog):
 
         tmpl = TEMPLATES.get(key, {})
         self._desc_label.setText(tmpl.get("description", ""))
+        self._apply_template(key)
 
-        # Apply template selection
+    def _apply_template(self, key):
+        layers = TEMPLATES.get(key, {}).get("layers", set())
         for item_key, item in self._items.items():
-            item.setCheckState(
-                0,
-                Qt.CheckState.Checked if item_key in tmpl.get("layers", set()) else Qt.CheckState.Unchecked,
-            )
+            if item_key in self._existing:
+                continue  # deja chargee : jamais cochee (T9-c2b)
+            item.setCheckState(0, Qt.CheckState.Checked if item_key in layers else Qt.CheckState.Unchecked)
 
     def _set_all(self, checked):
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        for item in self._items.values():
-            item.setCheckState(0, state)
+        for item_key, item in self._items.items():
+            if item_key not in self._existing:
+                item.setCheckState(0, state)
         self._combo.setCurrentIndex(0)  # switch to custom
 
     def selected_layers(self) -> set[str]:
-        """Retourne les keys des couches selectionnees."""
+        """Cles simples des couches cochees, jamais celles deja chargees
+        (T9-c2b : filtre sur _existing, pas sur la case) ; v_form_lists
+        toujours incluse."""
         result = {"v_form_lists"}  # toujours inclus
         for key, item in self._items.items():
-            if item.checkState(0) == Qt.CheckState.Checked:
+            if key not in self._existing and item.checkState(0) == Qt.CheckState.Checked:
                 result.add(key)
         return result
 
     def selected_basemaps(self) -> set[str]:
-        """Retourne les keys des basemaps selectionnees."""
+        """Cles des fonds de plan coches, sans ceux deja charges."""
         result = set()
         for key, item in self._basemap_items.items():
-            if item.checkState(0) == Qt.CheckState.Checked:
+            if key not in self._existing_basemaps and item.checkState(0) == Qt.CheckState.Checked:
                 result.add(key)
         return result
 
@@ -1116,7 +1206,11 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     Les entrees operateur sont lues dans operator.schema et rangees dans le
     groupe de l'operateur ; les entrees communes, chargees une seule fois
     quel que soit le nombre d'operateurs, dans « Commun ». Une couche deja
-    presente (meme schema.table, meme typename WFS) est reprise telle quelle.
+    presente (meme schema.table, meme typename WFS) est reprise telle quelle :
+    jamais restylee (decision T9-c2b, les retouches de symbologie sont
+    gardees), mais les couches du catalogue deja presentes pour cet operateur
+    et les couches communes presentes entrent dans les relations, pour
+    qu'une couche nouvelle soit reliee a une couche deja la.
     L'operateur n'entre dans l'identite du projet (stamp_project) que si
     une de ses couches operateur est ajoutee (juste avant son addMapLayer)
     ou deja presente ; version et plugin sont toujours ecrits.
@@ -1141,11 +1235,25 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     groups = {}
     existing = _existing_layer_index(project)
 
+    # Couches du catalogue deja presentes pour cet operateur et couches
+    # communes presentes : reliees, jamais restylees (T9-c2b).
+    present = {}
+    for entry in catalog:
+        layer = existing.get(_catalog_table_id(entry))
+        if layer is not None:
+            present[layer_key(entry[0], entry[2])] = layer
+    stamped = False
+    if any(base_key(key) in OPERATOR_KEYS for key in present):
+        # Deja presente : l'operateur est dans le projet (T2-c3) ; avant tout
+        # addMapLayer, l'ordre n'est pas en jeu.
+        stamp_project(operator, suffix)
+        stamped = True
+
     # -- Charger les couches (dans l'ordre du catalogue) -------------------
     loaded = {}  # layer_key ("cables@orange", "interventions") → couche
+    added = {}   # couches ajoutees par cet appel : les seules restylees
     count = 0
     skipped = 0
-    stamped = False
 
     # Iterer dans l'ordre du catalogue, pas dans l'ordre du set
     for entry in catalog:
@@ -1156,14 +1264,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         lkey = layer_key(key, schema)
 
         # Eviter les doublons : reprendre la couche existante (relations)
-        present = existing.get(_catalog_table_id(entry))
-        if present is not None:
-            if key in OPERATOR_KEYS and not stamped:
-                # Deja presente : l'operateur est dans le projet (T2-c3) ;
-                # aucun addMapLayer ici, l'ordre n'est pas en jeu.
-                stamp_project(operator, suffix)
-                stamped = True
-            loaded[lkey] = present
+        if lkey in present:
+            loaded[lkey] = present[lkey]
             skipped += 1
             continue
 
@@ -1197,6 +1299,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             group.addLayer(layer)
 
         loaded[lkey] = layer
+        added[lkey] = layer
         count += 1
 
     if skipped:
@@ -1206,22 +1309,25 @@ def init_project(conn_params: dict, password: str, selected: set[str],
          f"version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
 
     # -- Relations --------------------------------------------------------
-    ensure_relations(loaded)
+    # Couches nouvelles ET deja presentes : subducts ajoutee se relie a
+    # ducts deja la (T9-c2b).
+    related = {**present, **loaded}
+    ensure_relations(related)
 
-    # -- Styles -----------------------------------------------------------
+    # -- Styles (couches ajoutees seulement, T9-c2b) ------------------------
     # 1. Styles par defaut depuis la BDD (prioritaires)
     db_styled: set[str] = set()
-    if apply_styles:
-        db_styled = _apply_styles_from_db(conn_params, password, loaded)
+    if apply_styles and added:
+        db_styled = _apply_styles_from_db(conn_params, password, added)
     # 2. Styles embarques uniquement pour les couches sans style BDD
-    fallback = {k: v for k, v in loaded.items() if k not in db_styled}
+    fallback = {k: v for k, v in added.items() if k not in db_styled}
     if fallback:
         _apply_embedded_styles(fallback)
 
     # Les styles QML contiennent des relation editors (Documents, Splices).
     # Apres le chargement des styles, recreer les relations pour que QGIS
     # les lie correctement aux widgets du formulaire.
-    ensure_relations(loaded)
+    ensure_relations(related)
 
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:
@@ -1362,7 +1468,7 @@ def _add_basemaps(root, selected_keys: set[str]):
     """Ajoute les fonds de carte dans un groupe Basemaps, cree au premier
     fond ajoute (jamais de groupe vide). Retourne le groupe, ou None."""
     project = QgsProject.instance()
-    existing_names = {ly.name() for ly in project.mapLayers().values()}
+    existing_names = _loaded_layer_names(project)
 
     basemap_group = root.findGroup(_BASEMAPS_GROUP)
     basemap_by_key = {bm["key"]: bm for bm in BASEMAPS}
