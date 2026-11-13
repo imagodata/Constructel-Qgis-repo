@@ -503,3 +503,58 @@ def test_opening_legacy_project_never_reorganizes(bp18, pi, plugin18, monkeypatc
     assert tree_shape(project) == legacy_shape  # seuls les noms de couches sont traduits, comme en 1.8
     assert project._entries == legacy_entries
     assert pi.needs_reorganization(project.layerTreeRoot()) is True
+
+
+# --- « Ajouter » et couches deja a la racine (relecture finale I1) -------------------------
+
+
+@pytest.mark.parametrize("operator", [ORANGE, WYRE], ids=["autre_operateur", "meme_operateur"])
+def test_add_keeps_personal_layer_at_root(bp18, pi, plugin18, operator):
+    # Une couche personnelle posee a la racine n'est pas un fantome : elle
+    # reste a sa place (dans QGIS, retirer son noeud la retirerait du projet,
+    # editions comprises).
+    plugin, project, layers = plugin18
+    root = project.layerTreeRoot()
+    plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
+
+    plugin._load_operator_layers(operator, {"cables", "structures"}, set(), True, suffix=False)
+
+    node = root.findLayer(layers["root_layer"].id())
+    assert node is not None and node.parent() is root
+    assert root.findLayer(layers["mine"].id()).parent() is root.findGroup("Mes couches")
+
+
+def test_add_files_documents_layer_present_at_root_into_reference(bp18, pi, plugin18):
+    # docs_elements deja present a la racine (jamais recoche, T9-c2b) : range
+    # dans Reference, pas supprime.
+    plugin, project, layers = plugin18
+    root = project.layerTreeRoot()
+    reference = root.findGroup("Référence")
+    docs = project.add_pg("docs", "v_element_documents_list", key="link_id", geom=None)
+    plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
+
+    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+
+    node = root.findLayer(docs.id())
+    assert node is not None and node.parent() is reference
+    assert [n.layerId() for n in root.findLayers()].count(docs.id()) == 1  # deplacee, pas dupliquee
+    assert root.findLayer(layers["root_layer"].id()).parent() is root
+
+
+def test_add_still_removes_ghost_layers_created_during_the_call(bp18, pi, plugin18, monkeypatch):
+    # Comportement voulu conserve : une couche apparue a la racine pendant le
+    # chargement (relation d'un QML) est retiree ; la couche personnelle reste.
+    plugin, project, layers = plugin18
+    root = project.layerTreeRoot()
+    ghosts = []
+
+    def styles_creating_a_ghost(_loaded):
+        ghosts.append(project.addMapLayer(FakeLayer.pg("wyre", "ducts", name="fantome")))  # noeud a la racine
+
+    monkeypatch.setattr(pi, "_apply_embedded_styles", styles_creating_a_ghost)
+    plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
+
+    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+
+    assert ghosts and root.findLayer(ghosts[0].id()) is None
+    assert root.findLayer(layers["root_layer"].id()).parent() is root
