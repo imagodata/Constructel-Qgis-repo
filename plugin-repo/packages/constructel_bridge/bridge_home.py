@@ -12,8 +12,9 @@ enregistre, Check-in, Diagnostic, Langue.
 Toute la logique d'etat vient de bridge_home_model ; ce module ne fait que
 dessiner et relayer les clics vers HomeActions. render() reconstruit tout
 depuis actions.snapshot() (apres une connexion, un check-in, un diagnostic
-ou un changement de langue). L'ecran se ferme apres un chargement qui a
-ajoute des couches, et avant d'ouvrir un projet enregistre (D11).
+ou un changement de langue, et apres un chargement qui n'a rien ajoute).
+L'ecran se ferme apres un chargement qui a ajoute des couches ou des fonds
+de plan, et avant d'ouvrir un projet enregistre (D11, T9-c1b).
 """
 
 from __future__ import annotations
@@ -237,6 +238,7 @@ class HomeDialog(QDialog):
         loaded = list(self._snapshot.project_operators) + list(self._snapshot.counts.per_operator)
         checked, editable = suffix_state(loaded, self._operator.schema,
                                          self._snapshot.project_suffix, self._snapshot.last_suffix)
+        self._suffix_proposed = checked
         self._suffix_box.setChecked(checked)
         self._suffix_box.setEnabled(editable)
 
@@ -256,13 +258,20 @@ class HomeDialog(QDialog):
         if op is None or widget is None:
             return
         suffix = self._suffix_box.isChecked()
-        if self._suffix_box.isEnabled():
-            # Choix libre (un seul operateur) : memorise sur le poste (§ 9.5).
-            QgsSettings().setValue(SUFFIX_SETTINGS_KEY, suffix)
+        editable = self._suffix_box.isEnabled()
         basemaps = widget.selected_basemaps() if widget.want_basemap() else set()
         count = self.actions.load(op, widget.selected_layers(), basemaps, widget.want_styles(), suffix)
         if count > 0:
+            if editable and suffix != self._suffix_proposed:
+                # Choix de la personne (case modifiable, changee), apres un
+                # chargement reussi : memorise sur le poste (§ 9.5, T9-c3).
+                # Jamais la valeur imposee ou venue du projet.
+                QgsSettings().setValue(SUFFIX_SETTINGS_KEY, suffix)
             self.accept()
+        else:
+            # Echec ou rien de nouveau : l'ecran reste ouvert, a jour
+            # (resume, fonds grises, mode, case du suffixe ; T9-c1b).
+            self.render()
 
     def _on_connect(self) -> None:
         self.actions.connect()

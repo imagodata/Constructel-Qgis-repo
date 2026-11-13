@@ -897,9 +897,12 @@ class LayerSelectionWidget(QWidget):
     set_operator() est obligatoire avant usage : il remplit l'arbre avec les
     couches de l'operateur choisi (couches operateur grisees pour ce seul
     operateur, couches communes deja chargees toujours grisees). Une couche
-    grisee reste cochee : un modele, Tout ou Rien ne la decochent jamais.
-    Les fonds de plan deja charges (meme regle de nom que _add_basemaps,
-    D12) sont grises et jamais rendus par selected_basemaps().
+    deja chargee est grisee ET decochee (decision T9-c2b) : un modele, Tout
+    ou Rien ne la cochent jamais, et selected_layers() ne la rend jamais,
+    quel que soit l'etat de sa case (en Qt, ItemIsAutoTristate propage
+    l'etat d'un groupe a ses enfants desactives). Idem pour les fonds de
+    plan deja charges (meme regle de nom que _add_basemaps, D12) et
+    selected_basemaps().
     """
 
     def __init__(self, parent=None):
@@ -1004,9 +1007,9 @@ class LayerSelectionWidget(QWidget):
             suffix = "  ✔" if already else ""
             item = QTreeWidgetItem(group_items[group], [f"{label}  ({schema}.{table}){suffix}"])
             if already:
-                # Deja charge — cocher et desactiver (non modifiable)
+                # Deja chargee — grisee et decochee, jamais selectionnee (T9-c2b)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Checked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
                 item.setToolTip(0, tr("init.already_loaded"))
                 item.setDisabled(True)
             else:
@@ -1030,7 +1033,7 @@ class LayerSelectionWidget(QWidget):
             item = QTreeWidgetItem(basemap_groups[grp_name], [bm["name"] + ("  ✔" if already else "")])
             if already:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Checked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
                 item.setToolTip(0, tr("init.already_loaded"))
                 item.setDisabled(True)
             else:
@@ -1070,7 +1073,7 @@ class LayerSelectionWidget(QWidget):
         layers = TEMPLATES.get(key, {}).get("layers", set())
         for item_key, item in self._items.items():
             if item_key in self._existing:
-                continue  # grisee : reste cochee
+                continue  # deja chargee : jamais cochee (T9-c2b)
             item.setCheckState(0, Qt.CheckState.Checked if item_key in layers else Qt.CheckState.Unchecked)
 
     def _set_all(self, checked):
@@ -1081,11 +1084,12 @@ class LayerSelectionWidget(QWidget):
         self._combo.setCurrentIndex(0)  # switch to custom
 
     def selected_layers(self) -> set[str]:
-        """Cles simples des couches cochees (grisees comprises) ;
-        v_form_lists toujours incluse."""
+        """Cles simples des couches cochees, jamais celles deja chargees
+        (T9-c2b : filtre sur _existing, pas sur la case) ; v_form_lists
+        toujours incluse."""
         result = {"v_form_lists"}  # toujours inclus
         for key, item in self._items.items():
-            if item.checkState(0) == Qt.CheckState.Checked:
+            if key not in self._existing and item.checkState(0) == Qt.CheckState.Checked:
                 result.add(key)
         return result
 
@@ -1202,7 +1206,11 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     Les entrees operateur sont lues dans operator.schema et rangees dans le
     groupe de l'operateur ; les entrees communes, chargees une seule fois
     quel que soit le nombre d'operateurs, dans « Commun ». Une couche deja
-    presente (meme schema.table, meme typename WFS) est reprise telle quelle.
+    presente (meme schema.table, meme typename WFS) est reprise telle quelle :
+    jamais restylee (decision T9-c2b, les retouches de symbologie sont
+    gardees), mais les couches du catalogue deja presentes pour cet operateur
+    et les couches communes presentes entrent dans les relations, pour
+    qu'une couche nouvelle soit reliee a une couche deja la.
     L'operateur n'entre dans l'identite du projet (stamp_project) que si
     une de ses couches operateur est ajoutee (juste avant son addMapLayer)
     ou deja presente ; version et plugin sont toujours ecrits.
@@ -1227,11 +1235,25 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     groups = {}
     existing = _existing_layer_index(project)
 
+    # Couches du catalogue deja presentes pour cet operateur et couches
+    # communes presentes : reliees, jamais restylees (T9-c2b).
+    present = {}
+    for entry in catalog:
+        layer = existing.get(_catalog_table_id(entry))
+        if layer is not None:
+            present[layer_key(entry[0], entry[2])] = layer
+    stamped = False
+    if any(base_key(key) in OPERATOR_KEYS for key in present):
+        # Deja presente : l'operateur est dans le projet (T2-c3) ; avant tout
+        # addMapLayer, l'ordre n'est pas en jeu.
+        stamp_project(operator, suffix)
+        stamped = True
+
     # -- Charger les couches (dans l'ordre du catalogue) -------------------
     loaded = {}  # layer_key ("cables@orange", "interventions") → couche
+    added = {}   # couches ajoutees par cet appel : les seules restylees
     count = 0
     skipped = 0
-    stamped = False
 
     # Iterer dans l'ordre du catalogue, pas dans l'ordre du set
     for entry in catalog:
@@ -1242,14 +1264,8 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         lkey = layer_key(key, schema)
 
         # Eviter les doublons : reprendre la couche existante (relations)
-        present = existing.get(_catalog_table_id(entry))
-        if present is not None:
-            if key in OPERATOR_KEYS and not stamped:
-                # Deja presente : l'operateur est dans le projet (T2-c3) ;
-                # aucun addMapLayer ici, l'ordre n'est pas en jeu.
-                stamp_project(operator, suffix)
-                stamped = True
-            loaded[lkey] = present
+        if lkey in present:
+            loaded[lkey] = present[lkey]
             skipped += 1
             continue
 
@@ -1283,6 +1299,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
             group.addLayer(layer)
 
         loaded[lkey] = layer
+        added[lkey] = layer
         count += 1
 
     if skipped:
@@ -1292,22 +1309,25 @@ def init_project(conn_params: dict, password: str, selected: set[str],
          f"version={WYRE_PROJECT_VERSION} plugin={_plugin_version()}")
 
     # -- Relations --------------------------------------------------------
-    ensure_relations(loaded)
+    # Couches nouvelles ET deja presentes : subducts ajoutee se relie a
+    # ducts deja la (T9-c2b).
+    related = {**present, **loaded}
+    ensure_relations(related)
 
-    # -- Styles -----------------------------------------------------------
+    # -- Styles (couches ajoutees seulement, T9-c2b) ------------------------
     # 1. Styles par defaut depuis la BDD (prioritaires)
     db_styled: set[str] = set()
-    if apply_styles:
-        db_styled = _apply_styles_from_db(conn_params, password, loaded)
+    if apply_styles and added:
+        db_styled = _apply_styles_from_db(conn_params, password, added)
     # 2. Styles embarques uniquement pour les couches sans style BDD
-    fallback = {k: v for k, v in loaded.items() if k not in db_styled}
+    fallback = {k: v for k, v in added.items() if k not in db_styled}
     if fallback:
         _apply_embedded_styles(fallback)
 
     # Les styles QML contiennent des relation editors (Documents, Splices).
     # Apres le chargement des styles, recreer les relations pour que QGIS
     # les lie correctement aux widgets du formulaire.
-    ensure_relations(loaded)
+    ensure_relations(related)
 
     # -- Basemaps ---------------------------------------------------------
     if add_basemap and selected_basemaps:

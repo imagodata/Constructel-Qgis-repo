@@ -3859,17 +3859,21 @@ class ConstructelBridgePlugin:
         *operator*, les fonds de plan *basemaps*, puis traductions, sources
         des listes de valeurs, hooks d'edition et lecture seule. Memorise
         l'operateur sur le poste (LAST_OPERATOR_KEY). Ne leve jamais :
-        erreur -> init.error, retour 0. Retourne le nombre de couches
-        ajoutees. Rien de selectionne (v_form_lists seule, toujours incluse
-        par la selection) : ne fait rien et rend 0 (decision K2)."""
-        if not set(selected) - {"v_form_lists"}:
+        erreur -> init.error, retour 0.
+
+        Retourne le nombre de couches ET de fonds de plan ajoutes (un fond
+        seul donne 1, decision T9-c1b) ; 0 si rien de nouveau (avertissement
+        init.nothing_added). Ni couche (v_form_lists seule, toujours incluse
+        par la selection) ni fond demandes : ne fait rien et rend 0 (K2)."""
+        if not set(selected) - {"v_form_lists"} and not basemaps:
             return 0
         try:
-            from .bridge_project_init import init_project
+            from .bridge_project_init import _detect_existing_basemaps, init_project
 
             conn_params, password = self._init_conn_params()
             suffix = self._reorganize_legacy_project(operator, suffix)
 
+            basemaps_before = _detect_existing_basemaps()
             count = init_project(
                 conn_params, password, selected,
                 add_basemap=bool(basemaps),
@@ -3878,6 +3882,7 @@ class ConstructelBridgePlugin:
                 operator=operator,
                 suffix=suffix,
             )
+            added_basemaps = len(_detect_existing_basemaps() - basemaps_before)
             QgsSettings().setValue(LAST_OPERATOR_KEY, operator.schema)
 
             # Appliquer les traductions i18n
@@ -3888,13 +3893,14 @@ class ConstructelBridgePlugin:
             self._hook_layers()
             self._apply_scope_to_layers()
 
-            self.iface.messageBar().pushMessage(
-                "Constructel Bridge",
-                tr("init.success", count=count),
-                level=Qgis.MessageLevel.Success,
-                duration=5,
-            )
-            return count
+            if count:
+                message, level = tr("init.success", count=count), Qgis.MessageLevel.Success
+            elif added_basemaps:
+                message, level = tr("init.success_basemaps", count=added_basemaps), Qgis.MessageLevel.Success
+            else:
+                message, level = tr("init.nothing_added"), Qgis.MessageLevel.Warning
+            self.iface.messageBar().pushMessage("Constructel Bridge", message, level=level, duration=5)
+            return count + added_basemaps
         except Exception as exc:  # noqa: BLE001 -- jamais bloquant
             QMessageBox.critical(
                 self.iface.mainWindow(),

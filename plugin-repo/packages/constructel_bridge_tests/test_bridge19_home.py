@@ -206,6 +206,69 @@ def test_detected_basemaps_are_exactly_those_add_basemaps_skips(pi, monkeypatch)
     assert names.count("UrbIS FR") == 1 and names.count("OpenStreetMap") == 1
 
 
+# --- init_project : couches deja presentes jamais restylees, mais reliees (T9-c2b) ------
+
+
+def _style_spies(pi, monkeypatch):
+    """Cles de couche passees aux styles base / embarques, appel par appel."""
+    db, embedded = [], []
+    monkeypatch.setattr(pi, "_apply_styles_from_db", lambda _p, _pw, loaded: db.append(set(loaded)) or set())
+    monkeypatch.setattr(pi, "_apply_embedded_styles", lambda loaded: embedded.append(set(loaded)))
+    return db, embedded
+
+
+def test_adding_orange_restyles_no_common_layer_already_present(pi, monkeypatch):
+    project = install_fake_project(pi, monkeypatch)
+    db, embedded = _style_spies(pi, monkeypatch)
+    pi.init_project({}, "", {"cables", "osiris_frozen", "interventions", "v_form_lists"}, operator=WYRE)
+    db.clear(), embedded.clear()
+
+    # Meme si la selection les cite encore (appel direct), les couches communes
+    # et v_form_lists deja chargees ne sont ni rechargees ni restylees.
+    added = pi.init_project({}, "", {"cables", "osiris_frozen", "interventions", "v_form_lists"}, operator=ORANGE)
+
+    assert added == 1 and project.count_pg("osiris", "frozen_zones") == 1
+    assert db == [{"cables@orange"}] and embedded == [{"cables@orange"}]
+
+
+def test_nothing_added_means_no_style_connection(pi, monkeypatch):
+    project = install_fake_project(pi, monkeypatch)
+    project.add_pg("chantier", "interventions")
+    db, embedded = _style_spies(pi, monkeypatch)
+    assert pi.init_project({}, "", {"interventions"}, selected_basemaps={"osm"}, operator=WYRE) == 0
+    assert db == [] and embedded == []
+
+
+def test_new_layer_is_related_to_a_layer_already_present(pi, monkeypatch):
+    project = install_fake_project(pi, monkeypatch)
+    ducts = project.add_pg("wyre", "ducts")
+    project.add_pg("orange", "ducts")                      # autre operateur : jamais relie a wyre
+    docs = project.add_pg("docs", "v_element_documents_list", geom=None, key="link_id")
+    project.writeEntry("bridge", "operator", "wyre")
+    db, embedded = _style_spies(pi, monkeypatch)
+
+    pi.init_project({}, "", {"subducts"}, operator=WYRE)   # ducts et Documents non selectionnes
+
+    rels = project.relationManager().relations()
+    subducts = project.layer("wyre", "subducts")
+    assert rels["subducts_to_duct"].referencingLayerId() == subducts.id()
+    assert rels["subducts_to_duct"].referencedLayerId() == ducts.id()
+    assert rels["docs_element_duct"].referencingLayerId() == docs.id()
+    assert not any(i.endswith("__orange") for i in rels)
+    assert db == [{"subducts@wyre"}] and embedded == [{"subducts@wyre"}]
+
+
+def test_present_operator_layer_enters_identity_without_being_selected(pi, monkeypatch):
+    # T2-c3 (« ajoutee ou deja presente ») avec une selection qui ne cite
+    # plus les couches deja chargees.
+    project = install_fake_project(pi, monkeypatch)
+    project.add_pg("orange", "cables")
+    pi.init_project({}, "", {"interventions"}, operator=ORANGE)
+    assert pi.get_bridge_info()["operators"] == ["orange"]
+    pi.init_project({}, "", {"incidents"}, operator=WYRE)    # aucune couche wyre : hors identite
+    assert pi.get_bridge_info()["operators"] == ["orange"]
+
+
 # --- doublures de widgets (LayerSelectionWidget, HomeDialog) ------------------------------
 
 
@@ -450,7 +513,8 @@ def _checked(item):
 
 
 def _greyed(item):
-    return item.disabled and _checked(item) and not item.flag_bits & _ITEM_FLAG.ItemIsUserCheckable
+    """Deja chargee (T9-c2b) : desactivee, decochee, non cochable."""
+    return item.disabled and item.state == _CHECK.Unchecked and not item.flag_bits & _ITEM_FLAG.ItemIsUserCheckable
 
 
 def test_selection_greys_operator_layers_of_that_operator_only(sel):
@@ -520,8 +584,8 @@ def test_template_is_reapplied_when_the_operator_changes(sel):
     widget._items["subducts"].setCheckState(0, _CHECK.Checked)   # hors modele, oublie au changement
     widget.set_operator("orange", "Orange")
     checked = {k for k, item in widget._items.items() if _checked(item)}
-    assert checked == (sel.TEMPLATES["infra"]["layers"] & set(widget._items)) | {"cables"}
-    assert _greyed(widget._items["cables"])
+    assert checked == (sel.TEMPLATES["infra"]["layers"] & set(widget._items)) - {"cables"}
+    assert _greyed(widget._items["cables"]) and "cables" not in widget.selected_layers()
 
 
 def test_manual_selection_survives_an_operator_change(sel):
@@ -533,19 +597,34 @@ def test_manual_selection_survives_an_operator_change(sel):
         widget._items[key].setCheckState(0, _CHECK.Checked)
     assert widget._combo.currentData() == "custom"
     widget.set_operator("orange", "Orange")
-    assert {k for k, item in widget._items.items() if _checked(item)} == {"subducts", "incidents", "zone_mro"}
+    assert {k for k, item in widget._items.items() if _checked(item)} == {"subducts", "incidents"}
+    assert _greyed(widget._items["zone_mro"])
 
 
-def test_select_all_and_none_leave_loaded_layers_checked(sel):
+def test_select_all_and_none_never_select_loaded_layers(sel):
     sel.project.add_pg("chantier", "interventions")
     widget = sel.LayerSelectionWidget()
     widget.set_operator("wyre", "Wyre")
     widget._btn_none.clicked.emit(False)
-    assert {k for k, item in widget._items.items() if _checked(item)} == {"interventions"}
+    assert {k for k, item in widget._items.items() if _checked(item)} == set()
     assert widget._combo.currentData() == "custom"
     widget._btn_all.clicked.emit(False)
-    assert all(_checked(item) for item in widget._items.values())
-    assert widget.selected_layers() == set(widget._items)
+    assert {k for k, item in widget._items.items() if _checked(item)} == set(widget._items) - {"interventions"}
+    assert _greyed(widget._items["interventions"])
+    assert widget.selected_layers() == set(widget._items) - {"interventions"}
+
+
+def test_loaded_layer_is_never_selected_even_if_its_box_gets_checked(sel):
+    # Qt : ItemIsAutoTristate propage l'etat d'un groupe a ses enfants
+    # desactives ; le filtre porte sur « deja chargee », pas sur la case.
+    sel.project.add_pg("chantier", "interventions")
+    sel.project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))
+    widget = sel.LayerSelectionWidget()
+    widget.set_operator("wyre", "Wyre")
+    widget._items["interventions"].setCheckState(0, _CHECK.Checked)
+    widget._basemap_items["osm"].setCheckState(0, _CHECK.Checked)
+    assert "interventions" not in widget.selected_layers()
+    assert "osm" not in widget.selected_basemaps()
 
 
 def test_selected_layers_always_include_form_lists_and_styles_default_on(sel):
@@ -722,13 +801,20 @@ def test_load_passes_the_selection_and_closes_on_success(home):
     dialog._load_button.clicked.emit(False)
     assert dialog.log[-1] == ("load", WYRE, {"cables", "v_form_lists"}, {"osm"}, False, False)
     assert dialog.closed is True
-    assert QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is False   # case modifiable : memorisee
+    assert QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None   # case non touchee : rien a memoriser
 
 
-def test_load_without_any_layer_added_keeps_the_screen_open(home):
+def test_load_without_anything_added_keeps_the_screen_open_and_redraws(home):   # T9-c1b
     dialog = _open(home, snap(), load_result=0)
+    old = dialog._body
+    dialog.snapshots.append(snap(counts=Counts({"wyre": 2}, 0, 1)))   # ex. reorganisation 1.8, fond deja la
     dialog._load_button.clicked.emit(False)
-    assert dialog.log[-1][0] == "load" and dialog.closed is False
+    assert dialog.log[-2][0] == "load" and dialog.log[-1] == "snapshot"
+    assert dialog.closed is False and old.deleted and dialog._body is not old
+    assert dialog._summary_label.text() == " · ".join([
+        home.tr("home.loaded_operator", operator="Wyre", count=2), home.tr("home.loaded_basemaps", count=1)])
+    assert dialog._load_button.text() == home.tr("home.btn_add", operator="Wyre")
+    assert (dialog._suffix_box.checked, dialog._suffix_box.enabled) == (False, True)
 
 
 def test_unwanted_basemaps_are_not_passed(home, monkeypatch):
@@ -745,6 +831,25 @@ def test_ticked_suffix_is_passed_and_remembered(home):
     dialog._suffix_box.setChecked(True)
     dialog._load_button.clicked.emit(False)
     assert dialog.log[-1][-1] is True and QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is True
+
+
+def test_ticked_suffix_is_not_remembered_when_nothing_was_loaded(home):   # T9-c3
+    from qgis.core import QgsSettings
+
+    dialog = _open(home, snap(operators=(WYRE,)), load_result=0)
+    dialog._suffix_box.setChecked(True)
+    dialog._load_button.clicked.emit(False)
+    assert dialog.log[-2][-1] is True and QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None
+
+
+def test_project_suffix_choice_is_never_copied_to_the_workstation(home):   # T9-c3
+    from qgis.core import QgsSettings
+
+    dialog = _open(home, snap(operators=(WYRE,), counts=Counts({"wyre": 3}, 0, 0), project_suffix=True))
+    assert (dialog._suffix_box.checked, dialog._suffix_box.enabled) == (True, True)
+    dialog._load_button.clicked.emit(False)
+    assert dialog.log[-1][-1] is True and dialog.closed is True
+    assert QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None
 
 
 def test_forced_suffix_is_passed_but_never_remembered(home):
@@ -991,12 +1096,57 @@ def test_toolbar_click_and_init_menu_open_home(bp18, monkeypatch):    # D15
     assert not hasattr(bp18.ConstructelBridgePlugin, "_on_init_project")
 
 
-def test_load_operator_layers_ignores_an_empty_selection(bp18, pi, monkeypatch, tmp_path):   # K2
+def test_load_operator_layers_ignores_an_empty_request(bp18, pi, monkeypatch, tmp_path):   # K2, T9-c1b
     from qgis.core import QgsSettings
 
     calls = []
     monkeypatch.setattr(pi, "init_project", lambda *a, **k: calls.append(k) or 3)
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
-    assert plugin._load_operator_layers(WYRE, {"v_form_lists"}, {"osm"}, True) == 0
+    assert plugin._load_operator_layers(WYRE, {"v_form_lists"}, set(), True) == 0
     assert plugin._load_operator_layers(WYRE, set(), set(), True, suffix=True) == 0
     assert calls == [] and QgsSettings().value(bo.LAST_OPERATOR_KEY) is None
+
+
+def _project_with_basemap_loader(bp18, pi, monkeypatch, added_layers=0):
+    """FakeProject + init_project factice qui ajoute les fonds demandes
+    absents (comme _add_basemaps) et rend *added_layers*."""
+    project = install_fake_project(pi, monkeypatch)
+    calls = []
+
+    def fake_init(_params, _pw, selected, add_basemap=True, apply_styles=True, selected_basemaps=None, **kw):
+        calls.append((set(selected), set(selected_basemaps or ())))
+        names = {ly.name() for ly in project.mapLayers().values()}
+        for bm in pi.BASEMAPS:
+            if bm["key"] in (selected_basemaps or ()) and bm["name"] not in names:
+                project.addMapLayer(FakeRasterLayer(bm["source"], bm["name"], "wms"))
+        return added_layers
+
+    monkeypatch.setattr(pi, "init_project", fake_init)
+    monkeypatch.setattr(bp18.bridge_sketcher, "apply_all_translations", lambda *a, **k: None)
+    return project, calls
+
+
+def test_basemaps_only_load_counts_the_basemaps(bp18, pi, monkeypatch, tmp_path):   # T9-c1b
+    project, calls = _project_with_basemap_loader(bp18, pi, monkeypatch)
+    project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))   # deja la : non compte
+    plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
+
+    assert plugin._load_operator_layers(WYRE, {"v_form_lists"}, {"osm", "urbis_fr", "google_roads"}, True) == 2
+
+    assert calls == [({"v_form_lists"}, {"osm", "urbis_fr", "google_roads"})]
+    assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.success_basemaps", count=2)
+
+
+def test_layers_and_basemaps_are_both_counted(bp18, pi, monkeypatch, tmp_path):   # T9-c1b
+    _project, _calls = _project_with_basemap_loader(bp18, pi, monkeypatch, added_layers=3)
+    plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
+    assert plugin._load_operator_layers(WYRE, {"cables"}, {"osm"}, True) == 4
+    assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.success", count=3)
+
+
+def test_load_adding_nothing_returns_zero_and_never_says_success(bp18, pi, monkeypatch, tmp_path):   # T9-c1b
+    project, _calls = _project_with_basemap_loader(bp18, pi, monkeypatch)
+    project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))
+    plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
+    assert plugin._load_operator_layers(WYRE, {"cables"}, {"osm"}, True) == 0
+    assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.nothing_added")

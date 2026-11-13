@@ -107,6 +107,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.confirm": "Initialize the current project with all Farois FTTH layers?\n\n"
                         "This will add layers, styles, relations and set CRS to EPSG:31370.",
         "init.success": "Project initialized: {count} layers, styles and relations configured.",
+        "init.success_basemaps": "Basemaps added: {count}.",
+        "init.nothing_added": "No layer added: already in the project or invalid (see the Constructel Bridge log).",
         "init.error": "Initialization error:\n{error}",
         "home.no_operator": "No operator available: ask a Farois administrator for an operator scope.",
         "home.reorganized": "Project reorganized by operator (groups {operators} and Common): save it to keep this organization.",
@@ -465,6 +467,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.confirm": "Initialiser le projet courant avec toutes les couches Farois FTTH ?\n\n"
                         "Cela ajoutera les couches, styles, relations et definira le CRS a EPSG:31370.",
         "init.success": "Projet initialise : {count} couches, styles et relations configures.",
+        "init.success_basemaps": "Fonds de plan ajoutés : {count}.",
+        "init.nothing_added": "Aucune couche ajoutée : déjà dans le projet ou invalide (voir le journal Constructel Bridge).",
         "init.error": "Erreur d'initialisation :\n{error}",
         "home.no_operator": "Aucun opérateur accessible : demande un scope opérateur à un administrateur Farois.",
         "home.reorganized": "Projet réorganisé par opérateur (groupes {operators} et Commun) : enregistre-le pour garder cette organisation.",
@@ -825,6 +829,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.confirm": "Inicializar o projeto atual com todas as camadas Farois FTTH?\n\n"
                         "Isto ira adicionar camadas, estilos, relacoes e definir o CRS para EPSG:31370.",
         "init.success": "Projeto inicializado: {count} camadas, estilos e relacoes configurados.",
+        "init.success_basemaps": "Mapas base adicionados: {count}.",
+        "init.nothing_added": "Nenhuma camada adicionada: já no projeto ou inválida (ver o registo Constructel Bridge).",
         "init.error": "Erro de inicializacao:\n{error}",
         "home.no_operator": "Nenhum operador acessivel: peca um scope de operador a um administrador Farois.",
         "home.reorganized": "Projeto reorganizado por operador (grupos {operators} e Comum): guarde-o para manter esta organizacao.",
