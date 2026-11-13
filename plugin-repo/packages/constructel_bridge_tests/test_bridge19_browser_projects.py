@@ -26,12 +26,14 @@ BE_KEY = "PostgreSQL/connections/be"
 
 class _ProjectsCursor:
     """Curseur de _list_db_projects : enregistre les schemas sondes dans
-    information_schema.tables ; ``missing`` = schemas sans qgis_projects."""
+    information_schema.tables ; ``missing`` = schemas sans qgis_projects,
+    ``failing`` = schemas dont la lecture de qgis_projects leve."""
 
-    def __init__(self, missing=()):
+    def __init__(self, missing=(), failing=()):
         self.schemas_probed = []
         self.listed_from = []
         self.missing = set(missing)
+        self.failing = set(failing)
         self.description = [("name",), ("description",), ("updated",), ("schema",)]
         self._one = None
         self._all = []
@@ -43,6 +45,8 @@ class _ProjectsCursor:
             self._one = (params[0] not in self.missing,)
         elif "qgis_projects" in sql:
             schema = params[0]
+            if schema in self.failing:
+                raise RuntimeError(f"permission denied for table qgis_projects ({schema})")
             self.listed_from.append(schema)
             self._all = [(f"projet_{schema}", "", "", schema)]
 
@@ -207,6 +211,43 @@ def test_liste_projets_saute_un_schema_sans_table(plugin, fake_cursor):
     results = plugin._list_db_projects()
     assert [r["schema"] for r in results] == ["wyre", "public"]
     assert fake_cursor.listed_from == ["wyre", "public"]
+
+
+def _record_message_boxes(bp18, monkeypatch):
+    shown = []
+    for kind in ("information", "warning"):
+        monkeypatch.setattr(bp18.QMessageBox, kind,
+                            staticmethod(lambda *a, kind=kind, **k: shown.append((kind, a[2]))), raising=False)
+    return shown
+
+
+def test_liste_projets_un_schema_en_echec_ne_masque_pas_les_autres(bp18, plugin, fake_cursor, monkeypatch):
+    # Relecture finale M1 : un schema illisible est journalise et saute, les
+    # autres restent listes (avant : toute la liste etait remplacee par une erreur).
+    from qgis.core import QgsMessageLog
+
+    shown = _record_message_boxes(bp18, monkeypatch)
+    plugin._operators = [WYRE, ORANGE]
+    fake_cursor.failing = {"orange"}
+    QgsMessageLog._messages.clear()
+
+    results = plugin._list_db_projects()
+
+    assert [r["schema"] for r in results] == ["wyre", "public"]
+    assert shown == []
+    assert any("orange" in m[0] and "permission denied" in m[0] for m in QgsMessageLog._messages)
+
+
+def test_liste_projets_tous_les_schemas_en_echec_signale_l_erreur(bp18, plugin, fake_cursor, monkeypatch):
+    shown = _record_message_boxes(bp18, monkeypatch)
+    plugin._operators = [WYRE]
+    fake_cursor.failing = {"wyre", "public"}
+
+    assert plugin._list_db_projects() is None
+    assert [kind for kind, _text in shown] == ["warning"]
+    # Premiere erreur rencontree : celle du schema operateur, liste avant public.
+    assert shown[0][1] == bp18.tr("project.list_error",
+                                  error="permission denied for table qgis_projects (wyre)")
 
 
 def test_liste_projets_repli_sans_operateur(plugin, fake_cursor):

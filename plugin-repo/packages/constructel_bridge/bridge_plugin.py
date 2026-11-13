@@ -4223,38 +4223,52 @@ class ConstructelBridgePlugin:
         """Interroge PostgreSQL pour lister les projets QGIS stockes.
 
         Cherche la table ``qgis_projects`` dans les schemas des operateurs
-        utilisables et dans public.
+        utilisables et dans public. Un schema en echec est journalise et
+        saute, les autres restent listes (relecture finale M1) ; l'erreur
+        n'est affichee que si aucun projet n'a pu etre liste.
         """
         cur = self._conn.cursor()
         try:
             results: list[dict] = []
+            errors: list[Exception] = []
             for schema in self._project_schemas():
-                cur.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables
-                        WHERE table_schema = %s AND table_name = 'qgis_projects'
+                try:
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM information_schema.tables
+                            WHERE table_schema = %s AND table_name = 'qgis_projects'
+                        )
+                        """,
+                        (schema,),
                     )
-                    """,
-                    (schema,),
-                )
-                if not cur.fetchone()[0]:
-                    continue
-                cur.execute(
-                    f"""
-                    SELECT name,
-                           metadata->>'description' AS description,
-                           metadata->>'last_modified_time' AS updated,
-                           %s AS schema
-                    FROM "{schema}".qgis_projects
-                    ORDER BY name
-                    """,
-                    (schema,),
-                )
-                columns = [desc[0] for desc in cur.description]
-                results.extend(dict(zip(columns, row)) for row in cur.fetchall())
+                    if not cur.fetchone()[0]:
+                        continue
+                    cur.execute(
+                        f"""
+                        SELECT name,
+                               metadata->>'description' AS description,
+                               metadata->>'last_modified_time' AS updated,
+                               %s AS schema
+                        FROM "{schema}".qgis_projects
+                        ORDER BY name
+                        """,
+                        (schema,),
+                    )
+                    columns = [desc[0] for desc in cur.description]
+                    results.extend(dict(zip(columns, row)) for row in cur.fetchall())
+                except Exception as exc:  # noqa: BLE001 -- un schema illisible ne masque pas les autres
+                    errors.append(exc)
+                    self._log(f"list_db_projects : schema {schema} ignore ({exc})", Qgis.MessageLevel.Warning)
 
             if not results:
+                if errors:  # rien de liste et au moins un schema en echec
+                    QMessageBox.warning(
+                        self.iface.mainWindow(),
+                        tr("project.title"),
+                        tr("project.list_error", error=errors[0]),
+                    )
+                    return None
                 QMessageBox.information(
                     self.iface.mainWindow(),
                     tr("project.title"),
