@@ -141,5 +141,6 @@ def test_190_changelog_is_ascii_and_mentions_the_delivered_features():
     assert entry.isascii(), [c for c in entry if ord(c) > 127]
     assert "\n" not in entry
     for word in ("accueil", "commun", "suffixe", "diagnostic", "hors connexion", "navigateur qgis",
-                 "projet enregistre", "lecture seule", "prerequis"):
+                 "projet enregistre", "lecture seule", "ref.operateurs", "current_gis_operator_codes",
+                 "repli sur le comportement 1.8"):
         assert word in entry.lower(), word

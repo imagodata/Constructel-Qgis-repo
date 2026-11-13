@@ -1300,7 +1300,7 @@ Expected: FAIL sur la seule version (les clés existent depuis leurs tâches).
 
 - [ ] **Step 3: Mettre `version=1.9.0` et l'entrée de changelog**
 
-Contenu : écran d'accueil au clic (connecté ou non) ; choix d'un opérateur parmi ceux de la session (schéma lisible, croisé avec les scopes), puis ajout d'un deuxième ; groupe par opérateur et groupe Commun ; suffixe de l'opérateur optionnel avec un seul opérateur, obligatoire dès le deuxième ; styles, listes de valeurs et infobulles visent les couches du même opérateur (style Wyre en repli) ; lecture seule et périmètre sur tous les schémas opérateurs ; réorganisation des projets 1.8 au clic « Ajouter » seulement ; check-in, diagnostic et langue hors connexion ; « Statut » ouvre le Diagnostic ; aucun nouveau prérequis serveur.
+Le texte de l'entrée vit dans `P/metadata.txt` (source unique, ASCII) ; ne pas le recopier ici. Il couvre toute la livraison, tâche 9b comprise (navigateur QGIS et projets enregistrés suivent les opérateurs utilisables). Côté serveur, la formulation exacte est : lit `ref.operateurs` et `public.current_gis_operator_codes` (Farois mig 530/537/541) ; `ref.operateurs` illisible → repli sur le comportement 1.8 (Wyre seul) ; sans `current_gis_operator_codes`, seul le filtre « schéma lisible » s'applique.
 
 - [ ] **Step 4: Suite complète**
 
@@ -1309,7 +1309,7 @@ Expected: `N passed`, N > 538, 0 échec.
 
 - [ ] **Step 5: Recette manuelle (QGIS 3.28 et une 4.x), consignée dans la PR**
 
-Sans réseau : l'écran s'ouvre, Check-in sans page Profil, Diagnostic termine en ≤ 3 s par vérification avec « serveur injoignable », Langue OK. Connecté avec un seul scope : opérateur affiché en texte, case du suffixe décochée par défaut. Connecté avec deux scopes : boutons exclusifs, chargement Wyre puis Orange, groupes Wyre / Orange / Commun / Basemaps / Référence, couches communes et fonds non dupliqués, suffixes posés, formulaire d'un câble Orange qui liste les POP Orange, infobulle d'une zone drop Orange. Projet 1.8 : rien ne change à l'ouverture, réorganisation au clic « Ajouter ». Compte VIEWER : couches Orange en lecture seule.
+La procédure et les résultats attendus vivent dans `docs/guides/RECETTE_BRIDGE19_ACCUEIL_OPERATEUR_MANUELLE.md` (source unique, à copier cochée dans la PR). Elle couvre le parcours hors connexion, un seul opérateur, Wyre puis Orange, les projets 1.8 (FR/EN/PT), le projet Orange seul, la langue, le Check-in, le Diagnostic, le navigateur QGIS et « Projet enregistré » (tâche 9b), la lecture seule d'un compte VIEWER, et les points non vérifiables sur stubs.
 
 - [ ] **Step 6: Commit**
 
