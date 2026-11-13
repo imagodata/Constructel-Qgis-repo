@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** le clic principal du bouton Constructel Bridge ouvre un écran d'accueil utilisable connecté ou non, qui charge les couches d'un opérateur des scopes de la session (puis d'un deuxième), range chaque opérateur dans son groupe et le reste dans « Commun », et offre check-in, diagnostic et langue hors connexion.
+**Goal:** le clic principal du bouton Constructel Bridge ouvre un écran d'accueil utilisable connecté ou non, qui charge les couches d'un opérateur des scopes de la session (puis d'un deuxième), range chaque opérateur dans son groupe et le reste dans « Commun », et offre check-in, diagnostic et langue hors connexion. Le navigateur QGIS et « Projet enregistré » suivent les mêmes opérateurs utilisables (tâche 9b, spec § 6.7).
 
 **Architecture:** la logique sans QGIS va dans des modules purs testés sans runtime (`bridge_operators.py`, `bridge_home_model.py`, `bridge_diagnostic.py`, même patron que `bridge_nominatif.py`). `LAYER_CATALOG` garde `wyre` comme schéma modèle des entrées opérateur ; `catalog_for(schema)` le substitue au chargement et les couches chargées sont indexées par `cle@schema`. Tout ciblage « même opérateur » (relations, ValueRelation, `get_feature`, styles, verrou) passe par le **schéma de la source et l'identifiant de couche**, jamais par un nom affiché : avec un seul opérateur, les noms peuvent rester sans suffixe.
 
 **Tech Stack:** PyQGIS 3.28 → 4.x (Qt5/Qt6), Python 3.9, psycopg2, pytest sur stubs (`uvx pytest`).
 
-**Spec:** `docs/superpowers/specs/2026-11-12-bridge-accueil-operateur-design.md` (version avec « suffixe optionnel avec un seul opérateur », § 6.4, § 6.5, § 9.5) et la maquette `docs/superpowers/specs/2026-11-12-bridge-accueil-operateur-maquette.html` (version 3).
+**Spec:** `docs/superpowers/specs/2026-11-12-bridge-accueil-operateur-design.md` (version avec « suffixe optionnel avec un seul opérateur », § 6.4, § 6.5, § 6.7, § 9.5) et la maquette `docs/superpowers/specs/2026-11-12-bridge-accueil-operateur-maquette.html` (version 3).
 
 Conventions de ce plan : `P` = `plugin-repo/packages/constructel_bridge`, `T` = `plugin-repo/packages/constructel_bridge_tests`. Toutes les commandes se lancent à la racine du worktree (`~/projects/qgis_repo/.worktrees/feat-bridge-accueil-operateur`) après `export PATH="$HOME/.local/bin:$PATH"`.
 
@@ -58,7 +58,7 @@ Conventions de ce plan : `P` = `plugin-repo/packages/constructel_bridge`, `T` = 
 
 | Fichier | Rôle |
 |---|---|
-| Create `P/bridge_operators.py` | Pur : registre et filtre des opérateurs, constantes du catalogue opérateur, clés `cle@schema`, identité du projet, règle du suffixe, noms suffixés, sources de style, réécriture `get_feature` / `LayerSource`. |
+| Create `P/bridge_operators.py` | Pur : registre et filtre des opérateurs, constantes du catalogue opérateur, clés `cle@schema`, identité du projet, règle du suffixe, noms suffixés, sources de style, réécriture `get_feature` / `LayerSource` ; `browser_schemas` / `project_schemas` (tâche 9b). |
 | Create `P/bridge_home_model.py` | Pur : `HomeSnapshot`, `HomeState`, `HomeActions`, `home_state()`, `suffix_state()`. |
 | Create `P/bridge_home.py` | Qt : `HomeDialog` (en-tête, grande tuile, tuiles secondaires). |
 | Create `P/bridge_diagnostic.py` | Pur : vérifications, sonde serveur, lecture de `plugins.xml`. |
@@ -67,11 +67,12 @@ Conventions de ce plan : `P` = `plugin-repo/packages/constructel_bridge`, `T` = 
 | Modify `P/bridge_sketcher.py` | Suffixe, traduction des groupes imbriqués, `retarget_operator_references`. |
 | Modify `P/bridge_nominatif.py` | `should_lock_layer(..., operator_schemas)`. |
 | Modify `P/bridge_onboarding.py` | `include_profile`, `install_or_activate_plugin`. |
-| Modify `P/bridge_plugin.py` | Chargement des opérateurs, `_load_operator_layers`, verrou et périmètre multi-schémas, accueil, diagnostic, check-in hors connexion. |
+| Modify `P/bridge_plugin.py` | Chargement des opérateurs, `_load_operator_layers`, verrou et périmètre multi-schémas, accueil, diagnostic, check-in hors connexion ; schémas du navigateur QGIS (`_refresh_browser_schemas`) et des projets enregistrés (`_project_schemas`, tâche 9b). |
 | Modify `P/i18n/translations.py`, `P/i18n/layer_translations.py` | Clés FR/EN/PT, `GROUP_NAMES["Commun"]`. |
-| Modify `P/metadata.txt` | 1.9.0, changelog. |
+| Modify `P/metadata.txt` | 1.9.0, changelog (tâche 10). |
+| Create `docs/guides/RECETTE_BRIDGE19_ACCUEIL_OPERATEUR_MANUELLE.md` | Fiche de recette manuelle QGIS 3.28 et 4.x (tâche 10). |
 | Create `T/fakes19.py` | Doublures d'arbre de couches, de projet, de couches et de relations. |
-| Create `T/test_bridge19_*.py` | Tests de chaque tâche. |
+| Create `T/test_bridge19_*.py` | Tests de chaque tâche, dont `test_bridge19_browser_projects.py` (tâche 9b) et `test_bridge19_i18n.py` (tâche 10). |
 | Modify `T/stubs/qgis/core.py` | `QgsProject.readEntry/writeEntry/customVariables`. |
 | Modify `T/test_bridge18_connect.py`, `T/test_bridge_vr_layername_sync.py` | Doublures enrichies, assertions inchangées. |
 
@@ -1257,6 +1258,8 @@ git commit -m "feat(bridge): navigateur QGIS et projets enregistrés suivent les
 **Files:**
 - Create: `T/test_bridge19_i18n.py`
 - Modify: `P/metadata.txt` (`version=1.9.0`, entrée `v1.9.0` en tête de `changelog=`, ASCII comme les entrées précédentes)
+- Modify: `P/i18n/translations.py` (suppression des clés `status.title`, `init.title`, `init.title_add`, sans appelant depuis les tâches 8 et 9)
+- Create: `docs/guides/RECETTE_BRIDGE19_ACCUEIL_OPERATEUR_MANUELLE.md` (recette manuelle QGIS 3.28 et 4.x ; navigateur QGIS et projets enregistrés de la tâche 9b inclus dans le changelog et la recette)
 
 **Interfaces:**
 - Consumes: toutes les clés `home.*`, `diag.*`, `onboard.action.profile_offline` des tâches 2 à 9 ; `GROUP_NAMES["Commun"]`.
@@ -1297,7 +1300,7 @@ Expected: FAIL sur la seule version (les clés existent depuis leurs tâches).
 
 - [ ] **Step 3: Mettre `version=1.9.0` et l'entrée de changelog**
 
-Contenu : écran d'accueil au clic (connecté ou non) ; choix d'un opérateur parmi ceux de la session (schéma lisible, croisé avec les scopes), puis ajout d'un deuxième ; groupe par opérateur et groupe Commun ; suffixe de l'opérateur optionnel avec un seul opérateur, obligatoire dès le deuxième ; styles, listes de valeurs et infobulles visent les couches du même opérateur (style Wyre en repli) ; lecture seule et périmètre sur tous les schémas opérateurs ; réorganisation des projets 1.8 au clic « Ajouter » seulement ; check-in, diagnostic et langue hors connexion ; « Statut » ouvre le Diagnostic ; aucun nouveau prérequis serveur.
+Le texte de l'entrée vit dans `P/metadata.txt` (source unique, ASCII) ; ne pas le recopier ici. Il couvre toute la livraison, tâche 9b comprise (navigateur QGIS et projets enregistrés suivent les opérateurs utilisables). Côté serveur, la formulation exacte est : lit `ref.operateurs` et `public.current_gis_operator_codes` (Farois mig 530/537/541) ; `ref.operateurs` illisible → repli sur le comportement 1.8 (Wyre seul) ; sans `current_gis_operator_codes`, seul le filtre « schéma lisible » s'applique.
 
 - [ ] **Step 4: Suite complète**
 
@@ -1306,7 +1309,7 @@ Expected: `N passed`, N > 538, 0 échec.
 
 - [ ] **Step 5: Recette manuelle (QGIS 3.28 et une 4.x), consignée dans la PR**
 
-Sans réseau : l'écran s'ouvre, Check-in sans page Profil, Diagnostic termine en ≤ 3 s par vérification avec « serveur injoignable », Langue OK. Connecté avec un seul scope : opérateur affiché en texte, case du suffixe décochée par défaut. Connecté avec deux scopes : boutons exclusifs, chargement Wyre puis Orange, groupes Wyre / Orange / Commun / Basemaps / Référence, couches communes et fonds non dupliqués, suffixes posés, formulaire d'un câble Orange qui liste les POP Orange, infobulle d'une zone drop Orange. Projet 1.8 : rien ne change à l'ouverture, réorganisation au clic « Ajouter ». Compte VIEWER : couches Orange en lecture seule.
+La procédure et les résultats attendus vivent dans `docs/guides/RECETTE_BRIDGE19_ACCUEIL_OPERATEUR_MANUELLE.md` (source unique, à copier cochée dans la PR). Elle couvre le parcours hors connexion, un seul opérateur, Wyre puis Orange, les projets 1.8 (FR/EN/PT), le projet Orange seul, la langue, le Check-in, le Diagnostic, le navigateur QGIS et « Projet enregistré » (tâche 9b), la lecture seule d'un compte VIEWER, et les points non vérifiables sur stubs.
 
 - [ ] **Step 6: Commit**
 
@@ -1319,7 +1322,7 @@ git commit -m "feat(bridge): Constructel Bridge 1.9.0, i18n et changelog"
 
 ## Self-review (faite à la rédaction)
 
-- **Couverture de la spec** : O1 → T9 ; O2 → T7, T8, T9 (Langue existante) ; O3 → T1, T2, T9 ; O4 → T2, T6, T9 ; O5 → T2, T3 ; O6 → T5 ; § 4 anti-objectifs : capacités du dialogue conservées (T9, `LayerSelectionWidget`), opérateur hors scopes jamais montré (T1, T9), pas de doublon (T2, T9), interface non bloquante (T8) ; § 6.4 suffixe optionnel / obligatoire → T3, T6, T9 ; § 6.5 → T6 ; § 7 clés, identité, lecture seule, périmètre, styles, résolution par couche → T2 à T5 ; § 7 menu déroulant → T8, T9 ; § 9 points 1 à 6 → T2, T9, T4, T1, T3/T9, T10.
+- **Couverture de la spec** : O1 → T9 ; O2 → T7, T8, T9 (Langue existante) ; O3 → T1, T2, T9 ; O4 → T2, T6, T9 ; O5 → T2, T3 ; O6 → T5 ; § 4 anti-objectifs : capacités du dialogue conservées (T9, `LayerSelectionWidget`), opérateur hors scopes jamais montré (T1, T9), pas de doublon (T2, T9), interface non bloquante (T8) ; § 6.4 suffixe optionnel / obligatoire → T3, T6, T9 ; § 6.5 → T6 ; § 7 clés, identité, lecture seule, périmètre, styles, résolution par couche → T2 à T5 ; § 6.7 → T9b ; § 7 menu déroulant → T8, T9 ; § 9 points 1 à 6 → T2, T9, T4, T1, T3/T9, T10.
 - **Cohérence des noms** : `OperatorInfo`, `layer_key`, `base_key`, `stamp_project(operator, suffix)`, `_load_operator_layers(operator, selected, basemaps, apply_styles, suffix)`, `install_or_activate_plugin(pid, upgrade)`, `LoadedCounts` sont identiques d'une tâche à l'autre.
 - **Ordre** : chaque tâche n'utilise que des interfaces des tâches précédentes. Les tests existants gardent leurs assertions : les doublures enrichies sont listées (T1, T4, T5) et `LAYER_CATALOG` ne change pas.
-- **Hors périmètre, signalé** : connexion du navigateur QGIS limitée à `wyre,osiris` (`_PG_CONNECTIONS`), `_PROJECT_SCHEMAS = ("wyre", "public")`, `search_path=wyre,public` de la connexion psycopg2 du plugin, éditeurs de relations d'un opérateur secondaire (D3).
+- **Hors périmètre, signalé** : `search_path=wyre,public` de la connexion psycopg2 du plugin, éditeurs de relations d'un opérateur secondaire (D3). Le navigateur QGIS (`_PG_CONNECTIONS`) et `_PROJECT_SCHEMAS`, d'abord signalés ici, ont été repris dans le périmètre par la tâche 9b (spec § 6.7, décision Simon du 12/11).
