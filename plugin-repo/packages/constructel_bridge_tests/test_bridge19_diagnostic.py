@@ -193,6 +193,34 @@ def pki(tmp_path_factory):
     return types.SimpleNamespace(ca=str(d / "ca.crt"), server_context=context)
 
 
+_SERVER_EXT_NO_KEY_IDS = """basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1
+subjectKeyIdentifier = none
+authorityKeyIdentifier = none
+"""
+
+
+@pytest.fixture(scope="module")
+def pki_no_key_ids(tmp_path_factory):
+    """CA de test + certificat serveur SANS Authority Key Identifier : valide
+    pour libpq (verify-full), refuse par OpenSSL en mode VERIFY_X509_STRICT."""
+    d = tmp_path_factory.mktemp("diag_pki_lax")
+    cnf, ext = d / "ca.cnf", d / "server.ext"
+    cnf.write_text(_CA_CNF)
+    ext.write_text(_SERVER_EXT_NO_KEY_IDS)
+    ec = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes")
+    _openssl("req", "-x509", "-config", cnf, *ec, "-days", "3650", "-keyout", d / "ca.key", "-out", d / "ca.crt")
+    _openssl("req", "-new", "-config", cnf, *ec, "-subj", "/CN=diag-test-lax",
+             "-keyout", d / "server.key", "-out", d / "server.csr")
+    _openssl("x509", "-req", "-in", d / "server.csr", "-CA", d / "ca.crt", "-CAkey", d / "ca.key",
+             "-CAcreateserial", "-days", "3650", "-extfile", ext, "-out", d / "server.crt")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(d / "server.crt"), str(d / "server.key"))
+    return types.SimpleNamespace(ca=str(d / "ca.crt"), server_context=context)
+
+
 def _postgres_tls(context, outcome):
     """Serveur PostgreSQL minimal : SSLRequest -> 'S' -> poignee de main TLS.
     *outcome* recoit "ok" ou l'erreur cote serveur (certificat refuse par le
@@ -434,6 +462,70 @@ def test_probe_server_checks_the_host_name(pki):
         outcome = bd.probe_server("localhost", port, pki.ca, timeout=2.0)
     assert outcome[0] == "cert_invalid"
     assert "localhost" in outcome[1] or "mismatch" in outcome[1].lower()
+
+
+def test_probe_server_clears_the_strict_x509_flag_of_python_313(pki_no_key_ids, monkeypatch):
+    # Relecture finale M7 : sous Python >= 3.13, create_default_context active
+    # VERIFY_X509_STRICT, que libpq n'applique pas. Un certificat accepte par
+    # libpq (ici sans Authority Key Identifier) ne doit pas etre annonce refuse.
+    contexts = []
+    real_create = ssl.create_default_context
+
+    def python313_context(*args, **kwargs):
+        context = real_create(*args, **kwargs)
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(bd.ssl, "create_default_context", python313_context)
+    server_side = []
+    with _server(_postgres_tls(pki_no_key_ids.server_context, server_side)) as port:
+        outcome = bd.probe_server("127.0.0.1", port, pki_no_key_ids.ca, timeout=2.0)
+    assert outcome == ("ok", "")
+    assert len(contexts) == 1 and not contexts[0].verify_flags & ssl.VERIFY_X509_STRICT
+
+
+def _postgres_tls_close(context, outcome):
+    """Comme _postgres_tls, puis attend la fin de session TLS du client :
+    "close_notify" si le client ferme proprement (unwrap), sinon l'erreur
+    (EOF brutal : la ligne « SSL error » du journal PostgreSQL)."""
+    def handler(conn, stop):
+        assert _recv_exact(conn, 8) == SSL_REQUEST
+        conn.sendall(b"S")
+        try:
+            with context.wrap_socket(conn, server_side=True, suppress_ragged_eofs=False) as tls:
+                data = tls.recv(1)
+                outcome.append("close_notify" if data == b"" else data)
+        except (ssl.SSLError, OSError) as exc:
+            outcome.append(exc)
+    return handler
+
+
+def test_probe_server_closes_the_tls_session_cleanly(pki):
+    # Relecture finale M7 : close_notify avant la fermeture du socket ; sans
+    # lui, PostgreSQL journalise une erreur SSL a chaque Diagnostic.
+    server_side = []
+    with _server(_postgres_tls_close(pki.server_context, server_side)) as port:
+        outcome = bd.probe_server("127.0.0.1", port, pki.ca, timeout=2.0)
+    assert outcome == ("ok", "")
+    assert server_side == ["close_notify"]
+
+
+def test_probe_server_tls_shutdown_stays_within_the_deadline(pki):   # K9
+    # Le serveur ne repond jamais au close_notify : unwrap est borne par
+    # l'echeance restante, l'issue reste "ok".
+    def mute_after_handshake(conn, stop):
+        assert _recv_exact(conn, 8) == SSL_REQUEST
+        conn.sendall(b"S")
+        with pki.server_context.wrap_socket(conn, server_side=True):
+            stop.wait(10)
+
+    with _server(mute_after_handshake) as port:
+        start = time.monotonic()
+        outcome = bd.probe_server("127.0.0.1", port, pki.ca, timeout=1.0)
+        elapsed = time.monotonic() - start
+    assert outcome == ("ok", "")
+    assert elapsed < 1.4
 
 
 def test_probe_server_missing_ca_file_is_cert_invalid():

@@ -270,6 +270,10 @@ def probe_server(host: str, port: int, cafile: str, timeout: float = NETWORK_TIM
             context = ssl.create_default_context(cafile=cafile)  # CERT_REQUIRED, check_hostname
         except OSError as exc:  # CA du paquet absente ou illisible (ssl.SSLError compris)
             return "cert_invalid", _error_text(exc)
+        if hasattr(ssl, "VERIFY_X509_STRICT"):
+            # Python >= 3.13 l'active par defaut ; libpq ne l'applique pas :
+            # sans ce retrait, faux « certificat refuse » (AKI absent...).
+            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
         try:
             sock = context.wrap_socket(sock, server_hostname=host, do_handshake_on_connect=False)
             sock.settimeout(deadline.remaining())
@@ -278,10 +282,23 @@ def probe_server(host: str, port: int, cafile: str, timeout: float = NETWORK_TIM
             return "cert_invalid", _error_text(exc)
         except (OSError, ValueError) as exc:
             return "unreachable", _error_text(exc)
+        _shutdown_tls(sock, deadline)
         return "ok", ""
     finally:
         if sock is not None:
             sock.close()
+
+
+def _shutdown_tls(sock, deadline: _Deadline) -> None:
+    """Fin de session TLS propre (close_notify) avant la fermeture du socket :
+    sans elle, PostgreSQL journalise une erreur SSL a chaque Diagnostic.
+    Bornee par l'echeance restante (K9) ; un echec (serveur parti, echeance
+    atteinte) ne change pas l'issue de la sonde."""
+    try:
+        sock.settimeout(deadline.remaining())
+        sock.unwrap()
+    except (OSError, ssl.SSLError, ValueError):
+        pass
 
 
 def server_check(host: str, port: int, outcome: str, detail: str) -> Check:
