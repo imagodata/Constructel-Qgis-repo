@@ -68,6 +68,7 @@ from .bridge_operators import (
     FALLBACK_OPERATOR,
     LAST_OPERATOR_KEY,
     LAST_OPERATORS_KEY,
+    OPERATOR_KEYS,
     OPERATORS_QUERY,
     SCOPE_CODES_QUERY,
     SUFFIX_SETTINGS_KEY,
@@ -3938,8 +3939,10 @@ class ConstructelBridgePlugin:
 
             basemaps_before = _detect_existing_basemaps()
             pending_basemaps = set(basemaps)  # premier appel reussi seulement
-            count, loaded, failed, first_error = 0, [], [], None
+            count, failures, loaded, failed, first_error = 0, 0, [], [], None
+            carried = frozenset()  # couches communes d'une entree en echec : reprises par la suivante
             for schema, keys in plan:
+                keys = keys | carried
                 operator = by_schema.get(schema) if schema is not None else None
                 try:
                     if schema is not None and operator is None:
@@ -3953,17 +3956,21 @@ class ConstructelBridgePlugin:
                         suffix=suffix,
                     )
                     pending_basemaps = set()
+                    carried = frozenset()
                     if operator is not None:
                         loaded.append(operator.schema)
                 except Exception as exc:  # noqa: BLE001 -- un operateur en echec n'annule pas les autres
-                    failed.append(operator.label if operator is not None else schema or "Commun")
+                    failures += 1
+                    if schema is not None:  # l'entree sans operateur n'a pas de nom a citer
+                        failed.append(operator.label if operator is not None else schema)
+                    carried = frozenset(keys - OPERATOR_KEYS)
                     first_error = first_error or exc
                     import traceback
                     self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
             added_basemaps = len(_detect_existing_basemaps() - basemaps_before)
             if loaded:
                 QgsSettings().setValue(LAST_OPERATORS_KEY, format_project_operators(loaded))
-            if len(failed) == len(plan) and not count and not added_basemaps:
+            if failures == len(plan) and not count and not added_basemaps:
                 raise first_error
 
             # Appliquer les traductions i18n

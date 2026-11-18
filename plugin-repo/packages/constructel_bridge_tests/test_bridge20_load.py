@@ -165,6 +165,26 @@ def test_basemaps_are_retried_on_the_next_call_when_the_first_operator_fails(bp1
     assert [c["basemaps"] for c in calls] == [{"osm"}, {"osm"}]
 
 
+def test_common_layers_are_retried_on_the_next_operator_when_the_first_fails(bp18, pi, monkeypatch, tmp_path):
+    calls = _spy_init_project(pi, monkeypatch, fail=("wyre",))
+    plugin = _quiet_plugin(bp18, monkeypatch, tmp_path)
+    selection = selection_from_tiles({"zones", "osiris"}, ["wyre", "orange"], {})
+
+    assert plugin._load_selection([WYRE, ORANGE], selection, set(), True) == 1
+
+    assert [c["operator"] for c in calls] == [WYRE, ORANGE]
+    assert "osiris_frozen" in calls[0]["selected"] and "osiris_frozen" in calls[1]["selected"]
+    assert "zone_pop" in calls[1]["selected"]
+
+
+def test_common_layers_are_not_repeated_once_loaded(bp18, pi, monkeypatch, tmp_path):
+    calls = _spy_init_project(pi, monkeypatch, fail=("orange",))
+    plugin = _quiet_plugin(bp18, monkeypatch, tmp_path)
+    selection = selection_from_tiles({"zones", "osiris"}, ["wyre", "orange"], {})
+    plugin._load_selection([WYRE, ORANGE], selection, set(), True)
+    assert "osiris_frozen" in calls[0]["selected"] and "osiris_frozen" not in calls[1]["selected"]
+
+
 def test_every_operator_failing_reports_init_error_and_returns_zero(bp18, pi, monkeypatch, tmp_path):
     from qgis.core import QgsSettings
 
