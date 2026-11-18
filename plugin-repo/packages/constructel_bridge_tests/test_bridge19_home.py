@@ -5,9 +5,9 @@ dans la grande tuile.
   * logique sans Qt (``bridge_home_model``) testee a fond ;
   * ``count_loaded_layers`` / ``_detect_existing_basemaps`` sur le FakeProject
     de fakes19 ;
-  * ``LayerSelectionWidget`` (ex-InitProjectDialog) et ``HomeDialog`` tournent
-    ici sur des doublures de widgets : le rendu Qt reel (arbre a trois etats,
-    mise en page, couleurs) reste a la recette manuelle (tache 10) ;
+  * ``HomeDialog`` tourne ici sur les doublures de widgets de fakes_widgets.py
+    (``LayerSelectionWidget`` : test_bridge20_selection.py) : le rendu Qt reel
+    (mise en page, couleurs) reste a la recette manuelle (tache 10) ;
   * cote plugin, l'ecran est remplace par un enregistreur ; hors connexion,
     des doublures qui echouent si on les touche prouvent que rien ne tente la
     base."""
@@ -39,6 +39,17 @@ from constructel_bridge_tests.fakes19 import (
     FakeRasterLayer,
     install_fake_project,
     load_keys,
+)
+from constructel_bridge_tests.fakes_widgets import (  # noqa: F401  (doublures partagees)
+    _CheckBox,
+    _Dialog,
+    _GroupBox,
+    _Button,
+    _Label,
+    _Layout,
+    _W,
+    _texts,
+    _widgets,
 )
 from constructel_bridge_tests.test_bridge18_connect import _initgui_ready
 from constructel_bridge_tests.test_bridge18_layers import (  # noqa: F401  (pi = fixture)
@@ -191,372 +202,7 @@ def test_present_operator_layer_enters_identity_without_being_selected(pi, monke
     assert pi.get_bridge_info()["operators"] == ["orange"]
 
 
-# --- doublures de widgets (LayerSelectionWidget, HomeDialog) ------------------------------
-
-
-class _Sig:
-    def __init__(self):
-        self.slots = []
-
-    def connect(self, slot):
-        self.slots.append(slot)
-
-    def emit(self, *args):
-        for slot in list(self.slots):
-            slot(*args)
-
-
-class _W:
-    """QWidget factice : etat lisible ; les setters non modelises sont sans effet."""
-
-    def __init__(self, *args, **kwargs):
-        self.layout = None
-        self.enabled = True
-        self.hidden = False
-        self.deleted = False
-        self.tooltip = ""
-
-    def setEnabled(self, enabled):
-        self.enabled = bool(enabled)
-
-    def isEnabled(self):
-        return self.enabled
-
-    def setToolTip(self, text):
-        self.tooltip = text
-
-    def hide(self):
-        self.hidden = True
-
-    def deleteLater(self):
-        self.deleted = True
-
-    def __getattr__(self, name):
-        if name.startswith("set"):
-            return lambda *a, **k: None
-        raise AttributeError(name)
-
-
-class _Label(_W):
-    def __init__(self, text="", *args):
-        super().__init__(*args)
-        self._text = text
-
-    def text(self):
-        return self._text
-
-    def setText(self, text):
-        self._text = text
-
-
-class _Button(_Label):
-    def __init__(self, text="", *args):
-        super().__init__(text, *args)
-        self.clicked = _Sig()
-        self.checkable = False
-        self.checked = False
-
-    def setCheckable(self, checkable):
-        self.checkable = bool(checkable)
-
-    def setChecked(self, checked):
-        self.checked = bool(checked)
-
-    def isChecked(self):
-        return self.checked
-
-
-class _CheckBox(_Button):
-    pass
-
-
-class _GroupBox(_W):
-    def __init__(self, title="", *args):
-        super().__init__(*args)
-        self.title = title
-
-
-class _Dialog(_W):
-    def __init__(self, parent=None):
-        super().__init__()
-        self.parent = parent
-        self.closed = False
-
-    def accept(self):
-        self.closed = True
-
-    def reject(self):
-        self.closed = True
-
-
-class _Layout:
-    def __init__(self, parent=None):
-        self.items = []
-        if parent is not None:
-            parent.layout = self
-
-    def addWidget(self, widget, *_args):
-        self.items.append(widget)
-
-    def addLayout(self, layout, *_args):
-        self.items.append(layout)
-
-    def replaceWidget(self, old, new, *_args):
-        self.items[self.items.index(old)] = new
-
-    def __getattr__(self, name):
-        if name.startswith(("set", "add")):
-            return lambda *a, **k: None
-        raise AttributeError(name)
-
-
-def _widgets(root):
-    """Widgets du sous-arbre de *root* (layouts parcourus), dans l'ordre."""
-    found = []
-
-    def walk(node):
-        if isinstance(node, _Layout):
-            for item in node.items:
-                walk(item)
-            return
-        found.append(node)
-        if getattr(node, "layout", None) is not None:
-            walk(node.layout)
-
-    walk(root)
-    return found
-
-
-def _texts(root):
-    return [w.text() for w in _widgets(root) if isinstance(w, _Label)]
-
-
-# --- LayerSelectionWidget (ex-InitProjectDialog) -----------------------------------------
-
-
-class _Item:
-    def __init__(self, parent, texts):
-        self._text = texts[0]
-        self.children = []
-        self.flag_bits = 0
-        self.state = None
-        self.disabled = False
-        self.value = None
-        self.tip = ""
-        self.expanded = False
-        parent.children.append(self)
-
-    def flags(self):
-        return self.flag_bits
-
-    def setFlags(self, flags):
-        self.flag_bits = flags
-
-    def setCheckState(self, _column, state):
-        self.state = state
-
-    def checkState(self, _column):
-        return self.state
-
-    def setToolTip(self, _column, text):
-        self.tip = text
-
-    def setDisabled(self, disabled):
-        self.disabled = bool(disabled)
-
-    def setData(self, _column, _role, value):
-        self.value = value
-
-    def data(self, _column, _role):
-        return self.value
-
-    def setExpanded(self, expanded):
-        self.expanded = bool(expanded)
-
-    def text(self, _column):
-        return self._text
-
-
-class _Tree(_W):
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.children = []
-
-    def clear(self):
-        self.children = []
-
-
-class _Combo(_W):
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.entries = []
-        self.index = -1
-        self.currentIndexChanged = _Sig()
-
-    def addItem(self, text, data=None):
-        self.entries.append((text, data))
-        if self.index < 0:
-            self.index = 0
-
-    def setCurrentIndex(self, index):
-        if index != self.index:
-            self.index = index
-            self.currentIndexChanged.emit(index)
-
-    def currentData(self):
-        return self.entries[self.index][1]
-
-
-_ITEM_FLAG = types.SimpleNamespace(ItemIsUserCheckable=0x10, ItemIsAutoTristate=0x40)
-_CHECK = types.SimpleNamespace(Unchecked=0, PartiallyChecked=1, Checked=2)
-_ROLE = types.SimpleNamespace(UserRole=0x100)
-
-
-@pytest.fixture
-def sel(pi, monkeypatch):
-    """bridge_project_init reimporte sur les doublures d'arbre, de liste et de
-    widgets ; FakeProject branche (``sel.project``)."""
-    from qgis.PyQt import QtCore, QtWidgets
-
-    for name, fake in (("QWidget", _W), ("QGroupBox", _GroupBox), ("QComboBox", _Combo), ("QTreeWidget", _Tree),
-                       ("QTreeWidgetItem", _Item), ("QLabel", _Label), ("QPushButton", _Button),
-                       ("QCheckBox", _CheckBox), ("QVBoxLayout", _Layout), ("QHBoxLayout", _Layout)):
-        monkeypatch.setattr(QtWidgets, name, fake, raising=False)
-    for name, enum in (("ItemFlag", _ITEM_FLAG), ("CheckState", _CHECK), ("ItemDataRole", _ROLE)):
-        monkeypatch.setattr(QtCore.Qt, name, enum, raising=False)
-    monkeypatch.delitem(sys.modules, "constructel_bridge.bridge_project_init", raising=False)
-    module = importlib.import_module("constructel_bridge.bridge_project_init")
-    module.project = install_fake_project(module, monkeypatch)
-    return module
-
-
-def _checked(item):
-    return item.state == _CHECK.Checked
-
-
-def _greyed(item):
-    """Deja chargee (T9-c2b) : desactivee, decochee, non cochable."""
-    return item.disabled and item.state == _CHECK.Unchecked and not item.flag_bits & _ITEM_FLAG.ItemIsUserCheckable
-
-
-def test_selection_greys_operator_layers_of_that_operator_only(sel):
-    sel.project.add_pg("wyre", "cables")
-    sel.project.add_pg("chantier", "interventions")
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("orange", "Orange")
-    assert not widget._items["cables"].disabled and "(orange.cables)" in widget._items["cables"].text(0)
-    assert _greyed(widget._items["interventions"])
-    assert widget._items["interventions"].tip == sel.tr("init.already_loaded")
-    assert widget._items["interventions"].text(0).endswith("✔")
-    widget.set_operator("wyre", "Wyre")
-    assert _greyed(widget._items["cables"]) and "(wyre.cables)" in widget._items["cables"].text(0)
-    assert _greyed(widget._items["interventions"])
-
-
-def test_basemaps_already_loaded_are_greyed_and_never_selected_again(sel):
-    sel.project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    assert _greyed(widget._basemap_items["osm"]) and widget._basemap_items["osm"].tip == sel.tr("init.already_loaded")
-    defaults = {bm["key"] for bm in sel.BASEMAPS if bm["default"]}
-    assert widget.selected_basemaps() == defaults - {"osm"} and widget.want_basemap() is True
-
-
-def test_nothing_new_to_add_means_no_basemap_wanted(sel):
-    for bm in sel.BASEMAPS:
-        if bm["default"]:
-            sel.project.addMapLayer(FakeRasterLayer("type=xyz", bm["name"], "wms"))
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    assert widget.selected_basemaps() == set() and widget.want_basemap() is False
-
-
-def test_group_captions_carry_operator_badge_and_common_tag(sel):
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("orange", "Orange")
-    captions = [group.text(0) for group in widget._tree.children]
-    assert captions == [
-        f"{sel.GROUP_NAMES['Demand Points'][sel.get_language()]}  [Orange]",
-        f"{sel.GROUP_NAMES['Infrastructure'][sel.get_language()]}  [Orange]",
-        f"{sel.GROUP_NAMES['Zones'][sel.get_language()]}  [Orange]",
-        f"Chantier  ({sel.tr('home.common_tag')})",
-        f"OSIRIS  ({sel.tr('home.common_tag')})",
-        f"Cadastre UrbIS  ({sel.tr('home.common_tag')})",
-        f"Urbanisme  ({sel.tr('home.common_tag')})",
-        "Référence",
-    ]
-
-
-def test_template_combo_keeps_manual_selection_and_descriptions(sel):
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    assert widget._combo.entries == [(sel.tr("init.custom_select"), "custom")] + [
-        (tmpl["label"], key) for key, tmpl in sel.TEMPLATES.items()]
-    assert widget._combo.currentData() == "infra"
-    assert widget._desc_label.text() == sel.TEMPLATES["infra"]["description"]
-    assert {k for k, item in widget._items.items() if _checked(item)} == sel.TEMPLATES["infra"]["layers"] & set(widget._items)
-    widget._combo.setCurrentIndex(0)
-    assert widget._desc_label.text() == sel.tr("init.custom_desc")
-
-
-def test_template_is_reapplied_when_the_operator_changes(sel):
-    sel.project.add_pg("orange", "cables")
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    widget._items["subducts"].setCheckState(0, _CHECK.Checked)   # hors modele, oublie au changement
-    widget.set_operator("orange", "Orange")
-    checked = {k for k, item in widget._items.items() if _checked(item)}
-    assert checked == (sel.TEMPLATES["infra"]["layers"] & set(widget._items)) - {"cables"}
-    assert _greyed(widget._items["cables"]) and "cables" not in widget.selected_layers()
-
-
-def test_manual_selection_survives_an_operator_change(sel):
-    sel.project.add_pg("orange", "zone_mro")
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    widget._btn_none.clicked.emit(False)
-    for key in ("subducts", "incidents"):
-        widget._items[key].setCheckState(0, _CHECK.Checked)
-    assert widget._combo.currentData() == "custom"
-    widget.set_operator("orange", "Orange")
-    assert {k for k, item in widget._items.items() if _checked(item)} == {"subducts", "incidents"}
-    assert _greyed(widget._items["zone_mro"])
-
-
-def test_select_all_and_none_never_select_loaded_layers(sel):
-    sel.project.add_pg("chantier", "interventions")
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    widget._btn_none.clicked.emit(False)
-    assert {k for k, item in widget._items.items() if _checked(item)} == set()
-    assert widget._combo.currentData() == "custom"
-    widget._btn_all.clicked.emit(False)
-    assert {k for k, item in widget._items.items() if _checked(item)} == set(widget._items) - {"interventions"}
-    assert _greyed(widget._items["interventions"])
-    assert widget.selected_layers() == set(widget._items) - {"interventions"}
-
-
-def test_loaded_layer_is_never_selected_even_if_its_box_gets_checked(sel):
-    # Qt : ItemIsAutoTristate propage l'etat d'un groupe a ses enfants
-    # desactives ; le filtre porte sur « deja chargee », pas sur la case.
-    sel.project.add_pg("chantier", "interventions")
-    sel.project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    widget._items["interventions"].setCheckState(0, _CHECK.Checked)
-    widget._basemap_items["osm"].setCheckState(0, _CHECK.Checked)
-    assert "interventions" not in widget.selected_layers()
-    assert "osm" not in widget.selected_basemaps()
-
-
-def test_selected_layers_always_include_form_lists_and_styles_default_on(sel):
-    widget = sel.LayerSelectionWidget()
-    widget.set_operator("wyre", "Wyre")
-    widget._btn_none.clicked.emit(False)
-    assert widget.selected_layers() == {"v_form_lists"}
-    assert widget.want_styles() is True
-    widget._chk_styles.setChecked(False)
-    assert widget.want_styles() is False
+# --- doublures de widgets (HomeDialog) : fakes_widgets.py -----------------------------------
 
 
 def test_init_project_dialog_is_gone(pi):
@@ -603,11 +249,13 @@ def home(pi, monkeypatch):
                        ("QCheckBox", _CheckBox), ("QGroupBox", _GroupBox), ("QVBoxLayout", _Layout),
                        ("QHBoxLayout", _Layout)):
         monkeypatch.setattr(QtWidgets, name, fake, raising=False)
-    monkeypatch.delitem(sys.modules, "constructel_bridge.bridge_home", raising=False)
+    for name in ("bridge_home", "bridge_layer_selection"):
+        monkeypatch.delitem(sys.modules, f"constructel_bridge.{name}", raising=False)
     module = importlib.import_module("constructel_bridge.bridge_home")
     monkeypatch.setattr(module, "LayerSelectionWidget", _FakeSelection)
     yield module
-    sys.modules.pop("constructel_bridge.bridge_home", None)
+    for name in ("bridge_home", "bridge_layer_selection"):
+        sys.modules.pop(f"constructel_bridge.{name}", None)
 
 
 def _open(home, snapshot, load_result=3):

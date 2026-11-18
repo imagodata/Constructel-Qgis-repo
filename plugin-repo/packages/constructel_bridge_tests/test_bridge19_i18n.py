@@ -36,7 +36,7 @@ GROUP_NAMES = _load("bridge19_layer_translations", "i18n/layer_translations.py")
 KEYS_19 = [
     "home.no_operator", "home.reorganized", "home.not_connected", "home.connect", "home.tile_load",
     "home.operator_label", "home.btn_init", "home.btn_add", "home.loaded_title", "home.loaded_operator",
-    "home.loaded_basemaps", "home.common_tag", "home.connect_to_see", "home.suffix_checkbox",
+    "home.loaded_basemaps", "home.connect_to_see", "home.suffix_checkbox",
     "home.tile_project", "home.tile_project_sub", "home.tile_checkin", "home.tile_checkin_sub",
     "home.tile_checkin_updates", "home.tile_diagnostic", "home.tile_diagnostic_sub",
     "home.tile_language", "home.tile_language_sub", "onboard.action.profile_offline",
@@ -52,7 +52,7 @@ KEYS_19 = [
 ]
 
 # Modules crees par le chantier 1.9 : jamais de cle dynamique.
-MODULES_19 = ["bridge_operators.py", "bridge_home_model.py", "bridge_home.py",
+MODULES_19 = ["bridge_operators.py", "bridge_home_model.py", "bridge_home.py", "bridge_layer_selection.py",
               "bridge_diagnostic.py", "bridge_diagnostic_dialog.py"]
 
 # Cles inutilisees avant le chantier 1.9, conservees (hors perimetre). Une nouvelle cle

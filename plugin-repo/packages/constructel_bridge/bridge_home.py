@@ -41,8 +41,8 @@ from .bridge_home_model import (
     home_state,
     suffix_state,
 )
+from .bridge_layer_selection import LayerSelectionWidget
 from .bridge_operators import SUFFIX_SETTINGS_KEY, OperatorInfo
-from .bridge_project_init import LayerSelectionWidget
 from .i18n import tr
 
 # K11 : un appel tr LITTERAL par cle de message (releve par test_bridge18_i18n).
