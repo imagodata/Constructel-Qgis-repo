@@ -19,6 +19,7 @@ from constructel_bridge_tests.fakes19 import (
     FakeLayer,
     FakeUri,
     install_fake_project,
+    load_keys,
 )
 from constructel_bridge_tests.test_bridge18_layers import _shared_plugin, pi  # noqa: F401  (pi = fixture)
 
@@ -364,14 +365,15 @@ def test_adding_second_operator_reorganizes_and_forces_suffix(bp18, pi, plugin18
     root = project.layerTreeRoot()
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
 
-    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+    load_keys(plugin, ORANGE, {"cables"}, set(), True, suffix=False)
 
     info = pi.get_bridge_info()
     assert info["operators"] == ["wyre", "orange"]
     assert info["operator_labels"] == {"wyre": "Wyre", "orange": "Orange"}
     assert info["operator_suffix"] is True  # deuxieme operateur : obligatoire, la case decochee est ecartee
     assert messages[-2][2] == bp18.tr("home.reorganized", operators="Wyre")
-    assert messages[-1][2] == bp18.tr("init.success", count=1)
+    # cables + les deux couches que le plan 2.0 charge avec chaque operateur (docs_elements, v_form_lists)
+    assert messages[-1][2] == bp18.tr("init.success", count=3)
     assert _operator_layer_names(project, "wyre", "cables") == ["Cables · Wyre"]  # suffixe recu au clic « Ajouter »
     assert _operator_layer_names(project, "orange", "cables") == ["Cables · Orange"]
     assert _names(root)[:3] == ["Wyre", "Orange", "Common"]
@@ -385,7 +387,7 @@ def test_adding_same_operator_to_18_project_respects_the_suffix_box(bp18, pi, pl
     messages = plugin.iface.messageBar().messages
     plugin._operator_registry = {"wyre": WYRE}
 
-    plugin._load_operator_layers(WYRE, {"structures"}, set(), True, suffix=False)
+    load_keys(plugin, WYRE, {"structures"}, set(), True, suffix=False)
 
     info = pi.get_bridge_info()
     assert info["operators"] == ["wyre"] and info["operator_suffix"] is False
@@ -397,7 +399,7 @@ def test_adding_same_operator_to_18_project_respects_the_suffix_box(bp18, pi, pl
 
     # Second « Ajouter » : rien a reorganiser, pas de nouveau message, suffixe coche.
     count_messages = len(messages)
-    plugin._load_operator_layers(WYRE, {"ducts"}, set(), True, suffix=True)
+    load_keys(plugin, WYRE, {"ducts"}, set(), True, suffix=True)
     assert [m[2] for m in messages[count_messages:]] == [bp18.tr("init.success", count=1)]
     assert _operator_layer_names(project, "wyre", "cables") == ["Cables · Wyre"]
     assert _names(root).count("Wyre") == 1 and _names(root).count("Common") == 1
@@ -409,7 +411,7 @@ def test_legacy_group_message_lists_every_operator(bp18, pi, plugin18):
     project.add_pg("orange", "zone_mro", group=project.layerTreeRoot().addGroup("Zones"))
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
 
-    plugin._load_operator_layers(WYRE, {"structures"}, set(), True)
+    load_keys(plugin, WYRE, {"structures"}, set(), True)
 
     assert plugin.iface.messageBar().messages[-2][2] == bp18.tr("home.reorganized", operators="Wyre, Orange")
     assert pi.get_bridge_info()["operators"] == ["wyre", "orange"]
@@ -429,22 +431,22 @@ def test_phantom_legacy_group_neither_stamps_nor_forces_suffix(bp18, pi, plugin1
     messages = plugin.iface.messageBar().messages
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
 
-    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+    load_keys(plugin, ORANGE, {"cables"}, set(), True, suffix=False)
 
     info = pi.get_bridge_info()
     assert info["operators"] == ["orange"] and info["operator_labels"] == {"orange": "Orange"}
     assert info["operator_suffix"] is False
-    assert _names(root)[0] == "Zones" and _names(root)[1:] == ["Orange"]  # « Zones » reste a la racine
-    assert [m[2] for m in messages] == [bp18.tr("init.success", count=1)]
+    assert _names(root)[0] == "Zones" and _names(root)[1:] == ["Orange", "Référence"]  # « Zones » reste a la racine
+    assert [m[2] for m in messages] == [bp18.tr("init.success", count=3)]
 
 
 def test_already_19_project_gets_no_reorganization(bp18, pi, plugin18, monkeypatch):
     plugin, project, _layers = plugin18
     plugin._operator_registry = {"wyre": WYRE}
-    plugin._load_operator_layers(WYRE, {"structures"}, set(), True)
+    load_keys(plugin, WYRE, {"structures"}, set(), True)
     calls = []
     monkeypatch.setattr(pi, "reorganize_legacy_tree", lambda *a, **k: calls.append(a) or [])
-    plugin._load_operator_layers(WYRE, {"ducts"}, set(), True)
+    load_keys(plugin, WYRE, {"ducts"}, set(), True)
     assert calls == []
 
 
@@ -458,7 +460,7 @@ def test_load_failure_after_reorganization_is_reported_not_raised(bp18, pi, plug
     monkeypatch.setattr(pi, "init_project", boom)
     monkeypatch.setattr(bp18.QMessageBox, "critical", staticmethod(lambda *a, **k: errors.append(a[2])))
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
-    assert plugin._load_operator_layers(ORANGE, {"cables"}, set(), True) == 0
+    assert load_keys(plugin, ORANGE, {"cables"}, set(), True) == 0
     assert errors == [bp18.tr("init.error", error="permission denied for schema orange")]
     # La reorganisation, faite avant le chargement, reste (et sera enregistree).
     assert pi.needs_reorganization(project.layerTreeRoot()) is False
@@ -475,11 +477,11 @@ def test_only_common_legacy_groups_get_their_own_message(bp18, pi, monkeypatch, 
     for name in ("_hook_layers", "_apply_scope_to_layers", "_rewrite_value_relation_sources"):
         monkeypatch.setattr(plugin, name, lambda *a, **k: None)
 
-    plugin._load_operator_layers(WYRE, {"cables"}, set(), True)
+    load_keys(plugin, WYRE, {"cables"}, set(), True)
 
     messages = plugin.iface.messageBar().messages
     assert messages[-2][2] == bp18.tr("home.reorganized_common")
-    assert _names(project.layerTreeRoot()) == ["Wyre", "Commun"]  # traductions neutralisees ici
+    assert _names(project.layerTreeRoot()) == ["Wyre", "Commun", "Référence"]  # traductions neutralisees ici
     assert pi.get_bridge_info()["operators"] == ["wyre"]  # l'operateur charge, pas un operateur « herite »
 
 
@@ -517,7 +519,7 @@ def test_add_keeps_personal_layer_at_root(bp18, pi, plugin18, operator):
     root = project.layerTreeRoot()
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
 
-    plugin._load_operator_layers(operator, {"cables", "structures"}, set(), True, suffix=False)
+    load_keys(plugin, operator, {"cables", "structures"}, set(), True, suffix=False)
 
     node = root.findLayer(layers["root_layer"].id())
     assert node is not None and node.parent() is root
@@ -533,7 +535,7 @@ def test_add_files_documents_layer_present_at_root_into_reference(bp18, pi, plug
     docs = project.add_pg("docs", "v_element_documents_list", key="link_id", geom=None)
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
 
-    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+    load_keys(plugin, ORANGE, {"cables"}, set(), True, suffix=False)
 
     node = root.findLayer(docs.id())
     assert node is not None and node.parent() is reference
@@ -554,7 +556,7 @@ def test_add_still_removes_ghost_layers_created_during_the_call(bp18, pi, plugin
     monkeypatch.setattr(pi, "_apply_embedded_styles", styles_creating_a_ghost)
     plugin._operator_registry = {"wyre": WYRE, "orange": ORANGE}
 
-    plugin._load_operator_layers(ORANGE, {"cables"}, set(), True, suffix=False)
+    load_keys(plugin, ORANGE, {"cables"}, set(), True, suffix=False)
 
     assert ghosts and root.findLayer(ghosts[0].id()) is None
     assert root.findLayer(layers["root_layer"].id()).parent() is root

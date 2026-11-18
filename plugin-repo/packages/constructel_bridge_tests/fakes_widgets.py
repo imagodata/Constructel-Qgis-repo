@@ -1,0 +1,372 @@
+"""Doublures de widgets Qt partagees (accueil 2.0, plan 2026-11-18 tache 4).
+
+Sorties de test_bridge19_home.py pour servir aussi aux tests de la page de
+chargement : le rendu Qt reel (mise en page, couleurs, arbre a trois etats)
+reste a la recette manuelle. Une doublure ne modelise que ce que le plugin
+lit ; les setters non modelises (``set*``) sont sans effet.
+
+Fideles a Qt sur ce que le plugin utilise :
+  * ``_Item.setCheckState`` emet ``itemChanged`` de l'arbre quand l'etat change,
+    sauf si l'arbre a ses signaux bloques (``blockSignals``), comme
+    ``QTreeWidget`` ; les autres setters d'item n'emettent rien (le plugin les
+    appelle toujours signaux bloques) ;
+  * ``_Button.setChecked`` emet ``toggled`` quand l'etat change, jamais
+    ``clicked`` (reserve a l'utilisateur : le test l'emet a la main).
+"""
+from __future__ import annotations
+
+import types
+
+
+class _Sig:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, slot):
+        self.slots.append(slot)
+
+    def emit(self, *args):
+        for slot in list(self.slots):
+            slot(*args)
+
+
+class _W:
+    """QWidget factice : etat lisible ; les setters non modelises sont sans effet."""
+
+    def __init__(self, *args, **kwargs):
+        self.layout = None
+        self.enabled = True
+        self.hidden = False
+        self.deleted = False
+        self.tooltip = ""
+        self.signals_blocked = False
+
+    def setEnabled(self, enabled):
+        self.enabled = bool(enabled)
+
+    def isEnabled(self):
+        return self.enabled
+
+    def setToolTip(self, text):
+        self.tooltip = text
+
+    def toolTip(self):
+        return self.tooltip
+
+    def blockSignals(self, block):
+        """Rend l'ancien etat, comme QObject.blockSignals."""
+        previous = self.signals_blocked
+        self.signals_blocked = bool(block)
+        return previous
+
+    def hide(self):
+        self.hidden = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+    def __getattr__(self, name):
+        if name.startswith("set"):
+            return lambda *a, **k: None
+        raise AttributeError(name)
+
+
+class _Label(_W):
+    def __init__(self, text="", *args):
+        super().__init__(*args)
+        self._text = text
+
+    def text(self):
+        return self._text
+
+    def setText(self, text):
+        self._text = text
+
+
+class _Button(_Label):
+    def __init__(self, text="", *args):
+        super().__init__(text, *args)
+        self.clicked = _Sig()
+        self.toggled = _Sig()
+        self.checkable = False
+        self.checked = False
+
+    def setCheckable(self, checkable):
+        self.checkable = bool(checkable)
+
+    def setChecked(self, checked):
+        checked = bool(checked)
+        changed = checked != self.checked
+        self.checked = checked
+        if changed and not self.signals_blocked:
+            self.toggled.emit(checked)
+
+    def isChecked(self):
+        return self.checked
+
+
+class _CheckBox(_Button):
+    pass
+
+
+class _ToolButton(_Button):
+    """QToolButton : bouton (tuile) avec menu optionnel."""
+
+    def __init__(self, text="", *args):
+        super().__init__(text, *args)
+        self.menu = None
+
+    def setMenu(self, menu):
+        self.menu = menu
+
+
+class _Action:
+    def __init__(self, text=""):
+        self.text = text
+        self.triggered = _Sig()
+
+
+class _Menu(_W):
+    """QMenu : actions ajoutees par texte, declenchables par le test."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args)
+        self.actions = []
+
+    def addAction(self, text="", *_args):
+        action = _Action(text)
+        self.actions.append(action)
+        return action
+
+    def addSeparator(self):
+        pass
+
+    def clear(self):
+        self.actions = []
+
+
+class _LineEdit(_Label):
+    def __init__(self, text="", *args):
+        super().__init__(text, *args)
+        self.textChanged = _Sig()
+
+    def setText(self, text):
+        changed = text != self._text
+        self._text = text
+        if changed and not self.signals_blocked:
+            self.textChanged.emit(text)
+
+
+class _GroupBox(_W):
+    def __init__(self, title="", *args):
+        super().__init__(*args)
+        self.title = title
+
+
+class _Dialog(_W):
+    def __init__(self, parent=None):
+        super().__init__()
+        self.parent = parent
+        self.closed = False
+
+    def accept(self):
+        self.closed = True
+
+    def reject(self):
+        self.closed = True
+
+
+class _Layout:
+    def __init__(self, parent=None):
+        self.items = []
+        if parent is not None:
+            parent.layout = self
+
+    def addWidget(self, widget, *_args):
+        self.items.append(widget)
+
+    def addLayout(self, layout, *_args):
+        self.items.append(layout)
+
+    def replaceWidget(self, old, new, *_args):
+        self.items[self.items.index(old)] = new
+
+    def __getattr__(self, name):
+        if name.startswith(("set", "add")):
+            return lambda *a, **k: None
+        raise AttributeError(name)
+
+
+class _Stack(_W):
+    """QStackedWidget : pages empilees, page courante par index."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.pages = []
+        self.index = -1
+
+    def addWidget(self, widget):
+        self.pages.append(widget)
+        if self.index < 0:
+            self.index = 0
+        return len(self.pages) - 1
+
+    def setCurrentIndex(self, index):
+        self.index = index
+
+    def currentIndex(self):
+        return self.index
+
+    def currentWidget(self):
+        return self.pages[self.index] if 0 <= self.index < len(self.pages) else None
+
+
+class _ListWidget(_W):
+    """QListWidget : lignes de texte, ligne courante."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.rows = []
+        self.row = -1
+        self.currentRowChanged = _Sig()
+
+    def addItem(self, text):
+        self.rows.append(text)
+
+    def clear(self):
+        self.rows = []
+        self.row = -1
+
+    def count(self):
+        return len(self.rows)
+
+    def setCurrentRow(self, row):
+        if row != self.row:
+            self.row = row
+            self.currentRowChanged.emit(row)
+
+    def currentRow(self):
+        return self.row
+
+
+def _widgets(root):
+    """Widgets du sous-arbre de *root* (layouts parcourus), dans l'ordre."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, _Layout):
+            for item in node.items:
+                walk(item)
+            return
+        found.append(node)
+        if getattr(node, "layout", None) is not None:
+            walk(node.layout)
+
+    walk(root)
+    return found
+
+
+def _texts(root):
+    return [w.text() for w in _widgets(root) if isinstance(w, _Label)]
+
+
+class _Tree(_W):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.children = []
+        self.itemChanged = _Sig()
+
+    def clear(self):
+        self.children = []
+
+
+class _Item:
+    def __init__(self, parent, texts):
+        self._text = texts[0]
+        self.children = []
+        self.parent = parent
+        self.tree = parent if isinstance(parent, _Tree) else parent.tree
+        self.flag_bits = 0
+        self.state = None
+        self.disabled = False
+        self.value = None
+        self.tip = ""
+        self.expanded = False
+        parent.children.append(self)
+
+    def flags(self):
+        return self.flag_bits
+
+    def setFlags(self, flags):
+        self.flag_bits = flags
+
+    def setCheckState(self, _column, state):
+        changed = state != self.state
+        self.state = state
+        if changed and not self.tree.signals_blocked:
+            self.tree.itemChanged.emit(self, 0)
+
+    def checkState(self, _column):
+        return self.state
+
+    def setToolTip(self, _column, text):
+        self.tip = text
+
+    def toolTip(self, _column):
+        return self.tip
+
+    def setDisabled(self, disabled):
+        self.disabled = bool(disabled)
+
+    def isDisabled(self):
+        return self.disabled
+
+    def setData(self, _column, _role, value):
+        self.value = value
+
+    def data(self, _column, _role):
+        return self.value
+
+    def setExpanded(self, expanded):
+        self.expanded = bool(expanded)
+
+    def isExpanded(self):
+        return self.expanded
+
+    def setText(self, _column, text):
+        self._text = text
+
+    def text(self, _column):
+        return self._text
+
+    def childCount(self):
+        return len(self.children)
+
+    def child(self, index):
+        return self.children[index]
+
+
+class _Combo(_W):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.entries = []
+        self.index = -1
+        self.currentIndexChanged = _Sig()
+
+    def addItem(self, text, data=None):
+        self.entries.append((text, data))
+        if self.index < 0:
+            self.index = 0
+
+    def setCurrentIndex(self, index):
+        if index != self.index:
+            self.index = index
+            self.currentIndexChanged.emit(index)
+
+    def currentData(self):
+        return self.entries[self.index][1]
+
+
+_ITEM_FLAG = types.SimpleNamespace(ItemIsUserCheckable=0x10, ItemIsAutoTristate=0x40)
+_CHECK = types.SimpleNamespace(Unchecked=0, PartiallyChecked=1, Checked=2)
+_ROLE = types.SimpleNamespace(UserRole=0x100)

@@ -2,31 +2,19 @@
 """
 Constructel Bridge — Initialisation de projet QGIS WYRE FTTH.
 
-Widget de selection de couches avec templates pre-configures (grande tuile
-de l'ecran d'accueil, Bridge 1.9), puis chargement des couches, styles,
-relations et basemaps.
+Catalogue des couches, detection de ce qui est deja charge, organisation de
+l'arbre (groupes operateur / Commun), puis chargement des couches, styles,
+relations et basemaps. Le widget de selection vit dans bridge_layer_selection
+(2.0).
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
-from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtXml import QDomDocument
-from qgis.PyQt.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
 from qgis.core import (
     Qgis,
     QgsCoordinateReferenceSystem,
@@ -59,7 +47,6 @@ from .bridge_operators import (
     relation_id,
     style_sources,
 )
-from .i18n import get_language, tr
 from .i18n.layer_translations import GROUP_NAMES
 
 TAG = "Constructel Bridge"
@@ -306,74 +293,6 @@ EMBEDDED_STYLES = {
 
 
 # =====================================================================
-# TEMPLATES — presets de selection
-# =====================================================================
-
-# Couches infra de base (reutilise dans les templates)
-# NB: subducts est volontairement exclu — decoche par defaut dans tous les profils
-# NB: trench_segments est cochee dans tous les profils (demande Simon 04/11)
-# NB: duct_progress, suivi de construction superpose aux conduites, n'est
-#     cochee que dans les profils "Infrastructure + Chantier" et "Projet complet"
-_INFRA_BASE = {
-    "zone_mro", "zone_pop", "zone_distribution", "zone_drop",
-    "structures", "ducts", "cables", "trench_segments",
-    "demand_points", "topo_violations",
-    "docs_elements", "v_form_lists",
-}
-
-TEMPLATES = {
-    "infra": {
-        "label": "Infrastructure",
-        "description": "Couches infra : zones, structures, cables, conduites, segments de tranchee, DP, topologie",
-        "layers": _INFRA_BASE,
-        "basemap": True,
-    },
-    "infra_cadastre": {
-        "label": "Infrastructure + Cadastre",
-        "description": "Infra complet + parcelles cadastrales, batiments, municipalites et ilots UrbIS",
-        "layers": _INFRA_BASE | {
-            "wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings",
-        },
-        "basemap": True,
-    },
-    "infra_urbanisme": {
-        "label": "Infrastructure + Urbanisme",
-        "description": "Infra complet + cadastre + zones protegees et patrimoine Brussels",
-        "layers": _INFRA_BASE | {
-            "wfs_municipalities", "wfs_blocks", "wfs_parcels", "wfs_buildings",
-            "wfs_protection", "wfs_heritage",
-        },
-        "basemap": True,
-    },
-    "infra_chantier": {
-        "label": "Infrastructure + Chantier",
-        "description": "Infra complet + couches chantier (interventions, permis, incidents, synergies, segments de tranchee, avancement des fourreaux)",
-        "layers": _INFRA_BASE | {
-            "interventions", "incidents", "permis_voirie", "plaintes",
-            "interventions_chantier", "synergies", "planning_facades",
-            "trench_segments", "duct_progress",
-        },
-        "basemap": True,
-    },
-    "infra_osiris": {
-        "label": "Infrastructure + OSIRIS",
-        "description": "Infra complet + couches OSIRIS Brussels (zones gelees, chantiers, coordination)",
-        "layers": _INFRA_BASE | {
-            "osiris_frozen", "osiris_worksites", "osiris_autorises",
-            "osiris_phases", "osiris_hypercoord", "osiris_deviations", "osiris_events",
-        },
-        "basemap": True,
-    },
-    "complet": {
-        "label": "Projet complet",
-        "description": "Toutes les couches : infra + chantier + OSIRIS + cadastre + urbanisme",
-        "layers": {k for k, *_ in LAYER_CATALOG} - {"subducts"},
-        "basemap": True,
-    },
-}
-
-
-# =====================================================================
 # RELATIONS QGIS (parent_key, child_key, fk_field, rel_name)
 # Les keys correspondent aux cles du LAYER_CATALOG
 # =====================================================================
@@ -607,12 +526,31 @@ def _existing_layer_index(project) -> dict:
     return index
 
 
-def _detect_existing_layers(schema: str = OPERATOR_TEMPLATE_SCHEMA) -> set[str]:
+def _common_catalog() -> list[tuple]:
+    """Entrees communes du catalogue (hors OPERATOR_GROUPS) : ce que lit un
+    chargement sans operateur."""
+    return [entry for entry in LAYER_CATALOG if entry[1] not in OPERATOR_GROUPS]
+
+
+def _detect_existing_layers(schema: str | None = OPERATOR_TEMPLATE_SCHEMA) -> set[str]:
     """Cles du catalogue (simples) deja presentes dans le projet pour
     l'operateur de *schema* : une couche operateur ne compte que dans son
-    schema, une couche commune compte pour tous les operateurs."""
+    schema, une couche commune compte pour tous les operateurs. *schema*
+    ``None`` : cles communes presentes seulement."""
     index = _existing_layer_index(QgsProject.instance())
-    return {entry[0] for entry in catalog_for(schema) if _catalog_table_id(entry) in index}
+    catalog = _common_catalog() if schema is None else catalog_for(schema)
+    return {entry[0] for entry in catalog if _catalog_table_id(entry) in index}
+
+
+def existing_by_schema(schemas: Sequence[str]) -> dict[Optional[str], set[str]]:
+    """Couches deja chargees par schema, forme attendue par
+    ``selection_from_tiles`` : ``None`` pour les cles communes, un jeu de
+    cles operateur par schema de *schemas* (l'index du projet n'est lu qu'une
+    fois par entree, jamais de requete)."""
+    existing: dict[Optional[str], set[str]] = {None: _detect_existing_layers(None)}
+    for schema in schemas:
+        existing[schema] = _detect_existing_layers(schema) & OPERATOR_KEYS
+    return existing
 
 
 def _loaded_layer_names(project) -> set[str]:
@@ -766,7 +704,7 @@ def _layer_group(root, operator: OperatorInfo, group_name: str):
 
 # =====================================================================
 # PROJETS 1.8 — reorganisation au clic « Ajouter des couches » (§ 6.5)
-# Ouvrir un projet 1.8 ne le modifie jamais : seul _load_operator_layers
+# Ouvrir un projet 1.8 ne le modifie jamais : seul _load_selection
 # appelle reorganize_legacy_tree.
 # =====================================================================
 
@@ -887,227 +825,6 @@ def reorganize_legacy_tree(project, registry: Mapping[str, OperatorInfo]) -> lis
     return touched
 
 
-class LayerSelectionWidget(QWidget):
-    """Selection des couches de la grande tuile de l'ecran d'accueil (spec
-    § 6.1), ex-InitProjectDialog dont elle garde toutes les capacites (§ 4) :
-    modeles et « Selection manuelle » avec leur description, arbre par
-    groupe, couches deja chargees grisees, Tout / Rien, arbre des fonds de
-    plan, « Appliquer les styles de la base ».
-
-    set_operator() est obligatoire avant usage : il remplit l'arbre avec les
-    couches de l'operateur choisi (couches operateur grisees pour ce seul
-    operateur, couches communes deja chargees toujours grisees). Une couche
-    deja chargee est grisee ET decochee (decision T9-c2b) : un modele, Tout
-    ou Rien ne la cochent jamais, et selected_layers() ne la rend jamais,
-    quel que soit l'etat de sa case (en Qt, ItemIsAutoTristate propage
-    l'etat d'un groupe a ses enfants desactives). Idem pour les fonds de
-    plan deja charges (meme regle de nom que _add_basemaps, D12) et
-    selected_basemaps().
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._schema = OPERATOR_TEMPLATE_SCHEMA
-        self._label = ""
-        self._existing: set[str] = set()
-        self._items = {}  # key → QTreeWidgetItem
-        self._basemap_items = {}  # key → QTreeWidgetItem
-        self._existing_basemaps = _detect_existing_basemaps()
-        self._build_ui()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-
-        # -- Template selector ------------------------------------------------
-        tmpl_box = QGroupBox(tr("init.group_template"))
-        tmpl_layout = QVBoxLayout(tmpl_box)
-
-        self._combo = QComboBox()
-        self._combo.addItem(tr("init.custom_select"), "custom")
-        for key, tmpl in TEMPLATES.items():
-            self._combo.addItem(tmpl["label"], key)
-        self._combo.currentIndexChanged.connect(self._on_template_changed)
-        tmpl_layout.addWidget(self._combo)
-
-        self._desc_label = QLabel("")
-        self._desc_label.setWordWrap(True)
-        self._desc_label.setStyleSheet("color: #666; font-style: italic;")
-        tmpl_layout.addWidget(self._desc_label)
-
-        layout.addWidget(tmpl_box)
-
-        # -- Couches de travail | fonds de plan et styles (maquette v3) ------
-        columns = QHBoxLayout()
-
-        layers_box = QGroupBox(tr("init.group_layers"))
-        layers_layout = QVBoxLayout(layers_box)
-        self._tree = QTreeWidget()
-        self._tree.setHeaderHidden(True)
-        self._tree.setRootIsDecorated(True)
-        layers_layout.addWidget(self._tree)
-
-        # Select all / none buttons
-        btn_layout = QHBoxLayout()
-        self._btn_all = QPushButton(tr("init.select_all"))
-        self._btn_all.clicked.connect(lambda _checked=False: self._set_all(True))
-        self._btn_none = QPushButton(tr("init.select_none"))
-        self._btn_none.clicked.connect(lambda _checked=False: self._set_all(False))
-        btn_layout.addWidget(self._btn_all)
-        btn_layout.addWidget(self._btn_none)
-        btn_layout.addStretch()
-        layers_layout.addLayout(btn_layout)
-        columns.addWidget(layers_box, 3)
-
-        side = QVBoxLayout()
-        basemap_box = QGroupBox(tr("init.group_basemaps"))
-        basemap_layout = QVBoxLayout(basemap_box)
-        self._basemap_tree = QTreeWidget()
-        self._basemap_tree.setHeaderHidden(True)
-        self._basemap_tree.setRootIsDecorated(True)
-        self._fill_basemaps()
-        basemap_layout.addWidget(self._basemap_tree)
-        side.addWidget(basemap_box)
-
-        # -- Options ----------------------------------------------------------
-        self._chk_styles = QCheckBox(tr("init.apply_styles"))
-        self._chk_styles.setChecked(True)
-        side.addWidget(self._chk_styles)
-        side.addStretch()
-        columns.addLayout(side, 2)
-
-        layout.addLayout(columns)
-
-        # Pre-select first template (arbre rempli par set_operator)
-        self._combo.setCurrentIndex(1)
-
-    def _group_caption(self, group: str) -> str:
-        """Nom du groupe dans la langue courante ; badge de l'operateur sur
-        un groupe operateur, mention « commun » sur un groupe commun."""
-        name = GROUP_NAMES.get(group, {}).get(get_language(), group)
-        if group in OPERATOR_GROUPS:
-            return f"{name}  [{self._label}]"
-        if group in COMMON_GROUPS:
-            return f"{name}  ({tr('home.common_tag')})"
-        return name
-
-    def _fill_layers(self):
-        """(Re)construit l'arbre des couches pour l'operateur courant."""
-        self._tree.clear()
-        self._items = {}
-        group_items = {}  # group_name → QTreeWidgetItem
-        for key, group, schema, table, _geom, _pk, label in catalog_for(self._schema):
-            if group not in group_items:
-                gi = QTreeWidgetItem(self._tree, [self._group_caption(group)])
-                gi.setFlags(gi.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate)
-                gi.setCheckState(0, Qt.CheckState.Unchecked)
-                gi.setExpanded(True)
-                group_items[group] = gi
-
-            already = key in self._existing
-            suffix = "  ✔" if already else ""
-            item = QTreeWidgetItem(group_items[group], [f"{label}  ({schema}.{table}){suffix}"])
-            if already:
-                # Deja chargee — grisee et decochee, jamais selectionnee (T9-c2b)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Unchecked)
-                item.setToolTip(0, tr("init.already_loaded"))
-                item.setDisabled(True)
-            else:
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Unchecked)
-            item.setData(0, Qt.ItemDataRole.UserRole, key)
-            self._items[key] = item
-
-    def _fill_basemaps(self):
-        basemap_groups = {}  # group → QTreeWidgetItem
-        for bm in BASEMAPS:
-            grp_name = bm.get("group", "Autres")
-            if grp_name not in basemap_groups:
-                gi = QTreeWidgetItem(self._basemap_tree, [grp_name])
-                gi.setFlags(gi.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate)
-                gi.setCheckState(0, Qt.CheckState.Unchecked)
-                gi.setExpanded(True)
-                basemap_groups[grp_name] = gi
-
-            already = bm["key"] in self._existing_basemaps
-            item = QTreeWidgetItem(basemap_groups[grp_name], [bm["name"] + ("  ✔" if already else "")])
-            if already:
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Unchecked)
-                item.setToolTip(0, tr("init.already_loaded"))
-                item.setDisabled(True)
-            else:
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, Qt.CheckState.Checked if bm.get("default") else Qt.CheckState.Unchecked)
-            item.setData(0, Qt.ItemDataRole.UserRole, bm["key"])
-            self._basemap_items[bm["key"]] = item
-
-    def set_operator(self, schema: str, label: str) -> None:
-        """Couches de l'operateur *schema* (libelle *label* sur le badge des
-        groupes operateur). Le modele choisi est reapplique ; en « Selection
-        manuelle », les couches cochees a la main le restent."""
-        manual = {key for key, item in self._items.items()
-                  if key not in self._existing and item.checkState(0) == Qt.CheckState.Checked}
-        self._schema, self._label = schema, label
-        self._existing = _detect_existing_layers(schema)
-        self._fill_layers()
-        key = self._combo.currentData()
-        if key == "custom":
-            for item_key in manual - self._existing:
-                if item_key in self._items:
-                    self._items[item_key].setCheckState(0, Qt.CheckState.Checked)
-        else:
-            self._apply_template(key)
-
-    def _on_template_changed(self, idx):
-        key = self._combo.currentData()
-        if key == "custom":
-            self._desc_label.setText(tr("init.custom_desc"))
-            return
-
-        tmpl = TEMPLATES.get(key, {})
-        self._desc_label.setText(tmpl.get("description", ""))
-        self._apply_template(key)
-
-    def _apply_template(self, key):
-        layers = TEMPLATES.get(key, {}).get("layers", set())
-        for item_key, item in self._items.items():
-            if item_key in self._existing:
-                continue  # deja chargee : jamais cochee (T9-c2b)
-            item.setCheckState(0, Qt.CheckState.Checked if item_key in layers else Qt.CheckState.Unchecked)
-
-    def _set_all(self, checked):
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        for item_key, item in self._items.items():
-            if item_key not in self._existing:
-                item.setCheckState(0, state)
-        self._combo.setCurrentIndex(0)  # switch to custom
-
-    def selected_layers(self) -> set[str]:
-        """Cles simples des couches cochees, jamais celles deja chargees
-        (T9-c2b : filtre sur _existing, pas sur la case) ; v_form_lists
-        toujours incluse."""
-        result = {"v_form_lists"}  # toujours inclus
-        for key, item in self._items.items():
-            if key not in self._existing and item.checkState(0) == Qt.CheckState.Checked:
-                result.add(key)
-        return result
-
-    def selected_basemaps(self) -> set[str]:
-        """Cles des fonds de plan coches, sans ceux deja charges."""
-        result = set()
-        for key, item in self._basemap_items.items():
-            if key not in self._existing_basemaps and item.checkState(0) == Qt.CheckState.Checked:
-                result.add(key)
-        return result
-
-    def want_basemap(self) -> bool:
-        return bool(self.selected_basemaps())
-
-    def want_styles(self) -> bool:
-        return self._chk_styles.isChecked()
-
-
 # =====================================================================
 # RELATIONS — creation/recreation dynamique
 # =====================================================================
@@ -1199,9 +916,12 @@ def ensure_relations(loaded: dict | None = None, primary_schema: str | None = No
 def init_project(conn_params: dict, password: str, selected: set[str],
                  add_basemap: bool = True, apply_styles: bool = True,
                  selected_basemaps: set[str] | None = None, *,
-                 operator: OperatorInfo, suffix: bool | None = None) -> int:
+                 operator: OperatorInfo | None, suffix: bool | None = None) -> int:
     """Charge les couches selectionnees (cles simples du catalogue) pour
-    *operator* (spec § 6.3, § 6.4).
+    *operator* (spec § 6.3, § 6.4). ``operator=None`` (2.0, chargement sans
+    operateur) : seules les entrees communes (hors OPERATOR_GROUPS) sont lues,
+    aucun groupe operateur n'est cree et stamp_project n'est jamais appele ;
+    la version et le plugin sont ecrits quand meme.
 
     Les entrees operateur sont lues dans operator.schema et rangees dans le
     groupe de l'operateur ; les entrees communes, chargees une seule fois
@@ -1221,7 +941,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         Nombre de couches ajoutees.
     """
     project = QgsProject.instance()
-    catalog = catalog_for(operator.schema)
+    catalog = _common_catalog() if operator is None else catalog_for(operator.schema)
 
     # -- CRS projet -------------------------------------------------------
     crs = QgsCoordinateReferenceSystem("EPSG:31370")

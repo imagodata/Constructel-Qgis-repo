@@ -51,6 +51,6 @@ def test_planned_modules_carry_the_future_import():
     # D16 : modules du plan deja touches ; les nouveaux modules s'ajoutent ici.
     for name in ("bridge_plugin.py", "bridge_project_init.py", "bridge_sketcher.py", "bridge_operators.py",
                  "bridge_onboarding.py", "bridge_diagnostic.py", "bridge_diagnostic_dialog.py",
-                 "bridge_home_model.py", "bridge_home.py"):
+                 "bridge_home_model.py", "bridge_home.py", "bridge_presets.py", "bridge_layer_selection.py"):
         tree = ast.parse((PKG / name).read_text(encoding="utf-8"))
         assert _has_future_annotations(tree), name

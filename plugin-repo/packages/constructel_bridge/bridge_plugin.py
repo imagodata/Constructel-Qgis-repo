@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Optional
+from typing import Optional, Sequence
 from xml.sax.saxutils import escape as xml_escape, unescape as xml_unescape
 
 from qgis.core import (
@@ -48,6 +48,15 @@ from qgis.PyQt.QtWidgets import (
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
 from .bridge_diagnostic import identity_check, plugin_checks, plugin_summary, plugin_version_from_metadata
+from .bridge_presets import (
+    ALWAYS_KEYS,
+    LAST_SELECTION_KEY,
+    USER_PRESETS_KEY,
+    LayerSelection,
+    UserPreset,
+    presets_from_json,
+    presets_to_json,
+)
 from .bridge_expressions import register_expressions, unregister_expressions
 from .bridge_identity import (
     build_pgoptions,
@@ -65,12 +74,14 @@ from .bridge_mtls import (
 )
 from .bridge_operators import (
     FALLBACK_OPERATOR,
-    LAST_OPERATOR_KEY,
+    LAST_OPERATORS_KEY,
+    OPERATOR_KEYS,
     OPERATORS_QUERY,
     SCOPE_CODES_QUERY,
     SUFFIX_SETTINGS_KEY,
     OperatorInfo,
     browser_schemas,
+    format_project_operators,
     is_safe_schema,
     parse_operator_rows,
     parse_project_operators,
@@ -3836,15 +3847,38 @@ class ConstructelBridgePlugin:
     def _home_actions(self):
         from .bridge_home_model import HomeActions
 
+        # Task 9 : les champs ci-dessous marques « placeholder » n'ont pas encore
+        # de methode du plugin ; l'accueil v2 (tache 5) ne les appelle pas.
         return HomeActions(
             snapshot=self.home_snapshot,
             connect=self._on_connect,
-            load=self._load_operator_layers,
-            open_saved_project=self._on_load_project,
-            checkin=self._on_onboarding,
-            diagnostic=self._on_diagnostic,
-            change_language=self._on_change_language,
+            load=self._load_selection,
+            list_projects=lambda *a: None,                  # Task 9
+            open_project=lambda *a: False,                  # Task 9
+            diagnostic_inputs=lambda *a: ("", [], {}),      # Task 9
+            diagnostic_action=lambda *a: [],                # Task 9
+            configure_sharing=lambda *a: "",                # Task 9
+            make_wizard=lambda *a: None,                    # Task 9
+            set_language=lambda *a: None,                   # Task 9
+            save_presets=self._save_user_presets,
         )
+
+    def _save_user_presets(self, presets) -> None:
+        """Presets utilisateur du poste (QgsSettings, JSON)."""
+        QgsSettings().setValue(USER_PRESETS_KEY, presets_to_json(presets))
+
+    def _home_last_selection(self, settings):
+        """Derniere selection du poste : celle memorisee (LAST_SELECTION_KEY) ;
+        a defaut, les derniers operateurs charges (LAST_OPERATORS_KEY) avec une
+        selection vide, pour que la preselection continue de les suivre.
+        None a la premiere ouverture."""
+        saved = presets_from_json(settings.value(LAST_SELECTION_KEY, ""))
+        if saved:
+            return saved[0]
+        schemas = parse_project_operators(settings.value(LAST_OPERATORS_KEY, ""))
+        if schemas:
+            return UserPreset("", tuple(schemas), LayerSelection({}, frozenset()))
+        return None
 
     def home_snapshot(self):
         """Etat de l'ecran d'accueil, sans aucun acces reseau : session en
@@ -3877,12 +3911,14 @@ class ConstructelBridgePlugin:
             operators=operators,
             counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry)),
             labels=labels,
-            last_schema=settings.value(LAST_OPERATOR_KEY, "") or "",
+            last_selection=self._home_last_selection(settings),
             project_suffix=info["operator_suffix"],
             last_suffix=parse_suffix_flag(settings.value(SUFFIX_SETTINGS_KEY, False)),
             plugin_summary=self._home_plugin_summary(),
             plugin_version=PLUGIN_VERSION,
             project_operators=tuple(info["operators"]),
+            user_presets=tuple(presets_from_json(settings.value(USER_PRESETS_KEY, ""))),
+            checkin=None,   # Task 9
         )
 
     def _home_header(self) -> str:
@@ -3901,37 +3937,73 @@ class ConstructelBridgePlugin:
             self._log(f"Accueil : extensions recommandees illisibles ({exc})", Qgis.MessageLevel.Warning)
             return None
 
-    def _load_operator_layers(self, operator: OperatorInfo, selected: set, basemaps: set,
-                              apply_styles: bool, suffix: bool | None = None) -> int:
-        """Charge les couches *selected* (cles simples du catalogue) de
-        *operator*, les fonds de plan *basemaps*, puis traductions, sources
-        des listes de valeurs, hooks d'edition et lecture seule. Memorise
-        l'operateur sur le poste (LAST_OPERATOR_KEY). Ne leve jamais :
-        erreur -> init.error, retour 0.
+    def _load_selection(self, operators: Sequence[OperatorInfo], selection: LayerSelection,
+                        basemaps: set, apply_styles: bool, suffix: bool | None = None) -> int:
+        """Charge *selection* (2.0) : un appel d'init_project par entree de
+        selection.load_plan() (un par operateur, dans l'ordre ; les couches
+        communes avec le premier ; sans operateur, un seul appel
+        ``operator=None``), les fonds de plan *basemaps* (au premier appel
+        seulement), puis, une fois, traductions, sources des listes de
+        valeurs, hooks d'edition et lecture seule. Memorise les operateurs
+        charges sur le poste (LAST_OPERATORS_KEY ; inchange sans operateur).
+        Ne leve jamais.
 
-        Retourne le nombre de couches ET de fonds de plan ajoutes (un fond
-        seul donne 1, decision T9-c1b) ; 0 si rien de nouveau (avertissement
-        init.nothing_added). Ni couche (v_form_lists seule, toujours incluse
-        par la selection) ni fond demandes : ne fait rien et rend 0 (K2)."""
-        if not set(selected) - {"v_form_lists"} and not basemaps:
+        Un operateur en echec n'annule pas les autres : il est journalise et
+        signale (home.load_partial). Si tous echouent sans rien ajouter :
+        init.error, retour 0. Retourne le nombre de couches ET de fonds de
+        plan ajoutes (un fond seul donne 1, decision T9-c1b) ; 0 si rien de
+        nouveau (avertissement init.nothing_added). Ni couche choisie
+        (v_form_lists, docs_elements : jamais un choix) ni fond demandes : ne
+        fait rien et rend 0 (K2)."""
+        if not selection.layer_count() and not basemaps:
             return 0
         try:
             from .bridge_project_init import _detect_existing_basemaps, init_project
 
+            plan = selection.load_plan() or [(None, frozenset(ALWAYS_KEYS))]  # fonds de plan seuls
+            by_schema = {op.schema: op for op in operators}
             conn_params, password = self._init_conn_params()
-            suffix = self._reorganize_legacy_project(operator, suffix)
+            first = by_schema.get(plan[0][0]) if plan[0][0] is not None else None
+            if first is not None:
+                suffix = self._reorganize_legacy_project(first, suffix)
+            if sum(1 for schema, _keys in plan if schema is not None) > 1:
+                suffix = True  # deux operateurs ou plus : suffixe obligatoire (§ 6.4)
 
             basemaps_before = _detect_existing_basemaps()
-            count = init_project(
-                conn_params, password, selected,
-                add_basemap=bool(basemaps),
-                apply_styles=apply_styles,
-                selected_basemaps=set(basemaps),
-                operator=operator,
-                suffix=suffix,
-            )
+            pending_basemaps = set(basemaps)  # premier appel reussi seulement
+            count, failures, loaded, failed, first_error = 0, 0, [], [], None
+            carried = frozenset()  # couches communes d'une entree en echec : reprises par la suivante
+            for schema, keys in plan:
+                keys = keys | carried
+                operator = by_schema.get(schema) if schema is not None else None
+                try:
+                    if schema is not None and operator is None:
+                        raise ValueError(f"Operateur inconnu : {schema!r}")
+                    count += init_project(
+                        conn_params, password, set(keys),
+                        add_basemap=bool(pending_basemaps),
+                        apply_styles=apply_styles,
+                        selected_basemaps=set(pending_basemaps),
+                        operator=operator,
+                        suffix=suffix,
+                    )
+                    pending_basemaps = set()
+                    carried = frozenset()
+                    if operator is not None:
+                        loaded.append(operator.schema)
+                except Exception as exc:  # noqa: BLE001 -- un operateur en echec n'annule pas les autres
+                    failures += 1
+                    if schema is not None:  # l'entree sans operateur n'a pas de nom a citer
+                        failed.append(operator.label if operator is not None else schema)
+                    carried = frozenset(keys - OPERATOR_KEYS)
+                    first_error = first_error or exc
+                    import traceback
+                    self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
             added_basemaps = len(_detect_existing_basemaps() - basemaps_before)
-            QgsSettings().setValue(LAST_OPERATOR_KEY, operator.schema)
+            if loaded:
+                QgsSettings().setValue(LAST_OPERATORS_KEY, format_project_operators(loaded))
+            if failures == len(plan) and not count and not added_basemaps:
+                raise first_error
 
             # Appliquer les traductions i18n
             bridge_sketcher.apply_all_translations()
@@ -3947,7 +4019,12 @@ class ConstructelBridgePlugin:
                 message, level = tr("init.success_basemaps", count=added_basemaps), Qgis.MessageLevel.Success
             else:
                 message, level = tr("init.nothing_added"), Qgis.MessageLevel.Warning
-            self.iface.messageBar().pushMessage("Constructel Bridge", message, level=level, duration=5)
+            messages = self.iface.messageBar()
+            messages.pushMessage("Constructel Bridge", message, level=level, duration=5)
+            if failed:
+                messages.pushMessage(
+                    "Constructel Bridge", tr("home.load_partial", operators=", ".join(failed)),
+                    level=Qgis.MessageLevel.Warning, duration=10)
             return count + added_basemaps
         except Exception as exc:  # noqa: BLE001 -- jamais bloquant
             QMessageBox.critical(

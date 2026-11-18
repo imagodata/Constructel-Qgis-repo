@@ -6,7 +6,15 @@ from __future__ import annotations
 import pytest
 
 from constructel_bridge import bridge_operators as bo
-from constructel_bridge_tests.fakes19 import ORANGE, WYRE, FakeLayer, FakeRasterLayer, install_fake_project
+from constructel_bridge.bridge_presets import LayerSelection
+from constructel_bridge_tests.fakes19 import (
+    ORANGE,
+    WYRE,
+    FakeLayer,
+    FakeRasterLayer,
+    install_fake_project,
+    load_keys,
+)
 from constructel_bridge_tests.test_bridge18_connect import _FakeCursor, _make_plugin, _PgErr
 from constructel_bridge_tests.test_bridge18_layers import (  # noqa: F401  (pi = fixture)
     _FakeIface,
@@ -400,7 +408,7 @@ def test_relation_primary_schema_follows_identity(pi, monkeypatch):
 # --- cote plugin -----------------------------------------------------------------------
 
 
-def test_load_operator_layers_passes_operator_and_remembers_it(bp18, pi, monkeypatch, tmp_path):
+def test_load_selection_passes_operator_and_remembers_it(bp18, pi, monkeypatch, tmp_path):
     from qgis.core import QgsSettings
 
     calls = []
@@ -408,15 +416,15 @@ def test_load_operator_layers_passes_operator_and_remembers_it(bp18, pi, monkeyp
     monkeypatch.setattr(bp18.bridge_sketcher, "apply_all_translations", lambda *a, **k: None)
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
 
-    assert plugin._load_operator_layers(ORANGE, {"cables"}, set(), True) == 3
+    assert load_keys(plugin, ORANGE, {"cables"}, set(), True) == 3
 
     assert calls[0]["operator"] == ORANGE and calls[0]["suffix"] is None
     assert calls[0]["add_basemap"] is False and calls[0]["apply_styles"] is True
-    assert QgsSettings().value(bo.LAST_OPERATOR_KEY) == "orange"
+    assert QgsSettings().value(bo.LAST_OPERATORS_KEY) == "orange"
     assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.success", count=3)
 
 
-def test_load_operator_layers_never_raises(bp18, pi, monkeypatch, tmp_path):
+def test_load_selection_never_raises(bp18, pi, monkeypatch, tmp_path):
     from qgis.core import QgsSettings
 
     errors = []
@@ -428,12 +436,14 @@ def test_load_operator_layers_never_raises(bp18, pi, monkeypatch, tmp_path):
     monkeypatch.setattr(bp18.QMessageBox, "critical", staticmethod(lambda *a, **k: errors.append(a[2])))
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
 
-    assert plugin._load_operator_layers(ORANGE, {"cables"}, {"osm"}, True, suffix=True) == 0
+    assert load_keys(plugin, ORANGE, {"cables"}, {"osm"}, True, suffix=True) == 0
 
     assert errors == [bp18.tr("init.error", error="permission denied for schema orange")]
-    assert QgsSettings().value(bo.LAST_OPERATOR_KEY) is None
+    assert QgsSettings().value(bo.LAST_OPERATORS_KEY) is None
 
 
+# 2.0 : sans operateur utilisable, le chargement reste ouvert (couches communes
+# seules) ; le geste click_load appelle donc load() avec un perimetre vide.
 # Decision K2 (tache 9) : l'ecran d'accueil (_on_home) remplace _on_init_project ;
 # les quatre tests ci-dessous en gardent l'intention sur le nouveau point
 # d'entree. L'ecran est un enregistreur ; click_load = l'utilisateur garde
@@ -445,12 +455,12 @@ def test_init_menu_without_usable_operator_warns(bp18, pi, homes, monkeypatch):
     homes.script.append(click_load())
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     plugin._connected, plugin._operators = True, []
-    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_load_selection", lambda *a, **k: loads.append(a) or 1)
     monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
     plugin._on_home()
     state = hm.home_state(homes.created[0].actions.snapshot())
-    assert (state.message_key, state.load_enabled) == ("home.no_operator", False)
-    assert loads == []
+    assert (state.message_key, state.load_enabled) == ("home.common_only", True)   # 2.0 : communes seules
+    assert loads == [((), LayerSelection({}, frozenset()), {"osm"}, False, False)]   # aucun operateur, aucune couche
 
 
 def test_init_menu_loads_preselected_operator(bp18, pi, homes, monkeypatch):
@@ -458,16 +468,16 @@ def test_init_menu_loads_preselected_operator(bp18, pi, homes, monkeypatch):
 
     loads = []
     homes.script.append(click_load())
-    QgsSettings().setValue(bo.LAST_OPERATOR_KEY, "wyre")
+    QgsSettings().setValue(bo.LAST_OPERATORS_KEY, "wyre")
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     plugin._connected, plugin._operators = True, [ORANGE, WYRE]
-    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_load_selection", lambda *a, **k: loads.append(a) or 1)
     monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
 
     plugin._on_home()
 
-    assert hm.home_state(homes.created[0].actions.snapshot()).preselected == WYRE
-    assert loads == [(WYRE, {"cables", "v_form_lists"}, {"osm"}, False, False)]
+    assert hm.home_state(homes.created[0].actions.snapshot()).preselected == ("wyre",)
+    assert loads == [((WYRE,), LayerSelection({"wyre": {"cables"}}, frozenset()), {"osm"}, False, False)]
 
 
 def test_unreadable_operator_list_falls_back_to_wyre(bp18, pi, homes, monkeypatch, tmp_path):
@@ -479,14 +489,14 @@ def test_unreadable_operator_list_falls_back_to_wyre(bp18, pi, homes, monkeypatc
     assert plugin._connected is True and plugin._operators == [] and plugin._operators_unavailable is True
     loads = []
     homes.script.append(click_load())
-    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_load_selection", lambda *a, **k: loads.append(a) or 1)
     monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
 
     plugin._on_home()
 
     snapshot = homes.created[0].actions.snapshot()
     assert snapshot.operators == (bo.OperatorInfo("WYRE", "Wyre", "wyre"),) == (bo.FALLBACK_OPERATOR,)
-    assert [call[0] for call in loads] == [bo.FALLBACK_OPERATOR]
+    assert [call[0] for call in loads] == [(bo.FALLBACK_OPERATOR,)]
 
 
 def test_readable_list_without_usable_operator_blocks_loading(bp18, pi, homes, monkeypatch, tmp_path):
@@ -497,11 +507,11 @@ def test_readable_list_without_usable_operator_blocks_loading(bp18, pi, homes, m
     assert plugin._connected is True and plugin._operators == [] and plugin._operators_unavailable is False
     loads = []
     homes.script.append(click_load())
-    monkeypatch.setattr(plugin, "_load_operator_layers", lambda *a, **k: loads.append(a) or 1)
+    monkeypatch.setattr(plugin, "_load_selection", lambda *a, **k: loads.append(a) or 1)
     monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
 
     plugin._on_home()
 
     state = hm.home_state(homes.created[0].actions.snapshot())
-    assert (state.message_key, state.load_enabled, state.selector) == ("home.no_operator", False, "none")
-    assert loads == []
+    assert (state.message_key, state.load_enabled, state.operators) == ("home.common_only", True, ())
+    assert loads == [((), LayerSelection({}, frozenset()), {"osm"}, False, False)]

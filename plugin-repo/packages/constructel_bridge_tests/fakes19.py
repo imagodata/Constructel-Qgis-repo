@@ -644,3 +644,15 @@ def install_fake_project(module, monkeypatch) -> FakeProject:
     if utils is not None:
         monkeypatch.setattr(utils, "setProjectVariable", staticmethod(_set_project_variable))
     return project
+
+
+def load_keys(plugin, operator, keys, basemaps, apply_styles, suffix=None):
+    """Chargement d'un seul operateur a l'ancienne (cles simples du catalogue)
+    via ConstructelBridge._load_selection : les cles operateur vont dans la
+    selection de *operator*, les autres sont communes."""
+    from constructel_bridge.bridge_operators import OPERATOR_KEYS
+    from constructel_bridge.bridge_presets import LayerSelection
+
+    keys = set(keys)
+    selection = LayerSelection({operator.schema: frozenset(keys & OPERATOR_KEYS)}, frozenset(keys - OPERATOR_KEYS))
+    return plugin._load_selection([operator], selection, set(basemaps), apply_styles, suffix)

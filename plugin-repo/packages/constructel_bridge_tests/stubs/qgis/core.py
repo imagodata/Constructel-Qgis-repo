@@ -478,7 +478,7 @@ class QgsProject:
         return self._layers.get(layer_id)
 
     def layerTreeRoot(self):
-        # Arbre de couches vide (Bridge 1.9 tache 6 : _load_operator_layers
+        # Arbre de couches vide (Bridge 1.9 tache 6 : _load_selection
         # cherche des groupes 1.8 a ranger) ; les tests d'arbre utilisent le
         # FakeProject de fakes19.
         return _StubLayerTreeRoot()

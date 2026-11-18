@@ -140,9 +140,11 @@ def test_trench_segments_layer_in_catalog(project_init):
     assert ("zone_pop", "trench_segments", "zone_pop_id", "trench_segments_to_pop") in (
         project_init.RELATION_DEFS
     )
-    # Segments de tranchée cochés par défaut dans tous les profils (Simon 04/11)
-    profiles = {k for k, t in project_init.TEMPLATES.items() if "trench_segments" in t["layers"]}
-    assert profiles == set(project_init.TEMPLATES)
+    # Segments de tranchée cochés par défaut (Simon 04/11) : couche de la tuile
+    # « Génie civil » (modèle 2.0), hors couches expert.
+    from constructel_bridge.bridge_presets import EXPERT_KEYS, tile_keys
+
+    assert "trench_segments" in tile_keys("genie_civil") and "trench_segments" not in EXPERT_KEYS
 
 
 def test_trench_segments_fr_aliases_match_embedded_qml(project_init):
@@ -219,10 +221,11 @@ def test_duct_progress_layer_in_catalog(project_init):
     assert ("zone_pop", "duct_progress", "zone_pop_id", "duct_progress_to_pop") in (
         project_init.RELATION_DEFS
     )
-    # Suivi de construction, superposé aux conduites : décochée sauf profils
-    # chantier et complet.
-    profiles = {k for k, t in project_init.TEMPLATES.items() if "duct_progress" in t["layers"]}
-    assert profiles == {"infra_chantier", "complet"}
+    # Suivi de construction, superposé aux conduites : couche de la tuile
+    # « Génie civil » (modèle 2.0), hors couches expert.
+    from constructel_bridge.bridge_presets import EXPERT_KEYS, tile_keys
+
+    assert "duct_progress" in tile_keys("genie_civil") and "duct_progress" not in EXPERT_KEYS
 
 
 def test_duct_progress_embedded_qml_is_read_only(project_init):

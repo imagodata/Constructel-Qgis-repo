@@ -41,14 +41,15 @@ from .bridge_home_model import (
     home_state,
     suffix_state,
 )
+from .bridge_layer_selection import LayerSelectionWidget
 from .bridge_operators import SUFFIX_SETTINGS_KEY, OperatorInfo
-from .bridge_project_init import LayerSelectionWidget
 from .i18n import tr
 
 # K11 : un appel tr LITTERAL par cle de message (releve par test_bridge18_i18n).
 _MESSAGES = {
     "home.connect_to_see": lambda: tr("home.connect_to_see"),
     "home.no_operator": lambda: tr("home.no_operator"),
+    "home.common_only": lambda: tr("home.common_only"),   # 2.0 : lue par le modele v2 (tache 5)
 }
 _SEP = " · "
 _CONNECTED_COLOR = "#2e7d32"
