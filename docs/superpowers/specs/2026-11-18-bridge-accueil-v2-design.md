@@ -62,14 +62,14 @@ Reprises de la spec du 12/11 § 5 :
 │ 📂 Projets       │ ┌ 1 PÉRIMÈTRE ─────────────────────────────┐ │
 │ ✔ Check-in ⚠ 1   │ │ [☑Wyre] [☑Orange] [Aucun]                │ │
 │ 🩺 Diagnostic    │ └──────────────────────────────────────────┘ │
-│                  │ ┌ 2 PRESETS ──────── Enregistrer ma sélection┐│
-│                  │ │ Mes presets : [Coordo Ixelles] [Permis]  │ │
-│                  │ │ [☑ Zones][☐ Réseau][☐ Chantier][☑OSIRIS] │ │
-│                  │ │ [☐ Cadastre UrbIS][☐ Urbanisme]          │ │
+│                  │ ┌ 2 PRESETS ─── Mes presets ▾ · Enregistrer… ┐│
+│                  │ │ Par opér.  [☑Zones][☐GC][☐Câbles][☐DP]   │ │
+│                  │ │ Commun     [☐Chant.][☑OSIRIS][☐Cad][☐Urb]│ │
+│                  │ │ (tuiles compactes, détail en infobulle)  │ │
 │                  │ └──────────────────────────────────────────┘ │
 │                  │ ┌ 3 COUCHES ───── Afficher toutes les couches┐│
-│ ● s.ducournau    │ │ ▸ ☑ Zones [Wyre] [Orange]  4/4           │ │
-│   Bruxelles      │ │ ▸ ☑ OSIRIS  7/7  …                       │ │
+│ ● s.ducournau    │ │ ▸ ☑ Zones [Wyre] 4/4 · ▸ ☑ Zones [Orange] │ │
+│   Bruxelles      │ │ ▸ ☑ OSIRIS 7/7 · ▸ ☐ Génie civil [Wyre]  │ │
 │ FR · EN · PT     │ └──────────────────────────────────────────┘ │
 │ [Se connecter]   │ ▸ Options             20 couches  [ Charger ]│
 └──────────────────┴──────────────────────────────────────────────┘
@@ -81,23 +81,30 @@ Reprises de la spec du 12/11 § 5 :
 ### 6.2 Page « Charger les couches » : étapes numérotées en une colonne
 
 1. **Périmètre** : un bouton par opérateur utilisable, **plusieurs cochables à la fois**, plus **« Aucun — couches communes »**, exclusif. Simon a choisi de **garder cette étape** au-dessus des cartes (variante A) plutôt que de mettre l'opérateur dans une carte.
-2. **Presets** : **cartes cumulables** (on coche / décoche chacune) avec titre et description courte de ce qu'elles chargent. Deux cartes **opérateur**, appliquées à chaque opérateur coché : **Zones** (MRO, POP, distribution, drop) et **Réseau** (structures, câbles, conduites, tranchées, points de demande) — découpage A choisi contre une carte Infra unique et contre un découpage en 4. Quatre cartes **communes** : **Chantier**, **OSIRIS**, **Cadastre UrbIS**, **Urbanisme**. « Urbanisme » ne contient plus implicitement le cadastre.
-3. **Couches** : l'arbre, pour ajuster, avec un groupe par opérateur coché.
-- **Multi-opérateur** : cas de référence « zones MRO/POP de Wyre et d'Orange » = cocher Wyre et Orange, carte Zones seule, Charger. Un seul clic enchaîne les opérateurs ; les couches communes ne sont chargées qu'une fois. Le suffixe opérateur est imposé dès deux opérateurs entre ceux du projet et ceux cochés (règle `suffix_state` existante).
+2. **Presets** : **tuiles cumulables** (on coche / décoche chacune), **en deux rangées étiquetées** (variante « C1 », découpage fin amélioré, choisie le 18/11 contre Zones / Réseau, une carte Infra unique et une variante sans étape Périmètre) :
+   - rangée **« Par opérateur »**, appliquée à chaque opérateur coché, l'étiquette rappelant lesquels (pastilles) : **Zones** (MRO, POP, distribution, drop), **Génie civil** (structures, conduites, segments de tranchée, avancement des fourreaux), **Câbles**, **Points de demande** ;
+   - rangée **« Commun »** : **Chantier**, **OSIRIS**, **Cadastre UrbIS**, **Urbanisme**. « Urbanisme » ne contient plus implicitement le cadastre.
+   - **Tuiles compactes** : case, icône, nom, nombre de couches ; la liste des couches passe en **infobulle**. Raccourci **« tout · rien »** par rangée.
+   - **États d'une tuile** : cochée, décochée, **partielle** (arbre ajusté à la main, ex. « 2/4 »), **estompée « déjà chargé »** quand toutes ses couches sont déjà dans le projet (pour tous les opérateurs cochés).
+   - **« Mes presets »** : menu déroulant dans l'en-tête de l'étape 2, avec « Enregistrer ma sélection… ».
+3. **Couches** : l'arbre, pour ajuster. **Un groupe par tuile et par opérateur** (« Zones [Wyre] », « Zones [Orange] », « Génie civil [Wyre] »…), ce qui permet un réglage différent par opérateur (zones Wyre + câbles Orange).
+- **Multi-opérateur** : cas de référence « zones MRO/POP de Wyre et d'Orange » = cocher Wyre et Orange, tuile Zones seule, Charger. Un seul clic enchaîne les opérateurs ; les couches communes ne sont chargées qu'une fois. Le suffixe opérateur est imposé dès deux opérateurs entre ceux du projet et ceux cochés (règle `suffix_state` existante).
 - Bouton principal : **« Charger »**, libellé fixe (plus de « Initialiser · Wyre » / « Ajouter les couches · Wyre »).
+
+- **Connecté sans opérateur utilisable** (décision Simon 18/11) : on peut charger les couches communes. Le périmètre n'affiche que « Aucun » (présélectionné), la rangée « Par opérateur » est grisée ; le message 1.9.0 `home.no_operator` (blocage total) est remplacé par une mention informative. Les droits restent vérifiés côté base : une couche que le rôle ne peut pas lire échoue comme aujourd'hui.
 
 ### 6.3 Extras retenus
 
-- **Mes presets** : « Enregistrer ma sélection… » nomme la sélection courante ; elle réapparaît en pastille au-dessus des cartes, sur ce poste.
+- **Mes presets** : « Enregistrer ma sélection… » nomme la sélection courante ; elle réapparaît dans le menu « Mes presets » de l'étape 2, sur ce poste.
 - **Dernier choix retenu** : à l'ouverture, on recoche ce qui a été chargé la dernière fois sur ce poste (périmètre, cartes, ajustements).
-- **Masquer « Référence »** : le groupe technique (`docs_elements`, `v_form_lists`) sort de l'arbre ; il reste chargé automatiquement comme aujourd'hui (`v_form_lists` toujours incluse).
+- **Masquer « Référence »** : le groupe technique (`docs_elements`, `v_form_lists`) sort de l'arbre. `v_form_lists` reste toujours incluse (comme aujourd'hui) ; `docs_elements`, qui ne venait jusqu'ici que par les modèles, est chargée automatiquement dès qu'une tuile opérateur est cochée (cf. § 8.1).
 - **Couches « expert »** : les couches rarement utiles sont masquées derrière « Afficher toutes les couches ».
 
 ### 6.4 Page « Check-in » : état + actions + assistant à la demande
 
 - La page montre l'état : profil (login, e-mail), extensions recommandées (actives / à mettre à jour / absentes, avec boutons « Mettre à jour » / « Installer » par ligne), partages (Resource Sharing, FilterMate) configurés ou non.
 - Un bouton **« Refaire le check-in complet »** lance l'assistant existant (`OnboardingWizard`) **dans la page**.
-- **Ressources Constructel (affichage d'état seulement, le fond relève du chantier 2)** : dépôt Resource Sharing « Constructel » configuré ou non, collections du dépôt (`resource-repo/metadata.ini` : as-built, layers_to_atlas, fusion GPKG JMS, style cadastral, SVG, sketches) installées / à jour / absentes ; FilterMate : dépôt de favoris « Constructel » configuré ou non. Une action « Configurer » réutilise le code existant de l'assistant (`_configure_resource_sharing`, `_configure_filtermate_sharing`).
+- **Ressources Constructel (affichage d'état réduit, le fond relève du chantier 2)** : dépôt Resource Sharing « Constructel » configuré ou non (lecture de `ResourceSharing/repositories`), dépôt de favoris FilterMate « Constructel » configuré ou non. Aucun accès réseau ni lecture de l'état interne de l'extension Resource Sharing en v2 : l'état détaillé des collections (installées / à jour / absentes) est renvoyé au chantier 2. Une action « Configurer » réutilise le code de l'assistant, **extrait** de `OnboardingWizard` (`_configure_resource_sharing`, `_configure_filtermate_sharing` dépendent aujourd'hui de ses pages et de `_actions_done`) vers des fonctions réutilisables par la page et par l'assistant.
 
 ### 6.5 Le setup ne se rejoue pas s'il est déjà fait
 
@@ -107,10 +114,10 @@ Reprises de la spec du 12/11 § 5 :
 
 ## 7. Propositions de Claude reprises sans objection (à confirmer en relisant)
 
-- **Lien périmètre ↔ cartes opérateur** : « Aucun » grise et décoche Zones et Réseau ; cocher un opérateur les réactive (état repris du dernier choix). Décocher les deux cartes avec un opérateur coché ne change pas le périmètre (on charge alors seulement des communes ; aucun opérateur n'est inscrit au projet, cf. § 8.2). Décocher le dernier opérateur coché bascule sur « Aucun ».
-- **Cartes selon le contexte** : toutes les cartes restent visibles dans les deux modes ; seules les cartes opérateur sont grisées en « Aucun ». Coché/décoché d'une carte = coche/décoche ses couches dans l'arbre ; une carte dont l'arbre est partiellement coché s'affiche en état intermédiaire.
+- **Lien périmètre ↔ cartes opérateur** : « Aucun » grise et décoche la rangée « Par opérateur » ; cocher un opérateur les réactive (état repris du dernier choix). Décocher toute la rangée « Par opérateur » avec un opérateur coché ne change pas le périmètre (on charge alors seulement des communes ; aucun opérateur n'est inscrit au projet, cf. § 8.2). Décocher le dernier opérateur coché bascule sur « Aucun ».
+- **Cartes selon le contexte** : toutes les cartes restent visibles dans les deux modes ; seule la rangée « Par opérateur » est grisée en « Aucun ». Cocher / décocher une tuile coche / décoche ses couches dans l'arbre (pour chaque opérateur coché, pour une tuile opérateur).
 - **Arbre allégé** : libellé court seul (« Zones gelées »), `schema.table` en infobulle ; compteur par groupe (« OSIRIS 7/7 », « Zones [Wyre] 4/4 ») ou « déjà chargé » ; groupes entièrement chargés repliés ; badge opérateur / « commun » conservé.
-- **Couches expert** proposées : `subducts` (déjà exclue de tous les modèles) et `planning_facades` (sans géométrie). Liste en constante, facile à ajuster.
+- **Couches expert** proposées : `subducts` (déjà exclue de tous les modèles) et `planning_facades` (sans géométrie). Liste en constante, facile à ajuster. Une couche expert n'est **jamais cochée par une tuile** ni comptée dans son nombre de couches (Chantier affiche donc 6) ; on la coche à la main après « Afficher toutes les couches ». Conséquence assumée : `planning_facades`, cochée par l'actuel modèle « Infra + Chantier », ne l'est plus par défaut.
 - **Options** repliées sous la page : fonds de plan (arbre actuel), « Appliquer les styles de la base », suffixe opérateur. La case du suffixe est masquée en « Aucun ».
 - **Résumé** à gauche du bouton : « 20 couches · 2 fonds de plan » (ce qui va être ajouté, hors couches déjà chargées).
 - **Projet enregistré** : liste des projets en base groupés par opérateur, champ de recherche, bouton « Ouvrir » (remplace le `QInputDialog` de `_on_load_project`). La fenêtre se ferme avant l'ouverture, comme en 1.9.0 (D11). La page est construite pour accueillir plus tard une section « Mes projets / partagés » (chantier 3), sans rien en afficher en v2.
@@ -118,6 +125,7 @@ Reprises de la spec du 12/11 § 5 :
 - **Langue** : sélecteur FR · EN · PT en bas de la barre latérale, pas de page dédiée ; changer de langue redessine la fenêtre.
 - **Hors connexion** : état et bouton « Se connecter » en bas de la barre ; les pages qui demandent la base l'indiquent (règles § 6.6 de la spec du 12/11 inchangées ; Diagnostic reste utilisable hors connexion).
 - **Après un chargement réussi** la fenêtre se ferme ; sinon elle reste ouverte et se met à jour (règle T9-c1b inchangée).
+- **Points d'entrée** : toutes les entrées existantes des menus (Check-in, Statut et diagnostic, Charger un projet, Langue) ouvrent **la fenêtre unique sur la bonne page** ; plus de `QDialog` séparés pour ces fonctions. L'ouverture automatique au premier setup ouvre la fenêtre sur la page Check-in, assistant lancé.
 - **Thème** : couleurs dérivées de la palette Qt de QGIS (`palette().highlight()`, etc.) ; aucune couleur de fond codée en dur.
 - **Version** : 2.0.0 (changement visible de tout l'écran d'accueil).
 
@@ -127,8 +135,11 @@ Reprises de la spec du 12/11 § 5 :
 
 - Remplacer `TEMPLATES` (6 modèles « Infra + X ») par des **blocs** : clé → ensemble de clés du catalogue. Proposition :
   - `zones` (opérateur) = zone_mro, zone_pop, zone_distribution, zone_drop ;
-  - `reseau` (opérateur) = structures, ducts, cables, trench_segments, demand_points (+ `docs_elements` dont les relations visent ces couches) ;
-  - `chantier` = groupe Chantier + `duct_progress` (l'actuel « Infra + Chantier » l'y ajoutait ; c'est une couche opérateur : à charger pour chaque opérateur coché) ;
+  - `genie_civil` (opérateur) = structures, ducts, trench_segments, duct_progress (+ `subducts`, couche expert, visible seulement avec « Afficher toutes les couches ») ;
+  - `cables` (opérateur) = cables ;
+  - `demand_points` (opérateur) = demand_points ;
+  - `chantier` = groupe Chantier (7 couches communes). `duct_progress` en sort (l'actuel « Infra + Chantier » l'y ajoutait) : c'est une couche opérateur de suivi de construction, rangée dans Génie civil ;
+  - `docs_elements` (Référence, masquée) : chargée automatiquement dès qu'une tuile opérateur est cochée, ses relations visant structures, câbles, conduites, DP et zones ;
   - `osiris`, `cadastre` (4 couches WFS UrbIS), `urbanisme` (`wfs_protection`, `wfs_heritage`).
   - ⚠ `topo_violations` est cité dans `_INFRA_BASE` mais absent de `LAYER_CATALOG` : vérifier et nettoyer.
 - « Mes presets » et « Dernier choix » : stockés dans `QgsSettings` (clé sous `constructel_bridge/`), format sérialisé simple (JSON : nom, périmètre, clés de couches). Un preset qui cite un opérateur non utilisable sur la session se charge en « Aucun » ou est grisé (au builder de trancher, en le signalant).
@@ -150,6 +161,7 @@ Reprises de la spec du 12/11 § 5 :
 ### 8.4 Setup
 
 - Supprimer l'effacement de `onboarding_done` sur changement de version ; garder la mise à jour de `plugin_version`.
+- **Rattrapage ponctuel** à la première exécution de la 2.0 : la 1.9.0 a effacé l'indicateur et ne le remet à vrai qu'en fin d'assistant connecté ; quelqu'un qui a fermé l'assistant 1.9 sans le finir le reverrait. Si une `plugin_version` antérieure était déjà enregistrée (poste déjà installé) et que l'utilisateur n'est pas nouveau, considérer le setup comme fait (poser `onboarding_done`). Ne jouer ce rattrapage qu'une fois (clé dédiée).
 - Calculer la pastille à partir de `PluginSummary.updates` + extensions recommandées absentes.
 - Les gardes existantes sur l'ouverture automatique (I-3 « jamais deux fois », I13 « pas sous l'écran de démarrage ») restent.
 
@@ -165,4 +177,4 @@ Reprises de la spec du 12/11 § 5 :
 - **Retenue — refonte de `HomeDialog` en Qt code** (barre latérale + pages empilées), en gardant le découpage modèle sans Qt / dessin. Cohérente avec le reste du plugin et ses tests sur stubs.
 - Écartée — **fichiers Qt Designer (`.ui`)** : aucun dans le plugin, casserait le patron de tests.
 - Écartée — **interface web embarquée (QWebEngine)** : moteur non fiable dans les QGIS Windows des utilisateurs.
-- Pour les presets, Simon a choisi les **cartes cumulables** contre des presets par métier et contre la liste actuelle corrigée ; pour le périmètre, **l'étape conservée** (A) contre l'opérateur dans la carte Infrastructure (B) ; pour l'infra, **Zones / Réseau** contre une carte unique et contre 4 cartes.
+- Pour les presets, Simon a choisi les **cartes cumulables** contre des presets par métier et contre la liste actuelle corrigée ; pour le périmètre, **l'étape conservée** (A) contre l'opérateur dans la carte Infrastructure (B) ; pour l'infra, le **découpage fin amélioré « C1 »** (4 tuiles opérateur compactes + 4 communes, deux rangées, étape Périmètre conservée) contre Zones / Réseau, une carte unique et « C2 » (opérateurs en tête de rangée, sans « Aucun »).
