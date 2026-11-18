@@ -49,6 +49,7 @@ from .i18n import tr
 _MESSAGES = {
     "home.connect_to_see": lambda: tr("home.connect_to_see"),
     "home.no_operator": lambda: tr("home.no_operator"),
+    "home.common_only": lambda: tr("home.common_only"),   # 2.0 : lue par le modele v2 (tache 5)
 }
 _SEP = " · "
 _CONNECTED_COLOR = "#2e7d32"

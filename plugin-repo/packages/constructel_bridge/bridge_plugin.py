@@ -48,7 +48,15 @@ from qgis.PyQt.QtWidgets import (
 from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
 from . import bridge_sketcher
 from .bridge_diagnostic import identity_check, plugin_checks, plugin_summary, plugin_version_from_metadata
-from .bridge_presets import ALWAYS_KEYS, LayerSelection
+from .bridge_presets import (
+    ALWAYS_KEYS,
+    LAST_SELECTION_KEY,
+    USER_PRESETS_KEY,
+    LayerSelection,
+    UserPreset,
+    presets_from_json,
+    presets_to_json,
+)
 from .bridge_expressions import register_expressions, unregister_expressions
 from .bridge_identity import (
     build_pgoptions,
@@ -66,7 +74,6 @@ from .bridge_mtls import (
 )
 from .bridge_operators import (
     FALLBACK_OPERATOR,
-    LAST_OPERATOR_KEY,
     LAST_OPERATORS_KEY,
     OPERATOR_KEYS,
     OPERATORS_QUERY,
@@ -3840,15 +3847,38 @@ class ConstructelBridgePlugin:
     def _home_actions(self):
         from .bridge_home_model import HomeActions
 
+        # Task 9 : les champs ci-dessous marques « placeholder » n'ont pas encore
+        # de methode du plugin ; l'accueil v2 (tache 5) ne les appelle pas.
         return HomeActions(
             snapshot=self.home_snapshot,
             connect=self._on_connect,
             load=self._load_selection,
-            open_saved_project=self._on_load_project,
-            checkin=self._on_onboarding,
-            diagnostic=self._on_diagnostic,
-            change_language=self._on_change_language,
+            list_projects=lambda *a: None,                  # Task 9
+            open_project=lambda *a: False,                  # Task 9
+            diagnostic_inputs=lambda *a: ("", [], {}),      # Task 9
+            diagnostic_action=lambda *a: [],                # Task 9
+            configure_sharing=lambda *a: "",                # Task 9
+            make_wizard=lambda *a: None,                    # Task 9
+            set_language=lambda *a: None,                   # Task 9
+            save_presets=self._save_user_presets,
         )
+
+    def _save_user_presets(self, presets) -> None:
+        """Presets utilisateur du poste (QgsSettings, JSON)."""
+        QgsSettings().setValue(USER_PRESETS_KEY, presets_to_json(presets))
+
+    def _home_last_selection(self, settings):
+        """Derniere selection du poste : celle memorisee (LAST_SELECTION_KEY) ;
+        a defaut, les derniers operateurs charges (LAST_OPERATORS_KEY) avec une
+        selection vide, pour que la preselection continue de les suivre.
+        None a la premiere ouverture."""
+        saved = presets_from_json(settings.value(LAST_SELECTION_KEY, ""))
+        if saved:
+            return saved[0]
+        schemas = parse_project_operators(settings.value(LAST_OPERATORS_KEY, ""))
+        if schemas:
+            return UserPreset("", tuple(schemas), LayerSelection({}, frozenset()))
+        return None
 
     def home_snapshot(self):
         """Etat de l'ecran d'accueil, sans aucun acces reseau : session en
@@ -3881,12 +3911,14 @@ class ConstructelBridgePlugin:
             operators=operators,
             counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry)),
             labels=labels,
-            last_schema=settings.value(LAST_OPERATOR_KEY, "") or "",
+            last_selection=self._home_last_selection(settings),
             project_suffix=info["operator_suffix"],
             last_suffix=parse_suffix_flag(settings.value(SUFFIX_SETTINGS_KEY, False)),
             plugin_summary=self._home_plugin_summary(),
             plugin_version=PLUGIN_VERSION,
             project_operators=tuple(info["operators"]),
+            user_presets=tuple(presets_from_json(settings.value(USER_PRESETS_KEY, ""))),
+            checkin=None,   # Task 9
         )
 
     def _home_header(self) -> str:

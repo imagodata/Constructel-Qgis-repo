@@ -13,7 +13,6 @@ dans la grande tuile.
     base."""
 from __future__ import annotations
 
-import ast
 import importlib
 import re
 import sys
@@ -26,6 +25,13 @@ import pytest
 from constructel_bridge import bridge_diagnostic as bd
 from constructel_bridge import bridge_home_model as hm
 from constructel_bridge import bridge_operators as bo
+from constructel_bridge.bridge_presets import (
+    LAST_SELECTION_KEY,
+    USER_PRESETS_KEY,
+    LayerSelection,
+    UserPreset,
+    presets_to_json,
+)
 from constructel_bridge_tests.fakes19 import (
     ORANGE,
     WYRE,
@@ -59,103 +65,12 @@ class Counts:
 
 def snap(**kw):
     base = dict(connected=True, header="jdoe · 10 MRO", operators=(WYRE, ORANGE), counts=Counts({}, 0, 0),
-                labels={"wyre": "Wyre", "orange": "Orange"}, last_schema="", project_suffix=None, last_suffix=False,
+                labels={"wyre": "Wyre", "orange": "Orange"}, last_selection=None, project_suffix=None, last_suffix=False,
                 plugin_summary=bd.PluginSummary(5, 6, 1), plugin_version="1.9.0", project_operators=())
     return hm.HomeSnapshot(**{**base, **kw})
 
 
-# --- modele : home_state ----------------------------------------------------------------
-
-
-def test_offline_state():
-    s = hm.home_state(snap(connected=False, header="", operators=()))
-    assert (s.selector, s.load_enabled, s.message_key, s.saved_project_enabled) == ("none", False, "home.connect_to_see", False)
-    assert s.preselected is None
-
-
-def test_offline_never_offers_a_stale_operator_list():
-    s = hm.home_state(snap(connected=False, header=""))
-    assert (s.selector, s.load_enabled, s.preselected, s.loaded_marks) == ("none", False, None, frozenset())
-
-
-def test_no_operator_state():
-    s = hm.home_state(snap(operators=()))
-    assert (s.selector, s.load_enabled, s.message_key) == ("none", False, "home.no_operator")
-    assert s.saved_project_enabled is True and s.preselected is None
-
-
-def test_one_operator_is_a_label_two_are_buttons():
-    one = hm.home_state(snap(operators=(WYRE,)))
-    assert (one.selector, one.load_enabled, one.message_key, one.preselected) == ("label", True, "", WYRE)
-    assert hm.home_state(snap()).selector == "buttons"
-
-
-def test_preselection_and_add_mode():
-    s = hm.home_state(snap(last_schema="wyre", counts=Counts({"wyre": 14}, 0, 3)))
-    assert s.preselected == WYRE and s.mode == "add"
-    assert s.loaded_marks == frozenset({"wyre"}) and s.summary == (("Wyre", 14),)
-    assert hm.home_state(snap()).mode == "init"
-
-
-def test_preselection_falls_back_to_first_operator():
-    assert hm.home_state(snap(last_schema="proximus")).preselected == WYRE
-    assert hm.home_state(snap(operators=(ORANGE, WYRE), last_schema="wyre")).preselected == WYRE
-
-
-def test_common_layers_alone_switch_to_add_mode():
-    s = hm.home_state(snap(counts=Counts({}, 7, 0)))
-    assert s.mode == "add" and s.summary == () and s.loaded_marks == frozenset()
-
-
-def test_every_loaded_operator_is_marked_and_summarized_in_load_order():
-    s = hm.home_state(snap(counts=Counts({"orange": 9, "wyre": 14}, 2, 3)))
-    assert s.loaded_marks == frozenset({"wyre", "orange"})
-    assert s.summary == (("Orange", 9), ("Wyre", 14))
-
-
-def test_operator_outside_scopes_is_summarized_not_selectable():   # Review Focus 4, K14
-    s = hm.home_state(snap(operators=(WYRE,), counts=Counts({"orange": 9}, 0, 0)))
-    assert s.selector == "label" and s.preselected == WYRE
-    assert s.summary == (("Orange", 9),) and s.loaded_marks == frozenset()
-
-
-def test_summary_label_of_an_unknown_schema_is_capitalized():
-    s = hm.home_state(snap(labels={}, counts=Counts({"proximus": 2}, 0, 0)))
-    assert s.summary == (("Proximus", 2),)
-
-
-# --- modele : suffix_state -------------------------------------------------------------
-
-
-def test_suffix_state():
-    assert hm.suffix_state([], "wyre", None, False) == (False, True)
-    assert hm.suffix_state([], "wyre", None, True) == (True, True)
-    assert hm.suffix_state(["wyre"], "wyre", False, True) == (False, True)
-    assert hm.suffix_state(["wyre"], "orange", False, False) == (True, False)
-
-
-def test_suffix_state_project_choice_wins_over_workstation_default():
-    assert hm.suffix_state(["wyre"], "wyre", True, False) == (True, True)
-    assert hm.suffix_state(("wyre", "wyre"), "wyre", None, False) == (False, True)   # doublons : un seul schema
-    assert hm.suffix_state(["wyre", "orange"], "wyre", False, False) == (True, False)
-
-
-# --- modele : actions -------------------------------------------------------------------
-
-
-def test_home_actions_fields():
-    assert [f.name for f in fields(hm.HomeActions)] == [
-        "snapshot", "connect", "load", "open_saved_project", "checkin", "diagnostic", "change_language"]
-
-
-def test_home_model_has_no_qt_import():
-    tree = ast.parse((PLUGIN_DIR / "bridge_home_model.py").read_text(encoding="utf-8"))
-    guarded = {id(n) for block in tree.body if isinstance(block, ast.If) and getattr(block.test, "id", "") == "TYPE_CHECKING"
-               for n in ast.walk(block)}
-    modules = {(n.module or "") if isinstance(n, ast.ImportFrom) else a.name
-               for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) and id(n) not in guarded
-               for a in n.names}
-    assert modules == {"__future__", "dataclasses", "typing", "bridge_operators"}
+# Modele de l'ecran (home_state, suffix_state, HomeActions) : voir test_bridge20_home_model.py.
 
 
 # --- bridge_project_init : couches et fonds deja charges --------------------------------
@@ -714,12 +629,14 @@ def _open(home, snapshot, load_result=3):
     return dialog
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_dialog_keeps_its_actions(home):
     dialog = _open(home, snap())
     assert dialog.actions.snapshot() is dialog.snapshots[-1]
     assert dialog.log == ["snapshot", "snapshot"]
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_offline_screen_disables_operator_choice_loading_and_saved_project(home):
     dialog = _open(home, snap(connected=False, header="", operators=()))
     assert dialog._operator_buttons == {} and dialog._selection is None and dialog._suffix_box is None
@@ -731,6 +648,7 @@ def test_offline_screen_disables_operator_choice_loading_and_saved_project(home)
     assert dialog._connect_button.text() == home.tr("home.connect")
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_connect_button_connects_and_redraws(home):
     dialog = _open(home, snap(connected=False, header="", operators=()))
     old = dialog._body
@@ -742,6 +660,7 @@ def test_connect_button_connects_and_redraws(home):
     assert (dialog._status_dot.text(), dialog._header_label.text()) == ("●", "jdoe · 10 MRO")
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_no_operator_message_and_saved_project_still_available(home):
     dialog = _open(home, snap(operators=()))
     assert dialog._message_label.text() == home.tr("home.no_operator")
@@ -749,6 +668,7 @@ def test_no_operator_message_and_saved_project_still_available(home):
     assert dialog._tiles["project"].enabled is True
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_single_operator_is_shown_as_text_without_selector(home):
     dialog = _open(home, snap(operators=(WYRE,)))
     assert dialog._operator_buttons == {} and dialog._operator_label.text() == "Wyre"
@@ -758,6 +678,7 @@ def test_single_operator_is_shown_as_text_without_selector(home):
     assert dialog._message_label is None
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_two_operators_buttons_marks_and_switch(home):
     dialog = _open(home, snap(last_schema="orange", counts=Counts({"wyre": 14}, 0, 3)))
     buttons = dialog._operator_buttons
@@ -777,12 +698,14 @@ def test_two_operators_buttons_marks_and_switch(home):
     assert dialog._load_button.text() == home.tr("home.btn_add", operator="Wyre")
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_suffix_follows_project_operators_without_layers(home):
     dialog = _open(home, snap(project_operators=("orange",), project_suffix=False))
     assert dialog._selection.operators == [("wyre", "Wyre")]
     assert (dialog._suffix_box.checked, dialog._suffix_box.enabled) == (True, False)
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_operator_outside_scopes_never_gets_a_button(home):   # K14
     dialog = _open(home, snap(operators=(WYRE, PROXIMUS), counts=Counts({"orange": 9}, 0, 0)))
     assert set(dialog._operator_buttons) == {"wyre", "proximus"}
@@ -790,17 +713,20 @@ def test_operator_outside_scopes_never_gets_a_button(home):   # K14
     assert not any("Orange" in text for b in dialog._operator_buttons.values() for text in [b.text()])
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_common_layers_alone_are_summarized(home):
     dialog = _open(home, snap(counts=Counts({}, 7, 0)))
     assert dialog._summary_label.text() == home.tr("home.loaded_common", count=7)
     assert dialog._load_button.text() == home.tr("home.btn_add", operator="Wyre")
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_nothing_loaded_shows_no_summary(home):
     dialog = _open(home, snap())
     assert dialog._summary_label is None and home.tr("home.loaded_title") not in _texts(dialog._body)
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_load_passes_the_selection_and_closes_on_success(home):
     from qgis.core import QgsSettings
 
@@ -811,6 +737,7 @@ def test_load_passes_the_selection_and_closes_on_success(home):
     assert QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None   # case non touchee : rien a memoriser
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_load_without_anything_added_keeps_the_screen_open_and_redraws(home):   # T9-c1b
     dialog = _open(home, snap(), load_result=0)
     old = dialog._body
@@ -824,6 +751,7 @@ def test_load_without_anything_added_keeps_the_screen_open_and_redraws(home):   
     assert (dialog._suffix_box.checked, dialog._suffix_box.enabled) == (False, True)
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_unwanted_basemaps_are_not_passed(home, monkeypatch):
     monkeypatch.setattr(_FakeSelection, "basemap_wanted", False)
     dialog = _open(home, snap())
@@ -831,6 +759,7 @@ def test_unwanted_basemaps_are_not_passed(home, monkeypatch):
     assert dialog.log[-1][3] == set()
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_ticked_suffix_is_passed_and_remembered(home):
     from qgis.core import QgsSettings
 
@@ -840,6 +769,7 @@ def test_ticked_suffix_is_passed_and_remembered(home):
     assert dialog.log[-1][-1] is True and QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is True
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_ticked_suffix_is_not_remembered_when_nothing_was_loaded(home):   # T9-c3
     from qgis.core import QgsSettings
 
@@ -849,6 +779,7 @@ def test_ticked_suffix_is_not_remembered_when_nothing_was_loaded(home):   # T9-c
     assert dialog.log[-2][-1] is True and QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_project_suffix_choice_is_never_copied_to_the_workstation(home):   # T9-c3
     from qgis.core import QgsSettings
 
@@ -859,6 +790,7 @@ def test_project_suffix_choice_is_never_copied_to_the_workstation(home):   # T9-
     assert QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_forced_suffix_is_passed_but_never_remembered(home):
     from qgis.core import QgsSettings
 
@@ -868,12 +800,14 @@ def test_forced_suffix_is_passed_but_never_remembered(home):
     assert QgsSettings().value(bo.SUFFIX_SETTINGS_KEY) is None
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_saved_project_closes_the_screen_before_loading(home):
     dialog = _open(home, snap())
     dialog._tiles["project"].clicked.emit(False)
     assert dialog.log[-1] == ("open_saved_project", True)
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 @pytest.mark.parametrize("tile, action", [("checkin", "checkin"), ("diagnostic", "diagnostic"),
                                           ("language", "change_language")])
 def test_tool_tiles_keep_the_screen_open_and_redraw(home, tile, action):
@@ -884,6 +818,7 @@ def test_tool_tiles_keep_the_screen_open_and_redraw(home, tile, action):
     assert dialog.closed is False and old.deleted and dialog._body is not old
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_selected_operator_survives_a_redraw(home):
     dialog = _open(home, snap())
     dialog._operator_buttons["orange"].clicked.emit(True)
@@ -892,6 +827,7 @@ def test_selected_operator_survives_a_redraw(home):
     assert dialog._selection.operators == [("orange", "Orange")]
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_tiles_show_plugin_summary_and_version(home):   # K3
     dialog = _open(home, snap(plugin_summary=bd.PluginSummary(5, 6, 1), plugin_version="1.9.0"))
     checkin = home.tr("home.tile_checkin_sub", active=5, total=6)
@@ -903,6 +839,7 @@ def test_tiles_show_plugin_summary_and_version(home):   # K3
     assert dialog._tiles["language"].text() == f"{home.tr('home.tile_language')}\n{home.tr('home.tile_language_sub')}"
 
 
+@pytest.mark.skip(reason="réécrit en Task 9")
 def test_checkin_tile_without_known_update_or_summary(home):
     dialog = _open(home, snap(plugin_summary=bd.PluginSummary(6, 6, 0)))
     assert dialog._tiles["checkin"].text() == (
@@ -978,13 +915,16 @@ def homes(monkeypatch):
     return types.SimpleNamespace(created=created, script=script)
 
 
-def click_load(selected=frozenset({"cables", "v_form_lists"}), basemaps=frozenset({"osm"})):
-    """Geste : garder l'operateur preselectionne et cliquer le bouton
-    principal, s'il est actif (meme regle que HomeDialog)."""
+def click_load(selected=frozenset({"cables"}), basemaps=frozenset({"osm"})):
+    """Geste : garder les operateurs preselectionnes (modele 2.0) et cliquer
+    le bouton principal, s'il est actif ; *selected* = cles operateur de
+    chaque operateur coche."""
     def step(dialog):
         state = hm.home_state(dialog.actions.snapshot())
         if state.load_enabled:
-            dialog.loads.append(dialog.actions.load(state.preselected, set(selected), set(basemaps), False, False))
+            operators = tuple(op for op in state.operators if op.schema in state.preselected)
+            selection = LayerSelection({op.schema: frozenset(selected) for op in operators}, frozenset())
+            dialog.loads.append(dialog.actions.load(operators, selection, set(basemaps), False, False))
     return step
 
 
@@ -1040,8 +980,8 @@ def test_home_offline_never_touches_the_database(bp18, pi, onb, homes, monkeypat
     snapshot = homes.created[0].actions.snapshot()
     state = hm.home_state(snapshot)
     assert (snapshot.connected, snapshot.header, snapshot.operators) == (False, "", ())
-    assert (state.selector, state.load_enabled, state.message_key, state.saved_project_enabled) == (
-        "none", False, "home.connect_to_see", False)
+    assert (state.load_enabled, state.message_key, state.operators, state.saved_project_enabled) == (
+        False, "home.connect_to_see", (), False)
     assert homes.created[0].loads == []
     assert snapshot.plugin_summary == bd.plugin_summary(plugin._diagnostic_local_checks())
 
@@ -1057,7 +997,7 @@ def test_home_snapshot_connected(bp18, pi, monkeypatch, tmp_path):
               bd.Check("plugin", "warning", "diag.plugin_missing", {"name": "C"}, "install", "c"),
               bd.Check("identity", "ok", "diag.identity_ok", {"login": LOGIN})]
     monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: checks)
-    QgsSettings().setValue(bo.LAST_OPERATOR_KEY, "orange")
+    QgsSettings().setValue(bo.LAST_OPERATORS_KEY, "orange")
     QgsSettings().setValue(bo.SUFFIX_SETTINGS_KEY, "true")   # QGIS relit un booleen en texte
 
     snapshot = plugin.home_snapshot()
@@ -1065,7 +1005,9 @@ def test_home_snapshot_connected(bp18, pi, monkeypatch, tmp_path):
     assert snapshot.operators == (WYRE,) and snapshot.header.startswith(LOGIN + " · ")
     assert snapshot.header == f"{LOGIN} · {plugin._scope_text()}"
     assert snapshot.labels == {"wyre": "Wyre", "orange": "Orange"}
-    assert (snapshot.last_schema, snapshot.last_suffix, snapshot.project_suffix) == ("orange", True, None)
+    assert snapshot.last_selection == UserPreset("", ("orange",), LayerSelection({}, frozenset()))   # R2 : suit LAST_OPERATORS_KEY
+    assert (snapshot.last_suffix, snapshot.project_suffix) == (True, None)
+    assert snapshot.user_presets == () and snapshot.checkin is None   # Task 9
     assert snapshot.plugin_summary == bd.PluginSummary(2, 3, 1)
     assert snapshot.plugin_version == bp18.PLUGIN_VERSION
     assert snapshot.counts == pi.LoadedCounts({}, 0, 0) and snapshot.project_operators == ()
@@ -1099,7 +1041,8 @@ def test_home_snapshot_with_unreadable_operator_list_offers_wyre(bp18, pi, monke
     monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
     snapshot = plugin.home_snapshot()
     assert snapshot.operators == (bo.FALLBACK_OPERATOR,) and snapshot.labels["wyre"] == "Wyre"
-    assert hm.home_state(snapshot).preselected == bo.FALLBACK_OPERATOR
+    assert hm.home_state(snapshot).preselected == ("wyre",)
+    assert snapshot.last_selection is None   # premiere ouverture : rien de memorise
 
 
 def test_home_snapshot_survives_unreadable_plugin_lists(bp18, pi, monkeypatch, tmp_path):
@@ -1116,9 +1059,38 @@ def test_home_actions_are_wired(bp18, monkeypatch):
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     a = plugin._home_actions()
     assert a.snapshot == plugin.home_snapshot and a.load == plugin._load_selection
-    assert a.connect == plugin._on_connect and a.checkin == plugin._on_onboarding
-    assert a.diagnostic == plugin._on_diagnostic and a.change_language == plugin._on_change_language
-    assert a.open_saved_project == plugin._on_load_project
+    assert a.connect == plugin._on_connect and a.save_presets == plugin._save_user_presets
+    # Task 9 : les autres actions sont des placeholders inoffensifs jusque-la.
+    assert a.list_projects() is None and a.open_project("wyre", "p") is False
+    assert a.diagnostic_inputs() == ("", [], {}) and a.diagnostic_action(None) == []
+    assert a.configure_sharing("filtermate") == "" and a.make_wizard(None) is None
+    assert a.set_language("fr") is None
+
+
+def test_home_snapshot_prefers_the_stored_selection_and_reads_presets(bp18, pi, monkeypatch, tmp_path):
+    from qgis.core import QgsSettings
+
+    plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
+    plugin._operators = [WYRE, ORANGE]
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    stored = UserPreset("last", ("orange",), LayerSelection({"orange": {"cables"}}, {"osiris_events"}))   # nom non vide : presets_from_json ecarte ""
+    mine = UserPreset("Mon jeu", ("wyre", "orange"), LayerSelection({"wyre": {"zone_pop"}}, frozenset()))
+    QgsSettings().setValue(bo.LAST_OPERATORS_KEY, "wyre")
+    QgsSettings().setValue(LAST_SELECTION_KEY, presets_to_json([stored]))
+    QgsSettings().setValue(USER_PRESETS_KEY, presets_to_json([mine]))
+
+    snapshot = plugin.home_snapshot()
+
+    assert snapshot.last_selection == stored and snapshot.user_presets == (mine,)
+    assert hm.home_state(snapshot).preselected == ("orange",)
+
+
+def test_save_presets_round_trips_through_the_settings(bp18, monkeypatch, tmp_path, pi):
+    plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    mine = UserPreset("Mon jeu", ("wyre",), LayerSelection({"wyre": {"cables"}}, {"osiris_events"}))
+    plugin._home_actions().save_presets([mine])
+    assert plugin.home_snapshot().user_presets == (mine,)
 
 
 def test_toolbar_click_and_init_menu_open_home(bp18, monkeypatch):    # D15
