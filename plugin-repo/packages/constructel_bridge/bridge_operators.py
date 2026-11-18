@@ -32,6 +32,9 @@ from .bridge_nominatif import parse_datasource
 OPERATOR_TEMPLATE_SCHEMA = "wyre"
 # QgsSettings key: schema of the last operator loaded on this workstation.
 LAST_OPERATOR_KEY = "constructel_bridge/last_operator"
+# QgsSettings key (2.0): schemas of the operators of the last load on this
+# workstation, comma-separated in load order ("wyre,orange").
+LAST_OPERATORS_KEY = "constructel_bridge/last_operators"
 
 # A schema name read from ref.operateurs ends up in SQL identifiers and in
 # datasources: only plain lower-case identifiers are accepted.

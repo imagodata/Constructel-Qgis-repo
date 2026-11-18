@@ -110,6 +110,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.no_operator": "No operator available: ask a Farois administrator for an operator scope.",
         "home.reorganized": "Project reorganized by operator (groups {operators} and Common): save it to keep this organization.",
         "home.reorganized_common": "Project reorganized (Common group): save it to keep this organization.",
+        "home.load_partial": "Loading incomplete: failed for {operators} (see the log).",
         # -- Bridge 1.9: home screen (main click of the button) --
         "home.not_connected": "not connected",
         "home.connect": "Connect",
@@ -467,6 +468,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.no_operator": "Aucun opérateur accessible : demande un scope opérateur à un administrateur Farois.",
         "home.reorganized": "Projet réorganisé par opérateur (groupes {operators} et Commun) : enregistre-le pour garder cette organisation.",
         "home.reorganized_common": "Projet réorganisé (groupe Commun) : enregistre-le pour garder cette organisation.",
+        "home.load_partial": "Chargement incomplet : échec pour {operators} (voir le journal).",
         # -- Bridge 1.9 : écran d'accueil (clic principal du bouton) --
         "home.not_connected": "non connecté",
         "home.connect": "Se connecter",
@@ -826,6 +828,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.no_operator": "Nenhum operador acessivel: peca um scope de operador a um administrador Farois.",
         "home.reorganized": "Projeto reorganizado por operador (grupos {operators} e Comum): guarde-o para manter esta organizacao.",
         "home.reorganized_common": "Projeto reorganizado (grupo Comum): guarde-o para manter esta organizacao.",
+        "home.load_partial": "Carregamento incompleto: falha para {operators} (ver o registo).",
         # -- Bridge 1.9: ecrã inicial (clique principal do botão) --
         "home.not_connected": "não ligado",
         "home.connect": "Ligar",

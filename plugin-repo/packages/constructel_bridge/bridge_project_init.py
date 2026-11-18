@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtXml import QDomDocument
@@ -607,12 +607,31 @@ def _existing_layer_index(project) -> dict:
     return index
 
 
-def _detect_existing_layers(schema: str = OPERATOR_TEMPLATE_SCHEMA) -> set[str]:
+def _common_catalog() -> list[tuple]:
+    """Entrees communes du catalogue (hors OPERATOR_GROUPS) : ce que lit un
+    chargement sans operateur."""
+    return [entry for entry in LAYER_CATALOG if entry[1] not in OPERATOR_GROUPS]
+
+
+def _detect_existing_layers(schema: str | None = OPERATOR_TEMPLATE_SCHEMA) -> set[str]:
     """Cles du catalogue (simples) deja presentes dans le projet pour
     l'operateur de *schema* : une couche operateur ne compte que dans son
-    schema, une couche commune compte pour tous les operateurs."""
+    schema, une couche commune compte pour tous les operateurs. *schema*
+    ``None`` : cles communes presentes seulement."""
     index = _existing_layer_index(QgsProject.instance())
-    return {entry[0] for entry in catalog_for(schema) if _catalog_table_id(entry) in index}
+    catalog = _common_catalog() if schema is None else catalog_for(schema)
+    return {entry[0] for entry in catalog if _catalog_table_id(entry) in index}
+
+
+def existing_by_schema(schemas: Sequence[str]) -> dict[Optional[str], set[str]]:
+    """Couches deja chargees par schema, forme attendue par
+    ``selection_from_tiles`` : ``None`` pour les cles communes, un jeu de
+    cles operateur par schema de *schemas* (l'index du projet n'est lu qu'une
+    fois par entree, jamais de requete)."""
+    existing: dict[Optional[str], set[str]] = {None: _detect_existing_layers(None)}
+    for schema in schemas:
+        existing[schema] = _detect_existing_layers(schema) & OPERATOR_KEYS
+    return existing
 
 
 def _loaded_layer_names(project) -> set[str]:
@@ -766,7 +785,7 @@ def _layer_group(root, operator: OperatorInfo, group_name: str):
 
 # =====================================================================
 # PROJETS 1.8 — reorganisation au clic « Ajouter des couches » (§ 6.5)
-# Ouvrir un projet 1.8 ne le modifie jamais : seul _load_operator_layers
+# Ouvrir un projet 1.8 ne le modifie jamais : seul _load_selection
 # appelle reorganize_legacy_tree.
 # =====================================================================
 
@@ -1199,9 +1218,12 @@ def ensure_relations(loaded: dict | None = None, primary_schema: str | None = No
 def init_project(conn_params: dict, password: str, selected: set[str],
                  add_basemap: bool = True, apply_styles: bool = True,
                  selected_basemaps: set[str] | None = None, *,
-                 operator: OperatorInfo, suffix: bool | None = None) -> int:
+                 operator: OperatorInfo | None, suffix: bool | None = None) -> int:
     """Charge les couches selectionnees (cles simples du catalogue) pour
-    *operator* (spec § 6.3, § 6.4).
+    *operator* (spec § 6.3, § 6.4). ``operator=None`` (2.0, chargement sans
+    operateur) : seules les entrees communes (hors OPERATOR_GROUPS) sont lues,
+    aucun groupe operateur n'est cree et stamp_project n'est jamais appele ;
+    la version et le plugin sont ecrits quand meme.
 
     Les entrees operateur sont lues dans operator.schema et rangees dans le
     groupe de l'operateur ; les entrees communes, chargees une seule fois
@@ -1221,7 +1243,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         Nombre de couches ajoutees.
     """
     project = QgsProject.instance()
-    catalog = catalog_for(operator.schema)
+    catalog = _common_catalog() if operator is None else catalog_for(operator.schema)
 
     # -- CRS projet -------------------------------------------------------
     crs = QgsCoordinateReferenceSystem("EPSG:31370")

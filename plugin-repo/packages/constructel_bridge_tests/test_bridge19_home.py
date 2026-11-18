@@ -26,7 +26,14 @@ import pytest
 from constructel_bridge import bridge_diagnostic as bd
 from constructel_bridge import bridge_home_model as hm
 from constructel_bridge import bridge_operators as bo
-from constructel_bridge_tests.fakes19 import ORANGE, WYRE, FakeLayer, FakeRasterLayer, install_fake_project
+from constructel_bridge_tests.fakes19 import (
+    ORANGE,
+    WYRE,
+    FakeLayer,
+    FakeRasterLayer,
+    install_fake_project,
+    load_keys,
+)
 from constructel_bridge_tests.test_bridge18_connect import _initgui_ready
 from constructel_bridge_tests.test_bridge18_layers import (  # noqa: F401  (pi = fixture)
     LOGIN,
@@ -1108,7 +1115,7 @@ def test_home_snapshot_survives_unreadable_plugin_lists(bp18, pi, monkeypatch, t
 def test_home_actions_are_wired(bp18, monkeypatch):
     plugin = bp18.ConstructelBridgePlugin(_FakeIface())
     a = plugin._home_actions()
-    assert a.snapshot == plugin.home_snapshot and a.load == plugin._load_operator_layers
+    assert a.snapshot == plugin.home_snapshot and a.load == plugin._load_selection
     assert a.connect == plugin._on_connect and a.checkin == plugin._on_onboarding
     assert a.diagnostic == plugin._on_diagnostic and a.change_language == plugin._on_change_language
     assert a.open_saved_project == plugin._on_load_project
@@ -1126,15 +1133,15 @@ def test_toolbar_click_and_init_menu_open_home(bp18, monkeypatch):    # D15
     assert not hasattr(bp18.ConstructelBridgePlugin, "_on_init_project")
 
 
-def test_load_operator_layers_ignores_an_empty_request(bp18, pi, monkeypatch, tmp_path):   # K2, T9-c1b
+def test_load_selection_ignores_an_empty_request(bp18, pi, monkeypatch, tmp_path):   # K2, T9-c1b
     from qgis.core import QgsSettings
 
     calls = []
     monkeypatch.setattr(pi, "init_project", lambda *a, **k: calls.append(k) or 3)
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
-    assert plugin._load_operator_layers(WYRE, {"v_form_lists"}, set(), True) == 0
-    assert plugin._load_operator_layers(WYRE, set(), set(), True, suffix=True) == 0
-    assert calls == [] and QgsSettings().value(bo.LAST_OPERATOR_KEY) is None
+    assert load_keys(plugin, WYRE, {"v_form_lists"}, set(), True) == 0
+    assert load_keys(plugin, WYRE, set(), set(), True, suffix=True) == 0
+    assert calls == [] and QgsSettings().value(bo.LAST_OPERATORS_KEY) is None
 
 
 def _project_with_basemap_loader(bp18, pi, monkeypatch, added_layers=0):
@@ -1161,7 +1168,7 @@ def test_basemaps_only_load_counts_the_basemaps(bp18, pi, monkeypatch, tmp_path)
     project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))   # deja la : non compte
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
 
-    assert plugin._load_operator_layers(WYRE, {"v_form_lists"}, {"osm", "urbis_fr", "google_roads"}, True) == 2
+    assert load_keys(plugin, WYRE, {"v_form_lists"}, {"osm", "urbis_fr", "google_roads"}, True) == 2
 
     assert calls == [({"v_form_lists"}, {"osm", "urbis_fr", "google_roads"})]
     assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.success_basemaps", count=2)
@@ -1170,7 +1177,7 @@ def test_basemaps_only_load_counts_the_basemaps(bp18, pi, monkeypatch, tmp_path)
 def test_layers_and_basemaps_are_both_counted(bp18, pi, monkeypatch, tmp_path):   # T9-c1b
     _project, _calls = _project_with_basemap_loader(bp18, pi, monkeypatch, added_layers=3)
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
-    assert plugin._load_operator_layers(WYRE, {"cables"}, {"osm"}, True) == 4
+    assert load_keys(plugin, WYRE, {"cables"}, {"osm"}, True) == 4
     assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.success", count=3)
 
 
@@ -1178,5 +1185,5 @@ def test_load_adding_nothing_returns_zero_and_never_says_success(bp18, pi, monke
     project, _calls = _project_with_basemap_loader(bp18, pi, monkeypatch)
     project.addMapLayer(FakeRasterLayer("type=xyz", "OpenStreetMap", "wms"))
     plugin = _shared_plugin(bp18, monkeypatch, tmp_path)
-    assert plugin._load_operator_layers(WYRE, {"cables"}, {"osm"}, True) == 0
+    assert load_keys(plugin, WYRE, {"cables"}, {"osm"}, True) == 0
     assert plugin.iface.messageBar().messages[-1][2] == bp18.tr("init.nothing_added")
