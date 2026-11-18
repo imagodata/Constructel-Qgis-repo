@@ -99,12 +99,12 @@ class _Group:
     """Groupe de l'arbre : tuile, operateur (None si commune) et ses couches
     encore a charger (les couches deja chargees ne comptent pas)."""
 
-    def __init__(self, item, tile: str, label: Optional[str], loadable: list, total: int):
+    def __init__(self, item, tile: str, label: Optional[str], loadable: list, core: list):
         self.item = item
         self.tile = tile
         self.label = label
-        self.loadable = loadable      # [QTreeWidgetItem] cochables
-        self.total = total            # couches du groupe, chargees ou non
+        self.loadable = loadable      # [QTreeWidgetItem] cochables, expert compris
+        self.core = core              # idem hors couches expert : le denominateur du compteur
 
 
 class LayerSelectionWidget(QWidget):
@@ -240,8 +240,7 @@ class LayerSelectionWidget(QWidget):
     def _add_group(self, tile: str, schema: Optional[str], label: Optional[str], catalog: dict, checked: set):
         group_item = QTreeWidgetItem(self._tree, [""])
         group_item.setCheckState(0, Qt.CheckState.Unchecked)
-        loadable = []
-        total = 0
+        loadable, core = [], []
         for key in (k for k in TILE_LAYERS[tile] if k in tile_keys(tile, self._expert)):
             entry = catalog[key]
             loaded = self._is_loaded(schema, key)
@@ -259,9 +258,10 @@ class LayerSelectionWidget(QWidget):
                 if (schema, key) in checked:
                     item.setCheckState(0, Qt.CheckState.Checked)
                 loadable.append(item)
+                if key not in EXPERT_KEYS:
+                    core.append(item)
             self._items[(schema, key)] = item
-            total += 1
-        group = _Group(group_item, tile, label, loadable, total)
+        group = _Group(group_item, tile, label, loadable, core)
         if loadable:
             group_item.setFlags(group_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         else:
@@ -277,10 +277,12 @@ class LayerSelectionWidget(QWidget):
         for group in self._groups:
             name = _TILE_NAMES[group.tile]()
             caption = f"{name}  [{group.label}]" if group.label else name
-            if group.loadable:
-                ticked = sum(item.checkState(0) == Qt.CheckState.Checked for item in group.loadable)
-                caption += f"  {ticked}/{len(group.loadable)}"
-                state = (Qt.CheckState.Checked if ticked == len(group.loadable) else
+            if group.core:
+                # R10 : une couche expert n'est comptee ni au numerateur ni au denominateur
+                # (« 5/4 » serait illisible) ; la case du groupe suit les memes couches.
+                ticked = sum(item.checkState(0) == Qt.CheckState.Checked for item in group.core)
+                caption += f"  {ticked}/{len(group.core)}"
+                state = (Qt.CheckState.Checked if ticked == len(group.core) else
                          Qt.CheckState.PartiallyChecked if ticked else Qt.CheckState.Unchecked)
             else:
                 caption += "  " + tr("home.group_loaded")
@@ -290,8 +292,8 @@ class LayerSelectionWidget(QWidget):
         states = self.tile_states()
         for tile, button in self._tiles.items():
             state = states[tile]
-            keys = tile_keys(tile, self._expert)
-            second = tr("home.tile_done") if state == STATE_DONE else tr("home.tile_layers", count=len(keys))
+            second = (tr("home.tile_done") if state == STATE_DONE
+                      else tr("home.tile_layers", count=len(tile_keys(tile))))     # R10 : jamais d'expert
             head = f"{_TILE_ICONS[tile]} {_TILE_NAMES[tile]()}"
             if state == STATE_PARTIAL:
                 head = f"{_PARTIAL_MARK} {head}"
@@ -299,6 +301,8 @@ class LayerSelectionWidget(QWidget):
             button.setToolTip(", ".join(self._tile_labels(tile)))
             button.setEnabled(state not in (STATE_DISABLED, STATE_DONE))
             button.setChecked(state == STATE_ON)
+        for button in self._row_buttons["operator"]:
+            button.setEnabled(bool(self._schemas))
 
     def _tile_labels(self, tile: str) -> list:
         catalog = {entry[0]: entry for entry in LAYER_CATALOG}
@@ -327,7 +331,10 @@ class LayerSelectionWidget(QWidget):
         def change():
             if group is not None:
                 state = item.checkState(0)
-                if state != Qt.CheckState.PartiallyChecked:
+                if state == Qt.CheckState.Checked:
+                    for child in group.core:           # comme une tuile : jamais les couches expert
+                        child.setCheckState(0, state)
+                elif state == Qt.CheckState.Unchecked:
                     for child in group.loadable:
                         child.setCheckState(0, state)
 

@@ -17,7 +17,6 @@ from constructel_bridge_tests.fakes_widgets import (
     _CHECK,
     _ITEM_FLAG,
     _ROLE,
-    _Button,
     _CheckBox,
     _GroupBox,
     _Item,
@@ -176,8 +175,9 @@ def test_tile_text_and_tooltip(sel):
     tip = widget._tiles["zones"].tooltip
     labels = [widget._items[("wyre", key)].text(0) for key in TILE_LAYERS["zones"]]
     assert tip == ", ".join(labels) and len(labels) == 4
-    widget.set_show_expert(True)
-    assert widget._tiles["genie_civil"].text().split("\n")[1] == sel.tr("home.tile_layers", count=5)
+    widget.set_show_expert(True)       # R10 : le nombre de couches d'une tuile n'inclut jamais l'expert
+    assert widget._tiles["genie_civil"].text().split("\n")[1] == sel.tr("home.tile_layers", count=4)
+    assert widget._tiles["chantier"].text().split("\n")[1] == sel.tr("home.tile_layers", count=6)
 
 
 def test_manual_change_makes_tile_partial_and_calls_on_change(sel):
@@ -418,3 +418,26 @@ def test_selection_texts_in_three_languages():
     assert fr["home.tile_layers"].format(count=3) == "3 couches" and fr["home.tile_done"] == "déjà chargé"
     assert fr["home.show_expert"] == "Afficher toutes les couches" and fr["home.row_operator"] == "Par opérateur"
     assert TRANSLATIONS["pt"]["home.tile_done"] == "já carregado"
+
+
+def test_group_counter_excludes_expert_layers(sel):
+    widget = _two(sel)
+    widget.set_show_expert(True)
+    group = widget._tree.children[1]                                  # Genie civil [Wyre]
+    assert group.text(0).endswith("0/4")
+    widget._items[("wyre", "subducts")].setCheckState(0, _CHECK.Checked)
+    assert group.text(0).endswith("0/4") and group.state == _CHECK.Unchecked   # R10 : expert jamais compte
+    group.setCheckState(0, _CHECK.Checked)                            # case de groupe : couches hors expert
+    assert group.text(0).endswith("4/4") and group.state == _CHECK.Checked
+    group.setCheckState(0, _CHECK.Unchecked)                          # decocher vide aussi l'expert
+    assert not _checked(widget._items[("wyre", "subducts")]) and group.text(0).endswith("0/4")
+
+
+def test_operator_row_buttons_are_disabled_without_operator(sel):
+    widget = sel.LayerSelectionWidget()
+    assert all(not b.isEnabled() for b in widget._row_buttons["operator"])
+    assert all(b.isEnabled() for b in widget._row_buttons["common"])
+    widget.set_operators((WYRE,))
+    assert all(b.isEnabled() for b in widget._row_buttons["operator"])
+    widget.set_operators(())
+    assert all(not b.isEnabled() for b in widget._row_buttons["operator"])
