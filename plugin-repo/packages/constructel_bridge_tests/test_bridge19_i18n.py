@@ -53,7 +53,7 @@ KEYS_19 = [
 
 # Modules crees par le chantier 1.9 : jamais de cle dynamique.
 MODULES_19 = ["bridge_operators.py", "bridge_home_model.py", "bridge_home.py", "bridge_layer_selection.py",
-              "bridge_home_load.py", "bridge_home_checkin.py", "bridge_diagnostic.py",
+              "bridge_home_load.py", "bridge_home_checkin.py", "bridge_home_projects.py", "bridge_diagnostic.py",
               "bridge_diagnostic_dialog.py"]
 
 # Cles inutilisees avant le chantier 1.9, conservees (hors perimetre). Une nouvelle cle

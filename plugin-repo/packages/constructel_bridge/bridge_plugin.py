@@ -77,6 +77,7 @@ from .bridge_operators import (
     LAST_OPERATORS_KEY,
     OPERATOR_KEYS,
     OPERATORS_QUERY,
+    PROJET_SCHEMA,
     SCOPE_CODES_QUERY,
     SUFFIX_SETTINGS_KEY,
     OperatorInfo,
@@ -4112,9 +4113,14 @@ class ConstructelBridgePlugin:
         # Retrouver le projet selectionne
         idx = items.index(choice)
         selected = projects[idx]
+        self._open_db_project(selected["schema"], selected["name"])
 
-        proj_name = selected["name"]
-        schema = selected["schema"]
+    def _open_db_project(self, schema: str, name: str) -> bool:
+        """Charge le projet *name* du schema *schema* (2.0, plan tache 8).
+
+        Partie de ``_on_load_project`` apres le choix : la page Projets de
+        l'accueil et l'entree de menu appellent ici. Retourne True si le
+        projet est charge ; sinon l'erreur est journalisee et affichee."""
         project = QgsProject.instance()
 
         # Charger le projet en passant par _read_and_clean_project()
@@ -4122,33 +4128,62 @@ class ConstructelBridgePlugin:
         # depuis un fichier temporaire.  Cela evite le dialogue
         # "Saisir les identifiants" quand le projet contient des
         # authcfg d'un autre utilisateur.
-        if self._read_and_clean_project(project, schema, proj_name):
-            self._log(tr("project.loaded", name=proj_name))
+        if self._read_and_clean_project(project, schema, name):
+            self._log(tr("project.loaded", name=name))
             self.iface.messageBar().pushSuccess(
                 "Constructel Bridge",
-                tr("project.loaded", name=proj_name),
+                tr("project.loaded", name=name),
             )
+            return True
+        raw_error = project.error()
+        if hasattr(raw_error, "summary"):
+            error = raw_error.summary()
         else:
-            raw_error = project.error()
-            if hasattr(raw_error, "summary"):
-                error = raw_error.summary()
-            else:
-                error = str(raw_error) if raw_error else "Unknown error"
-            self._log(tr("project.load_error", name=proj_name, error=error), Qgis.MessageLevel.Critical)
-            QMessageBox.critical(
-                self.iface.mainWindow(),
-                tr("project.title"),
-                tr("project.load_error", name=proj_name, error=error),
-            )
+            error = str(raw_error) if raw_error else "Unknown error"
+        self._log(tr("project.load_error", name=name, error=error), Qgis.MessageLevel.Critical)
+        QMessageBox.critical(
+            self.iface.mainWindow(),
+            tr("project.title"),
+            tr("project.load_error", name=name, error=error),
+        )
+        return False
 
-    def _project_schemas(self) -> tuple[str, ...]:
-        """Schemas des ``qgis_projects`` : operateurs utilisables puis
-        ``public`` (spec 6.7). Liste vide ou illisible : ``("wyre", "public")``
-        (1.8). Les schemas viennent de ``OperatorInfo`` (deja valides par
+    def _base_project_schemas(self) -> tuple[str, ...]:
+        """Operateurs utilisables puis ``public`` (spec 6.7), sans lecture
+        de la base. Liste vide ou illisible : ``("wyre", "public")`` (1.8).
+        Les schemas viennent de ``OperatorInfo`` (deja valides par
         ``is_safe_schema``) : c'est la liste blanche anti-injection de
         ``_read_and_clean_project``."""
         operators = [] if self._operators_unavailable else getattr(self, "_operators", [])
         return project_schemas(operators)
+
+    def _projet_schema_exists(self) -> bool:
+        """True si le schema transverse ``projet`` existe en base (2.0 R7).
+        Un echec de lecture ou l'absence de connexion = absent."""
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return False
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                    (PROJET_SCHEMA,),
+                )
+                return bool(cur.fetchone())
+            finally:
+                cur.close()
+        except Exception as exc:  # noqa: BLE001 -- schema optionnel : jamais bloquant
+            self._log(f"schema {PROJET_SCHEMA} : lecture impossible ({exc})", Qgis.MessageLevel.Warning)
+            return False
+
+    def _project_schemas(self) -> tuple[str, ...]:
+        """Schemas des ``qgis_projects`` : operateurs utilisables, ``public``,
+        puis le schema transverse ``projet`` s'il existe en base (2.0 R7)."""
+        schemas = self._base_project_schemas()
+        if PROJET_SCHEMA not in schemas and self._projet_schema_exists():
+            schemas = (*schemas, PROJET_SCHEMA)
+        return schemas
 
     def _read_and_clean_project(self, project, schema: str, name: str) -> bool:
         """Lit le XML du projet depuis PG, nettoie les authcfg, et charge.
@@ -4169,7 +4204,9 @@ class ConstructelBridgePlugin:
         password = getattr(self, "_password", None) or _DEFAULT_PW
         # Validate schema against whitelist to prevent SQL injection ; quote
         # ensuite (mot reserve : user, order...), le filtre exclut les guillemets.
-        if schema not in self._project_schemas():
+        # (la base n'est lue que pour le schema transverse ``projet``)
+        if schema not in self._base_project_schemas() and not (
+                schema == PROJET_SCHEMA and self._projet_schema_exists()):
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
         cur = self._conn.cursor()
