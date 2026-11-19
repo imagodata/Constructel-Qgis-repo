@@ -174,11 +174,6 @@ def test_already_in_the_project_row_uses_the_19_summary_text(load):
     assert _open(load)._summary_label is None
 
 
-def test_bridge_home_keeps_importing_summary_text_from_the_page_module(load):
-    home = importlib.import_module("constructel_bridge.bridge_home")
-    assert home.summary_text is load.summary_text
-
-
 # --- chargement ---------------------------------------------------------------------------
 
 

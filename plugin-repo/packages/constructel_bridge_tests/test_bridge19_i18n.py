@@ -63,6 +63,17 @@ LEGACY_ORPHANS = {
     "dialog.role", "dialog.save_password", "init.confirm", "init.confirm_title",
     "lang.restart", "pg.already_configured",
 }
+# Orphelines depuis la tache 9 (2.0) : ecran 1.9 (tuiles, selecteur, libelles
+# « Initialiser / Ajouter »), QInputDialog de la langue et des projets, avis
+# « connecte-toi d'abord » de l'ancien _on_load_project. Gardees en attendant leur
+# retrait en tache 10 (plan 2026-11-18 : cles, KEYS_19 et cette liste ensemble).
+ORPHANS_UNTIL_T10 = {
+    "conn.connect_first", "home.btn_add", "home.btn_init", "home.no_operator", "home.operator_label",
+    "home.tile_checkin", "home.tile_checkin_sub", "home.tile_checkin_updates", "home.tile_diagnostic",
+    "home.tile_diagnostic_sub", "home.tile_language", "home.tile_language_sub", "home.tile_load",
+    "home.tile_project", "home.tile_project_sub", "init.btn_add", "init.btn_init", "lang.prompt",
+    "lang.title", "project.select",
+}
 DYNAMIC_PREFIXES = ("mtls.",)
 # Cles retirees par la revue : plus aucun appelant depuis l'accueil (init.*) et le Diagnostic (status.title).
 REMOVED_KEYS = ["status.title", "init.title", "init.title_add"]
@@ -125,7 +136,8 @@ def test_no_new_orphan_key():
         key for key in TRANSLATIONS["en"]
         if f'"{key}"' not in text and f"'{key}'" not in text and not key.startswith(DYNAMIC_PREFIXES)
     }
-    assert orphans == LEGACY_ORPHANS, {"new": orphans - LEGACY_ORPHANS, "now_used": LEGACY_ORPHANS - orphans}
+    expected = LEGACY_ORPHANS | ORPHANS_UNTIL_T10
+    assert orphans == expected, {"new": orphans - expected, "now_used": expected - orphans}
 
 
 def test_metadata_is_190():

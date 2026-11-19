@@ -200,9 +200,12 @@ def test_refresh_after_onboarding_applies_new_email(bp):
     assert os.environ["PGOPTIONS"] == "-c app.current_user=nouvelle.adresse@constructel.be"
 
 
-def test_run_onboarding_refreshes_identity_after_wizard(bp):
-    src = inspect.getsource(bp.ConstructelBridgePlugin._run_onboarding)
-    assert src.index("wizard.exec()") < src.index("self._refresh_audit_identity()")
+def test_checkin_wizard_refreshes_identity_after_it_finishes(bp):
+    # 2.0 (tache 9) : l'assistant est heberge par la page Check-in ; l'adresse
+    # est relue a sa fin (signal finished), plus apres un exec() modal.
+    # Comportement : test_bridge19_checkin.py::test_checkin_wizard_connected_keeps_profile_and_refreshes_identity_at_the_end.
+    src = inspect.getsource(bp.ConstructelBridgePlugin._make_onboarding_wizard)
+    assert "finished.connect" in src and "self._refresh_audit_identity()" in src
 
 
 # --- _on_before_commit --------------------------------------------------

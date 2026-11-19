@@ -61,7 +61,8 @@ def _text_label(text: str) -> QLabel:
 
 class CheckinPage(QWidget):
     """Page « Check-in ». *start_wizard* : lance l'assistant des l'ouverture
-    (premier setup). *email* : e-mail du profil, s'il est connu de l'appelant."""
+    (premier setup). *email* : e-mail du profil, s'il est connu de l'appelant
+    (``HomeSnapshot.email``) ; le login vient de ``HomeSnapshot.login``."""
 
     def __init__(self, snapshot: HomeSnapshot, actions: HomeActions, parent=None,
                  start_wizard: bool = False, email: str = ""):
@@ -90,7 +91,7 @@ class CheckinPage(QWidget):
 
     def _profile_text(self) -> str:
         snapshot = self._snapshot
-        login = snapshot.header.split(SEPARATOR)[0].strip() if snapshot.connected else ""
+        login = snapshot.login.strip() if snapshot.connected else ""
         if not login:
             return tr("home.checkin_profile_offline")
         text = tr("home.checkin_profile", login=login)

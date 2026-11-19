@@ -331,7 +331,10 @@ def test_unavailable_installer_is_reported_once(onb, monkeypatch):
     assert w._actions_done[1] == onb.tr("onboard.action.plugin_activated", pid="b")
 
 
-# --- Plugin : _on_onboarding sans connexion --------------------------------------
+# --- Plugin : assistant du Check-in (2.0 : fabrique ``make_wizard``) ---------------
+# L'assistant ne s'ouvre plus en fenetre modale (_run_onboarding / _on_onboarding,
+# retires en tache 9) : la page Check-in l'heberge et le plugin le fabrique
+# (``_make_onboarding_wizard``), avec les memes regles de profil.
 
 class _FakeBar:
     def pushMessage(self, *a, **k):
@@ -351,9 +354,21 @@ class _FakeIface:
         return None
 
 
+class _Finished:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, slot):
+        self.slots.append(slot)
+
+    def emit(self, *args):
+        for slot in list(self.slots):
+            slot(*args)
+
+
 @pytest.fixture
 def checkin(bp18, monkeypatch):
-    """(plugin, created) : le plugin lance un assistant enregistreur."""
+    """(plugin, created) : le plugin fabrique un assistant enregistreur."""
     from qgis.core import QgsSettings
 
     QgsSettings().setValue("constructel_bridge/onboarding_done", True)
@@ -362,9 +377,11 @@ def checkin(bp18, monkeypatch):
     class _RecordingWizard:
         def __init__(self, **kwargs):
             created.append(kwargs)
+            self.kwargs = kwargs
+            self.finished = _Finished()
 
         def exec(self):
-            return 0
+            raise AssertionError("l'assistant est heberge par la page, jamais en exec()")
 
     fake = types.ModuleType("constructel_bridge.bridge_onboarding")
     fake.OnboardingWizard = _RecordingWizard
@@ -372,18 +389,20 @@ def checkin(bp18, monkeypatch):
     return bp18.ConstructelBridgePlugin(_FakeIface()), created
 
 
-def test_checkin_opens_offline_without_profile(checkin):
+def test_checkin_wizard_offline_has_no_profile(checkin):
     plugin, created = checkin
     plugin._connected = False
     plugin._conn = _Boom()  # reliquat : ne doit ni etre transmis ni etre interroge
+    page = object()
 
-    plugin._on_onboarding()
+    wizard = plugin._home_actions().make_wizard(page)
 
-    assert len(created) == 1
+    assert len(created) == 1 and wizard.kwargs is created[0]
     assert created[0]["include_profile"] is False and created[0]["db_conn"] is None
+    assert created[0]["parent"] is page            # la page qui l'heberge
 
 
-def test_checkin_offline_does_not_warn_nor_refresh_identity(checkin, monkeypatch, bp18):
+def test_checkin_wizard_offline_does_not_warn_nor_refresh_identity(checkin, monkeypatch, bp18):
     plugin, created = checkin
     plugin._connected = False
     warnings = []
@@ -391,42 +410,50 @@ def test_checkin_offline_does_not_warn_nor_refresh_identity(checkin, monkeypatch
     refreshed = []
     monkeypatch.setattr(plugin, "_refresh_audit_identity", lambda: refreshed.append(1))
 
-    plugin._on_onboarding()
+    plugin._make_onboarding_wizard(None).finished.emit(1)
 
     assert warnings == [] and refreshed == []
 
 
-def test_checkin_connected_keeps_profile(checkin):
+def test_checkin_wizard_connected_keeps_profile_and_refreshes_identity_at_the_end(checkin, monkeypatch):
     plugin, created = checkin
     conn = types.SimpleNamespace(closed=True)
     plugin._connected = True
     plugin._auth_mode = "shared"
     plugin._conn = conn
+    refreshed = []
+    monkeypatch.setattr(plugin, "_refresh_audit_identity", lambda: refreshed.append(1))
 
-    plugin._on_onboarding()
+    wizard = plugin._make_onboarding_wizard(None)
 
     assert created[0]["include_profile"] is True and created[0]["db_conn"] is conn
+    assert refreshed == []                         # pas avant la fin de l'assistant
+    wizard.finished.emit(1)
+    assert refreshed == [1]
 
 
-def test_checkin_connected_nominal_keeps_profile_page_without_db_writes(checkin, bp18):
+def test_checkin_wizard_connected_nominal_keeps_profile_page_without_db_writes(checkin, bp18):
     plugin, created = checkin
     plugin._connected = True
     plugin._auth_mode = bp18.AUTH_MODE_NOMINAL
     plugin._conn = types.SimpleNamespace(closed=True)
 
-    plugin._on_onboarding()
+    plugin._make_onboarding_wizard(None)
 
     assert created[0]["include_profile"] is True and created[0]["db_conn"] is None
 
 
-def test_first_connection_onboarding_still_includes_the_profile(checkin):
+def test_first_connection_wizard_is_for_a_new_user_once(checkin):
     plugin, created = checkin
     plugin._connected = True
     plugin._auth_mode = "shared"
+    plugin._wizard_new_user = True                 # pose par l'ouverture au premier setup
 
-    plugin._run_onboarding(True)
+    plugin._make_onboarding_wizard(None)
+    plugin._make_onboarding_wizard(None)           # « Refaire le check-in complet » ensuite
 
     assert created[0]["include_profile"] is True and created[0]["is_new_user"] is True
+    assert created[1]["is_new_user"] is False
 
 
 def test_import_error_of_a_broken_plugin_is_not_an_unavailable_installer(onb, monkeypatch):

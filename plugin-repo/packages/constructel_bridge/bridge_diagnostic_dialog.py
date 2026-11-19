@@ -4,9 +4,9 @@ Constructel Bridge - Panneau « Statut et diagnostic » (1.9.0, spec
 2026-11-12 § 6.6 et § 7, decisions D13 et D15 ; 2.0 : panneau hebergeable,
 spec 2026-11-18 § 7 et § 8.3).
 
-``DiagnosticPanel`` est un QWidget heberge par la fenetre laterale ;
-``DiagnosticDialog`` en est l'enveloppe QDialog (bouton Fermer), utilisee par
-``_on_diagnostic`` tant que la fenetre laterale ne l'a pas remplacee.
+``DiagnosticPanel`` est un QWidget heberge par la fenetre a barre laterale
+(``bridge_home.HomeDialog``, page « Diagnostic »), qui appelle ``close_panel``
+a sa fermeture, quand on quitte la page et avant de la remplacer.
 
 En tete, le message de l'ancien « Statut connexion ». Dessous, les quatre
 verifications de ``bridge_diagnostic``, chacune avec son etat et, quand
@@ -24,8 +24,6 @@ from typing import Callable
 from qgis.core import QgsApplication, QgsTask
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
     QGridLayout,
     QLabel,
     QPushButton,
@@ -98,7 +96,7 @@ def _network_job(task, network_args: dict) -> list:
 
 
 # Taches reseau en cours, gardees jusqu'a leur fin independamment du
-# dialogue : le plugin detruit le dialogue ferme (deleteLater, relecture
+# panneau : le plugin detruit la fenetre fermee (deleteLater, relecture
 # finale M5) et le wrapper Python d'une QgsTask non referencee peut etre
 # collecte en plein travail. Liste (identite), relachee dans on_finished.
 _PENDING_TASKS: list = []
@@ -257,33 +255,3 @@ class DiagnosticPanel(QWidget):
         """Fermeture (equivalent de ``done`` du dialogue) : un resultat reseau
         tardif est ignore."""
         self._closed = True
-
-
-class DiagnosticDialog(QDialog):
-    """Enveloppe QDialog du panneau (``_on_diagnostic``, jusqu'a la fenetre
-    laterale)."""
-
-    def __init__(self, parent, status_text: str, local_checks: list, network_args: dict,
-                 on_action: Callable[[Check], list]):
-        super().__init__(parent)
-        self.setWindowTitle(tr("diag.title"))
-        self.setMinimumWidth(620)
-        self.panel = DiagnosticPanel(status_text, local_checks, network_args, on_action, self)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.panel)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def done(self, result) -> None:
-        # Fermeture (bouton, Echap, croix) : un resultat reseau tardif est ignore.
-        self.panel.close_panel()
-        super().done(result)
-
-    def exec(self) -> int:
-        # exec() peut aussi finir sans done() (dialogue cache) ; le plugin
-        # detruit ensuite le dialogue (deleteLater) : resultat tardif ignore.
-        try:
-            return super().exec()
-        finally:
-            self.panel.close_panel()

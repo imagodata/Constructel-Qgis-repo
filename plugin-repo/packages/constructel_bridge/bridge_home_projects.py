@@ -10,7 +10,8 @@ filtre sur le nom et la description, sans tenir compte de la casse ni des
 accents ; « Ouvrir » (ou le double-clic) charge le projet choisi.
 
 La fenetre se ferme AVANT l'ouverture (D11) : ``on_open()`` est appele, puis
-``actions.open_project``. Hors connexion la base n'est jamais interrogee.
+``actions.open_project``. Hors connexion la base n'est jamais interrogee ;
+une liste illisible (``list_projects()`` -> None) est dite par la page seule.
 La page ne dessine que ce que la base donne : aucune section « Mes projets /
 partages » (chantier 3) n'y est affichee en 2.0.
 """
@@ -93,8 +94,13 @@ class ProjectsPage(QWidget):
         self._open_button.clicked.connect(lambda _checked=False: self._open_selected())
 
         self._connected = bool(connected)
+        self._unreadable = False
         if self._connected:
-            self._projects = self._actions.list_projects() or []  # None : erreur deja signalee par le plugin
+            projects = self._actions.list_projects()
+            # None : liste illisible. Le plugin l'a journalisee sans boite ;
+            # la page est seule a le dire (un message par echec).
+            self._unreadable = projects is None
+            self._projects = list(projects or [])
         self._refresh()
 
     # -- affichage -----------------------------------------------------------------------
@@ -113,6 +119,10 @@ class ProjectsPage(QWidget):
         if not self._connected:
             self._show_message(tr("home.projects_offline"))
             self._search.setEnabled(False)
+            self._update_open_state()
+            return
+        if self._unreadable:
+            self._show_message(tr("home.projects_error"))
             self._update_open_state()
             return
         groups: dict = {}

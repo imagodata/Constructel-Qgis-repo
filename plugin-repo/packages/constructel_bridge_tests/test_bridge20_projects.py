@@ -1,7 +1,7 @@
 """Bridge 2.0, tache 8 (plan 2026-11-18, spec § 7, R5, R7) : page « Projets »
 (bridge_home_projects.ProjectsPage) et, cote plugin, ``_open_db_project``
-(partie de ``_on_load_project`` apres le choix) et le schema transverse
-``projet`` dans ``_project_schemas``.
+(ex-partie de ``_on_load_project`` apres le choix, retire en tache 9) et le
+schema transverse ``projet`` dans ``_project_schemas``.
 
 La page tourne sur les doublures de fakes_widgets.py ; le rendu Qt reel
 (arbre a deux colonnes, theme sombre) reste a la recette manuelle."""
@@ -230,14 +230,17 @@ def test_offline_shows_message_and_never_lists(mod):
     assert page._search.enabled is False
 
 
-@pytest.mark.parametrize("answer", [None, []])
-def test_list_error_or_empty_shows_message(mod, answer):
+@pytest.mark.parametrize("answer, key", [(None, "home.projects_error"), ([], "project.none_found")])
+def test_list_error_or_empty_shows_message(mod, answer, key):
     from constructel_bridge.i18n import tr
 
-    # None : erreur déjà journalisée et affichée par le plugin ; [] : aucun projet.
+    # None : liste illisible, journalisée par le plugin qui n'affiche rien
+    # (tâche 9 : un seul message, celui de la page) ; [] : aucun projet.
     page = _page(mod, _Actions(answer))
-    assert page._message.text() == tr("project.none_found")
+    assert page._message.text() == tr(key)
     assert page._tree.children == [] and page._open_button.enabled is False
+    page._search.setText("x")                         # la recherche ne masque pas l'erreur
+    assert page._message.text() == tr(key)
 
 
 def test_normalize_strips_accents_and_case(mod):
@@ -287,15 +290,14 @@ def test_open_db_project_reports_success_and_failure(bp18, plugin, monkeypatch):
     assert any(message in m[0] for m in QgsMessageLog._messages)
 
 
-def test_on_load_project_still_picks_then_opens(bp18, plugin, fake_cursor, monkeypatch):
-    # L'entrée de menu (jusqu'à la tâche 9) : liste, choix par QInputDialog, puis _open_db_project.
-    plugin._operators = [WYRE, ORANGE]
-    opened = []
-    monkeypatch.setattr(plugin, "_open_db_project", lambda schema, name: opened.append((schema, name)) or True)
-    monkeypatch.setattr(bp18.QInputDialog, "getItem",
-                        staticmethod(lambda *a, **k: ("projet_orange  (orange)", True)), raising=False)
-    plugin._on_load_project()
-    assert opened == [("orange", "projet_orange")]
+def test_load_project_menu_now_opens_the_projects_page(bp18, plugin):
+    # R5 leve en tache 9 : plus de QInputDialog ; le menu « Charger un projet »
+    # ouvre la fenetre sur la page Projets (test_bridge20_home.py), qui liste
+    # par _list_db_projects et ouvre par _open_db_project.
+    assert not hasattr(bp18.ConstructelBridgePlugin, "_on_load_project")
+    actions = plugin._home_actions()
+    assert actions.list_projects == plugin._list_db_projects
+    assert actions.open_project == plugin._open_db_project
 
 
 def test_projet_schema_listed_only_when_it_exists(plugin, fake_cursor, monkeypatch):

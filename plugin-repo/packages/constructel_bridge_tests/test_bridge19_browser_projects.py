@@ -239,15 +239,28 @@ def test_liste_projets_un_schema_en_echec_ne_masque_pas_les_autres(bp18, plugin,
 
 
 def test_liste_projets_tous_les_schemas_en_echec_signale_l_erreur(bp18, plugin, fake_cursor, monkeypatch):
+    # 2.0 (tache 9) : la page Projets dit l'echec (None) ; le plugin le
+    # journalise sans boite, pour un seul message par echec.
+    from qgis.core import QgsMessageLog
+
     shown = _record_message_boxes(bp18, monkeypatch)
     plugin._operators = [WYRE]
     fake_cursor.failing = {"wyre", "public"}
+    QgsMessageLog._messages.clear()
 
     assert plugin._list_db_projects() is None
-    assert [kind for kind, _text in shown] == ["warning"]
+    assert shown == []
     # Premiere erreur rencontree : celle du schema operateur, liste avant public.
-    assert shown[0][1] == bp18.tr("project.list_error",
-                                  error="permission denied for table qgis_projects (wyre)")
+    message = bp18.tr("project.list_error", error="permission denied for table qgis_projects (wyre)")
+    assert any(message in m[0] for m in QgsMessageLog._messages)
+
+
+def test_liste_projets_sans_aucune_table_rend_une_liste_vide(bp18, plugin, fake_cursor, monkeypatch):
+    # Aucun stockage de projets : rien a lister (la page dit « aucun projet »), sans boite.
+    shown = _record_message_boxes(bp18, monkeypatch)
+    plugin._operators = [WYRE]
+    fake_cursor.missing = {"wyre", "public"}
+    assert plugin._list_db_projects() == [] and shown == []
 
 
 def test_liste_projets_repli_sans_operateur(plugin, fake_cursor):

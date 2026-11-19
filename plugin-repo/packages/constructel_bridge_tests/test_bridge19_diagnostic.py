@@ -677,13 +677,15 @@ def test_repository_url_and_timeout(monkeypatch):
 # --- Plugin : statut, menu, Diagnostic hors connexion ----------------------------------
 
 
-class _RecordingDialog:
-    def __init__(self, parent, status_text, local_checks, network_args, on_action):
-        self.parent = parent
-        self.status_text = status_text
-        self.local_checks = local_checks
-        self.network_args = network_args
-        self.on_action = on_action
+class _RecordingHome:
+    """Fenetre d'accueil (2.0) ouverte sur la page Diagnostic : comme le vrai
+    panneau, elle lit ``diagnostic_inputs()`` a la construction et relaie les
+    actions de ``script`` pendant exec() via ``diagnostic_action``."""
+
+    def __init__(self, actions, parent=None, page="load", start_wizard=False):
+        self.parent, self.page = parent, page
+        self.status_text, self.local_checks, self.network_args = actions.diagnostic_inputs()
+        self.on_action = actions.diagnostic_action
         self.executed = 0
         self.script = []  # actions jouees pendant exec()
         self.results = []
@@ -704,21 +706,22 @@ class _RecordingDialog:
 
 @pytest.fixture
 def dialogs(monkeypatch):
-    """Dialogue de Diagnostic remplace par un enregistreur (les widgets Qt
-    reels ne tournent pas sur les stubs) ; ``dialogs.script`` = actions que
-    l'utilisateur declenche pendant exec()."""
+    """Fenetre d'accueil remplacee par un enregistreur (les widgets Qt reels
+    ne tournent pas sur les stubs) ; ``dialogs.script`` = actions que
+    l'utilisateur declenche pendant exec(). Le Diagnostic s'ouvre par
+    ``_on_home("diagnostic")`` depuis la tache 9 (menu « Statut et diagnostic »)."""
     created = []
     script = []
 
-    class Dialog(_RecordingDialog):
+    class Home(_RecordingHome):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.script = list(script)
             created.append(self)
 
-    fake = types.ModuleType("constructel_bridge.bridge_diagnostic_dialog")
-    fake.DiagnosticDialog = Dialog
-    monkeypatch.setitem(sys.modules, "constructel_bridge.bridge_diagnostic_dialog", fake)
+    fake = types.ModuleType("constructel_bridge.bridge_home")
+    fake.HomeDialog = Home
+    monkeypatch.setitem(sys.modules, "constructel_bridge.bridge_home", fake)
     created_list = types.SimpleNamespace(created=created, script=script)
     return created_list
 
@@ -779,8 +782,9 @@ def test_old_status_message_box_is_gone(bp18):
 
 def test_diagnostic_opens_offline_with_local_checks(bp18, onb, dialogs, monkeypatch):  # noqa: F811
     plugin = _offline_plugin(bp18)
-    plugin._on_diagnostic()
+    plugin._on_home("diagnostic")
     assert len(dialogs.created) == 1 and dialogs.created[0].executed == 1
+    assert dialogs.created[0].page == "diagnostic"
     dialog = dialogs.created[0]
     assert [c.key for c in dialog.local_checks] == ["plugin"] * 6 + ["identity"]
     assert [c.target for c in dialog.local_checks[:6]] == [p["id"] for p in onb.RECOMMENDED_PLUGINS]
@@ -791,24 +795,24 @@ def test_diagnostic_opens_offline_with_local_checks(bp18, onb, dialogs, monkeypa
     assert dialog.on_action == plugin._run_diagnostic_action
 
 
-def test_diagnostic_dialog_is_deleted_after_exec(bp18, onb, dialogs):  # noqa: F811
+def test_diagnostic_window_is_deleted_after_exec(bp18, onb, dialogs):  # noqa: F811
     # Relecture finale M5 : enfant de la fenetre principale, le dialogue
     # restait en memoire jusqu'a la fin de la session.
     plugin = _offline_plugin(bp18)
-    plugin._on_diagnostic()
+    plugin._on_home("diagnostic")
     assert dialogs.created[0].events == ["exec", "deleteLater"]
     assert plugin._diagnostic_session is None
 
 
-def test_diagnostic_dialog_already_destroyed_is_not_an_error(bp18, onb, dialogs, monkeypatch):  # noqa: F811
+def test_diagnostic_window_already_destroyed_is_not_an_error(bp18, onb, dialogs, monkeypatch):  # noqa: F811
     # Objet C++ deja detruit (fenetre principale fermee pendant exec) : sip
     # leve RuntimeError sur deleteLater, rien a faire.
     def already_deleted(self):
-        raise RuntimeError("wrapped C/C++ object of type DiagnosticDialog has been deleted")
+        raise RuntimeError("wrapped C/C++ object of type HomeDialog has been deleted")
 
-    monkeypatch.setattr(_RecordingDialog, "deleteLater", already_deleted)
+    monkeypatch.setattr(_RecordingHome, "deleteLater", already_deleted)
     plugin = _offline_plugin(bp18)
-    plugin._on_diagnostic()
+    plugin._on_home("diagnostic")
     assert dialogs.created[0].executed == 1 and plugin._diagnostic_session is None
 
 
@@ -873,7 +877,7 @@ def test_diagnostic_never_opens_a_session_nor_reads_secrets(bp18, onb, dialogs, 
     dialogs.script.extend([bd.Check("plugin", "warning", "diag.plugin_inactive", {"name": "B"}, "activate", "b"),
                            bd.Check("version", "warning", "diag.version_update", {}, "plugin_manager")])
 
-    plugin._on_diagnostic()
+    plugin._on_home("diagnostic")
 
     assert len(dialogs.created[0].results) == 2
     assert onb.started == ["b"]
@@ -895,8 +899,11 @@ def test_status_menu_entry_opens_diagnostic(bp18, monkeypatch):
     iface = _initgui_ready(bp18, monkeypatch)
     plugin = bp18.ConstructelBridgePlugin(iface)
     plugin.initGui()
+    opened = []
+    monkeypatch.setattr(plugin, "_on_home", lambda *a, **k: opened.append(a))
     status = next(a for a in plugin._actions if a.text() == bp18.tr("menu.status"))
-    assert status.triggered._slots == [plugin._on_diagnostic]
+    status.triggered.emit(False)
+    assert opened == [("diagnostic",)]   # la fenetre unique, page Diagnostic (tache 9)
 
 
 def test_status_menu_label_in_three_languages():
@@ -917,7 +924,7 @@ def test_install_actions_share_one_installer_session(bp18, onb, dialogs):  # noq
                            bd.Check("plugin", "warning", "diag.plugin_missing", {}, "install", rec[1])])
     plugin = _offline_plugin(bp18)
 
-    plugin._on_diagnostic()
+    plugin._on_home("diagnostic")
 
     assert [c for c in onb.calls if c[0] == "fetch"] == [("fetch", False)]
     assert [c for c in onb.calls if c[0] == "install"] == [("install", rec[0]), ("install", rec[1])]
@@ -925,7 +932,7 @@ def test_install_actions_share_one_installer_session(bp18, onb, dialogs):  # noq
     first, second = dialogs.created[0].results
     assert [c.action for c in first[:2]] == ["activate", "install"]
     assert [c.action for c in second[:2]] == ["activate", "activate"]
-    assert plugin._diagnostic_session is None  # session limitee a une execution
+    assert plugin._diagnostic_session is None  # session limitee a une fenetre
 
 
 def test_update_action_upgrades_through_install_or_activate_plugin(bp18, onb, monkeypatch):  # noqa: F811
@@ -1077,21 +1084,6 @@ class _W:
         self.deleted = True
 
 
-class _Dialog(_W):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.result = None
-
-    def done(self, result):
-        self.result = result
-
-    def reject(self):
-        self.done(0)
-
-    def exec(self):
-        return 0
-
-
 class _Label(_W):
     def __init__(self, text="", *args):
         super().__init__(*args)
@@ -1115,15 +1107,6 @@ class _Button(_W):
 
     def text(self):
         return self._text
-
-
-class _ButtonBox(_W):
-    class StandardButton:
-        Close = 0x00200000
-
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.rejected = _Sig()
 
 
 class _Layout:
@@ -1165,8 +1148,7 @@ def dlg(bp18, monkeypatch):
     monkeypatch.setattr(core, "QgsTask", _Task, raising=False)
     monkeypatch.setattr(core.QgsApplication, "taskManager",
                         staticmethod(lambda: types.SimpleNamespace(addTask=tasks.append)), raising=False)
-    for name, fake in (("QDialog", _Dialog), ("QLabel", _Label), ("QPushButton", _Button),
-                       ("QDialogButtonBox", _ButtonBox), ("QWidget", _W), ("QVBoxLayout", _Layout),
+    for name, fake in (("QLabel", _Label), ("QPushButton", _Button), ("QWidget", _W), ("QVBoxLayout", _Layout),
                        ("QGridLayout", _Layout)):
         monkeypatch.setattr(QtWidgets, name, fake, raising=False)
     monkeypatch.setattr(QtCore.Qt, "TextFormat", types.SimpleNamespace(PlainText=0), raising=False)
@@ -1313,16 +1295,6 @@ def test_pending_task_outlives_the_deleted_dialog(dlg):
     assert not rows.deleted and rows.layout.cells[(0, 1)].text() == dlg.tr("diag.running")
 
 
-def test_wrapper_dialog_result_is_ignored_after_exec_however_it_ended(dlg):
-    # exec() peut finir sans done() (dialogue cache par QGIS) : le dialogue
-    # va etre detruit, un resultat tardif ne doit plus toucher les widgets du panneau.
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
-    rows = dialog.panel._rows
-    dialog.exec()
-    dialog.panel._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
-    assert dialog.panel._rows is rows and not rows.deleted
-
-
 def test_finished_task_is_released_while_the_panel_is_open(dlg):
     dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     dialog._on_network_done(Exception("Task canceled"))
@@ -1436,16 +1408,10 @@ def test_restart_after_close_panel_reopens_the_panel(dlg):
     assert _rows(panel)[0][1] == dlg.tr("diag.version_update", installed="1.9.0", latest="1.9.1")
 
 
-def test_wrapper_dialog_hosts_the_panel_and_closes_it(dlg):
-    dialog = dlg.DiagnosticDialog(None, "Non connecte.", LOCAL, NET_ARGS, lambda c: LOCAL)
-    assert dialog.title == dlg.tr("diag.title")
-    assert isinstance(dialog.panel, dlg.DiagnosticPanel) and len(dlg.tasks) == 1
-    assert dialog.panel._task is dlg.tasks[0]
-    assert [r[1] for r in _rows(dialog.panel)][0] == dlg.tr("diag.running")
-    rows = dialog.panel._rows
-    dialog.reject()                      # bouton Fermer / Echap / croix
-    dlg.tasks[0].on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
-    assert dialog.panel._rows is rows and not rows.deleted
+def test_dialog_wrapper_is_gone(dlg):
+    # R4 leve en tache 9 : le panneau n'est plus heberge que par la fenetre
+    # d'accueil, qui le ferme (test_bridge20_home.py::test_closing_window_closes_diagnostic_panel).
+    assert not hasattr(dlg, "DiagnosticDialog")
 
 
 def test_task_is_named_after_the_diagnostic(dlg):

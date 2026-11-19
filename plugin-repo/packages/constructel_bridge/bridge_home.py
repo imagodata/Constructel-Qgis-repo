@@ -1,277 +1,294 @@
 # -*- coding: utf-8 -*-
 """
-Constructel Bridge - ecran d'accueil (1.9.0, plan 2026-11-12 tache 9, spec
-§ 6.1, § 6.2, § 6.4, § 6.6, solution « B »).
+Constructel Bridge - fenetre d'accueil 2.0 a barre laterale (plan 2026-11-18
+tache 9, spec § 6.1, § 6.5, § 7, § 8.3).
 
-En-tete : etat de connexion. Grande tuile « Charger les couches » : choix de
-l'operateur (parmi les utilisables seulement), puis la selection actuelle
-(LayerSelectionWidget : modele, arbre, fonds de plan, styles, Tout/Rien), la
-case du suffixe et le bouton principal. Tuiles secondaires : Projet
-enregistre, Check-in, Diagnostic, Langue.
+A gauche, la barre laterale : quatre entrees (Charger les couches, Projet
+enregistre, Check-in avec sa pastille, Diagnostic) puis, en bas, l'etat de la
+connexion (point, « login · perimetre » ou « non connecte », bouton « Se
+connecter »), la langue (FR · EN · PT) et la version du plugin. A droite, la
+page de l'entree choisie, dans un QStackedWidget ; chaque page n'est
+construite qu'a son premier affichage (Projets n'interroge la base que si on
+l'ouvre).
 
-Toute la logique d'etat vient de bridge_home_model ; ce module ne fait que
-dessiner et relayer les clics vers HomeActions. render() reconstruit tout
-depuis actions.snapshot() (apres une connexion, un check-in, un diagnostic
-ou un changement de langue, et apres un chargement qui n'a rien ajoute).
-L'ecran se ferme apres un chargement qui a ajoute des couches ou des fonds
-de plan, et avant d'ouvrir un projet enregistre (D11, T9-c1b).
+Toute la logique d'etat vient de bridge_home_model ; les pages vivent dans
+leurs modules (bridge_home_load, bridge_home_projects, bridge_home_checkin,
+bridge_diagnostic_dialog). ``render()`` reconstruit tout depuis
+``actions.snapshot()`` (connexion, langue, chargement sans effet) en gardant
+la page courante et, pour Charger, le choix affiche. La fenetre se ferme
+apres un chargement qui a ajoute quelque chose et avant d'ouvrir un projet
+enregistre (D11, T9-c1b). La sonde reseau du Diagnostic est close
+(``close_panel``) quand la fenetre se ferme, quand on quitte sa page et
+avant que ``render()`` ne la remplace. Aucune couleur de fond codee en dur :
+la barre suit la palette de QGIS (theme clair ou sombre).
 """
 
 from __future__ import annotations
 
-from qgis.core import QgsSettings
+import dataclasses
+
 from qgis.PyQt.QtWidgets import (
-    QCheckBox,
     QDialog,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .bridge_home_load import SEPARATOR as _SEP
-from .bridge_home_load import summary_text  # noqa: F401  (deplace en 2.0, reste importable d'ici)
-from .bridge_home_model import (
-    MODE_ADD,
-    SELECTOR_BUTTONS,
-    SELECTOR_LABEL,
-    HomeActions,
-    HomeSnapshot,
-    HomeState,
-    home_state,
-    suffix_state,
-)
-from .bridge_layer_selection import LayerSelectionWidget
-from .bridge_operators import SUFFIX_SETTINGS_KEY, OperatorInfo
-from .i18n import tr
+from .bridge_diagnostic import LEVEL_OK, LEVEL_RUNNING
+from .bridge_diagnostic_dialog import LEVEL_MARKS, DiagnosticPanel
+from .bridge_home_checkin import CheckinPage
+from .bridge_home_load import LoadPage
+from .bridge_home_model import HomeActions, home_state
+from .bridge_home_projects import ProjectsPage
+from .bridge_presets import LAST_SELECTION_NAME, UserPreset
+from .i18n import SUPPORTED_LANGUAGES, get_language, tr
 
-# K11 : un appel tr LITTERAL par cle de message (releve par test_bridge18_i18n).
-_MESSAGES = {
-    "home.connect_to_see": lambda: tr("home.connect_to_see"),
-    "home.no_operator": lambda: tr("home.no_operator"),
-    "home.common_only": lambda: tr("home.common_only"),   # 2.0 : lue par le modele v2 (tache 5)
-}
-_CONNECTED_COLOR = "#2e7d32"
-_OFFLINE_COLOR = "#9e9e9e"
-
-
-def checkin_subtitle(summary) -> str:
-    """« extensions 5/6 · 1 a mettre a jour » ; "" si le resume est illisible."""
-    if summary is None:
-        return ""
-    text = tr("home.tile_checkin_sub", active=summary.active, total=summary.total)
-    if summary.updates:
-        text = f"{text}{_SEP}{tr('home.tile_checkin_updates', count=summary.updates)}"
-    return text
+PAGES = ("load", "projects", "checkin", "diagnostic")
+_SIDEBAR_WIDTH = 230
+_STATUS_DOT = "●"
 
 
 class HomeDialog(QDialog):
-    """Ecran d'accueil. *actions* : HomeActions fournies par le plugin."""
+    """Fenetre d'accueil. *actions* : HomeActions fournies par le plugin ;
+    *page* : page affichee a l'ouverture (une de ``PAGES``, sinon Charger) ;
+    *start_wizard* : la page Check-in lance l'assistant a sa construction
+    (premier setup), une seule fois."""
 
-    def __init__(self, actions: HomeActions, parent=None):
+    PAGES = PAGES
+
+    def __init__(self, actions: HomeActions, parent=None, page: str = "load", start_wizard: bool = False):
         super().__init__(parent)
         self.actions = actions
-        self._selected_schema = ""   # choix de la personne, garde d'un redessin a l'autre
-        self._body = None
+        self._current = page if page in PAGES else "load"
+        self._start_wizard = bool(start_wizard)
+        self._pages: dict = {}
+        self._indexes: dict = {}
+        self._load_choice = None        # choix de la page Charger, garde d'un redessin a l'autre
+        self._load_editable = False     # la page Charger etait-elle utilisable (connecte) ?
+        self._diagnostic_left = False   # panneau clos en quittant sa page : relance au retour
+        self._footer = None
+        self._connect_button = None
+        self._lang_buttons: dict = {}
+
         self.setWindowTitle("Constructel Bridge")
-        self.setMinimumWidth(820)
-        self._layout = QVBoxLayout(self)
+        self.setMinimumSize(980, 640)
+        self.resize(1100, 720)
+
+        root = QHBoxLayout(self)
+        self._side = QWidget(self)
+        self._side.setFixedWidth(_SIDEBAR_WIDTH)
+        self._side_layout = QVBoxLayout(self._side)
+        self._sidebar = QListWidget(self._side)
+        self._sidebar.currentRowChanged.connect(self._on_row_changed)
+        self._side_layout.addWidget(self._sidebar, 1)
+        root.addWidget(self._side)
+        self._stack = QStackedWidget(self)
+        root.addWidget(self._stack, 1)
         self.render()
 
-    # -- construction -------------------------------------------------------------
+    # -- construction -------------------------------------------------------------------
 
     def render(self) -> None:
-        """Reconstruit tout l'ecran depuis actions.snapshot()."""
-        snapshot = self.actions.snapshot()
-        state = home_state(snapshot)
-        self._snapshot, self._state = snapshot, state
-        self._operator = self._current_operator(snapshot, state)
+        """Reconstruit barre et pages depuis ``actions.snapshot()`` ; la page
+        courante et le choix de Charger sont gardes, les autres pages seront
+        reconstruites a leur prochain affichage."""
+        self._keep_load_choice()
+        self._close_diagnostic()
+        for page in self._pages.values():
+            self._stack.removeWidget(page)
+            # Suppression differee : render() peut venir d'un clic dans une page.
+            page.hide()
+            page.deleteLater()
+        self._pages, self._indexes = {}, {}
+        self._diagnostic_left = False
+        self._read_snapshot()
+        self._build_chrome()
+        self.show_page(self._current)
 
-        body = QWidget(self)
-        layout = QVBoxLayout(body)
-        layout.addWidget(self._build_header(snapshot))
-        layout.addWidget(self._build_load_tile(snapshot, state))
-        layout.addLayout(self._build_tiles(snapshot, state))
+    def _read_snapshot(self) -> None:
+        self._snapshot = self.actions.snapshot()
+        self._state = home_state(self._snapshot)
 
-        if self._body is None:
-            self._layout.addWidget(body)
+    def _build_chrome(self) -> None:
+        """Entrees de la barre (pastille du Check-in) et bas de barre."""
+        labels = self._nav_labels()
+        blocked = self._sidebar.blockSignals(True)
+        try:
+            self._sidebar.clear()
+            for name in PAGES:
+                self._sidebar.addItem(labels[name])
+            self._sidebar.setCurrentRow(PAGES.index(self._current))
+        finally:
+            self._sidebar.blockSignals(blocked)
+        footer = self._build_footer()
+        if self._footer is None:
+            self._side_layout.addWidget(footer)
         else:
-            # Suppression differee : render() peut etre appele depuis un clic
-            # sur un bouton de l'ancien corps.
-            self._layout.replaceWidget(self._body, body)
-            self._body.hide()
-            self._body.deleteLater()
-        self._body = body
+            self._side_layout.replaceWidget(self._footer, footer)
+            self._footer.hide()
+            self._footer.deleteLater()
+        self._footer = footer
 
-    def _current_operator(self, snapshot: HomeSnapshot, state: HomeState):
-        if not state.load_enabled:
-            return None
-        chosen = next((op for op in snapshot.operators if op.schema == self._selected_schema), None)
-        return chosen or state.preselected
+    def _nav_labels(self) -> dict:
+        checkin = tr("home.nav_checkin")
+        badge = self._state.checkin_badge
+        if badge:
+            checkin = f"{checkin}  ⚠ {badge}"
+        return {
+            "load": tr("home.nav_load"),
+            "projects": tr("home.nav_projects"),
+            "checkin": checkin,
+            "diagnostic": tr("home.nav_diagnostic"),
+        }
 
-    def _build_header(self, snapshot: HomeSnapshot):
-        header = QWidget()
-        row = QHBoxLayout(header)
-        self._status_dot = QLabel("●")
-        self._status_dot.setStyleSheet(f"color: {_CONNECTED_COLOR if snapshot.connected else _OFFLINE_COLOR};")
-        row.addWidget(self._status_dot)
-        self._header_label = QLabel(snapshot.header if snapshot.connected else tr("home.not_connected"))
-        self._header_label.setWordWrap(True)
-        row.addWidget(self._header_label, 1)
+    def _build_footer(self) -> QWidget:
+        snapshot = self._snapshot
+        footer = QWidget(self._side)
+        layout = QVBoxLayout(footer)
+
+        status = QHBoxLayout()
+        _symbol, color = LEVEL_MARKS[LEVEL_OK if snapshot.connected else LEVEL_RUNNING]
+        dot = QLabel(_STATUS_DOT)
+        dot.setStyleSheet(f"color: {color};")     # couleur du texte seulement ; le fond suit la palette
+        status.addWidget(dot)
+        header = QLabel(snapshot.header if snapshot.connected else tr("home.not_connected"))
+        header.setWordWrap(True)
+        status.addWidget(header, 1)
+        layout.addLayout(status)
+
         self._connect_button = None
         if not snapshot.connected:
             self._connect_button = QPushButton(tr("home.connect"))
             self._connect_button.clicked.connect(lambda _checked=False: self._on_connect())
-            row.addWidget(self._connect_button)
-        return header
+            layout.addWidget(self._connect_button)
 
-    def _build_load_tile(self, snapshot: HomeSnapshot, state: HomeState):
-        tile = QGroupBox(tr("home.tile_load"))
-        layout = QVBoxLayout(tile)
+        languages = QHBoxLayout()
+        current = get_language()
+        self._lang_buttons = {}
+        for code in SUPPORTED_LANGUAGES:
+            button = QPushButton(code.upper())
+            button.setCheckable(True)
+            button.setChecked(code == current)
+            button.setFlat(True)
+            button.clicked.connect(lambda _checked=False, code=code: self._on_language(code))
+            languages.addWidget(button)
+            self._lang_buttons[code] = button
+        languages.addStretch()
+        layout.addLayout(languages)
 
-        # -- Operateur (utilisables seulement, K14) --------------------------
-        top = QHBoxLayout()
-        top.addWidget(QLabel(tr("home.operator_label")))
-        self._operator_buttons = {}
-        self._operator_label = None
-        if state.selector == SELECTOR_LABEL:
-            self._operator_label = QLabel(self._operator_caption(snapshot.operators[0], state))
-            top.addWidget(self._operator_label)
-        elif state.selector == SELECTOR_BUTTONS:
-            for op in snapshot.operators:
-                button = QPushButton(self._operator_caption(op, state))
-                button.setCheckable(True)
-                button.setChecked(op == self._operator)
-                button.clicked.connect(lambda _checked=False, op=op: self._select(op))
-                top.addWidget(button)
-                self._operator_buttons[op.schema] = button
-        top.addStretch()
-        layout.addLayout(top)
+        if snapshot.plugin_version:
+            version = QLabel(f"Constructel Bridge {snapshot.plugin_version}")
+            version.setEnabled(False)               # texte attenue, couleur de la palette
+            layout.addWidget(version)
+        return footer
 
-        self._message_label = None
-        if state.message_key:
-            self._message_label = QLabel(_MESSAGES[state.message_key]())
-            self._message_label.setWordWrap(True)
-            layout.addWidget(self._message_label)
+    def _build_page(self, name: str) -> QWidget:
+        snapshot, actions = self._snapshot, self.actions
+        if name == "load":
+            snapshot, state = self._load_inputs()
+            self._load_editable = state.load_enabled
+            return LoadPage(snapshot, state, actions, self._on_load_done, self._stack)
+        if name == "projects":
+            return ProjectsPage(actions, snapshot.connected, snapshot.labels, self.accept, self._stack)
+        if name == "checkin":
+            start, self._start_wizard = self._start_wizard, False   # premier setup : une fois
+            page = CheckinPage(snapshot, actions, self._stack, start_wizard=start, email=snapshot.email)
+            page.on_change = self._refresh_chrome
+            return page
+        status_text, local_checks, network_args = actions.diagnostic_inputs()
+        return DiagnosticPanel(status_text, local_checks, network_args, actions.diagnostic_action, self._stack)
 
-        # -- Deja dans le projet ----------------------------------------------
-        self._summary_label = None
-        summary = summary_text(snapshot, state)
-        if summary:
-            row = QHBoxLayout()
-            row.addWidget(QLabel(tr("home.loaded_title")))
-            self._summary_label = QLabel(summary)
-            self._summary_label.setStyleSheet(f"color: {_CONNECTED_COLOR};")
-            row.addWidget(self._summary_label)
-            row.addStretch()
-            layout.addLayout(row)
+    def _load_inputs(self) -> tuple:
+        """(instantane, etat) de la page Charger : apres un redessin, le choix
+        affiche avant (perimetre et selection) remplace le dernier choix du
+        poste. Un choix fait hors connexion (page inerte) n'est jamais garde."""
+        choice = self._load_choice
+        if choice is None:
+            return self._snapshot, self._state
+        kept = UserPreset(LAST_SELECTION_NAME, choice.schemas, choice.selection)
+        snapshot = dataclasses.replace(self._snapshot, last_selection=kept)
+        return snapshot, home_state(snapshot)
 
-        # -- Selection actuelle + suffixe (seulement avec un operateur) ----------
-        self._selection = None
-        self._suffix_box = None
-        if self._operator is not None:
-            self._selection = LayerSelectionWidget(tile)
-            self._selection.set_operator(self._operator.schema, self._operator.label)
-            layout.addWidget(self._selection)
-            self._suffix_box = QCheckBox(tr("home.suffix_checkbox"))
-            layout.addWidget(self._suffix_box)
-            self._refresh_suffix()
+    def _keep_load_choice(self) -> None:
+        page = self._pages.get("load")
+        if page is not None and self._load_editable:
+            self._load_choice = page.current_choice()
 
-        bar = QHBoxLayout()
-        bar.addStretch()
-        self._load_button = QPushButton(self._load_caption())
-        self._load_button.setEnabled(state.load_enabled)
-        self._load_button.clicked.connect(lambda _checked=False: self._on_load())
-        bar.addWidget(self._load_button)
-        layout.addLayout(bar)
-        return tile
+    # -- navigation ------------------------------------------------------------------------
 
-    def _build_tiles(self, snapshot: HomeSnapshot, state: HomeState):
-        row = QHBoxLayout()
-        specs = (
-            ("project", tr("home.tile_project"), tr("home.tile_project_sub"),
-             self._on_saved_project, state.saved_project_enabled),
-            ("checkin", tr("home.tile_checkin"), checkin_subtitle(snapshot.plugin_summary),
-             lambda: self._run_and_render(self.actions.checkin), True),
-            ("diagnostic", tr("home.tile_diagnostic"), tr("home.tile_diagnostic_sub", version=snapshot.plugin_version),
-             lambda: self._run_and_render(self.actions.diagnostic), True),
-            ("language", tr("home.tile_language"), tr("home.tile_language_sub"),
-             lambda: self._run_and_render(self.actions.change_language), True),
-        )
-        self._tiles = {}
-        for name, title, subtitle, slot, enabled in specs:
-            button = QPushButton(f"{title}\n{subtitle}" if subtitle else title)
-            button.setEnabled(enabled)
-            button.setMinimumHeight(48)
-            button.clicked.connect(lambda _checked=False, slot=slot: slot())
-            row.addWidget(button)
-            self._tiles[name] = button
-        return row
+    def show_page(self, name: str) -> None:
+        """Affiche la page *name* (construite a son premier affichage) et
+        selectionne son entree dans la barre."""
+        if name not in PAGES:
+            name = "load"
+        previous = self._current
+        if previous == "diagnostic" and name != "diagnostic" and "diagnostic" in self._pages:
+            self._close_diagnostic()
+            self._diagnostic_left = True
+        self._current = name
+        page = self._pages.get(name)
+        if page is None:
+            page = self._build_page(name)
+            self._pages[name] = page
+            self._indexes[name] = self._stack.addWidget(page)
+        elif name == "diagnostic" and self._diagnostic_left:
+            self._diagnostic_left = False
+            page.restart()                      # sonde close en quittant la page : relancee
+        self._stack.setCurrentIndex(self._indexes[name])
+        blocked = self._sidebar.blockSignals(True)
+        try:
+            self._sidebar.setCurrentRow(PAGES.index(name))
+        finally:
+            self._sidebar.blockSignals(blocked)
 
-    # -- textes ---------------------------------------------------------------------
+    def _on_row_changed(self, row: int) -> None:
+        if 0 <= row < len(PAGES) and PAGES[row] != self._current:
+            self.show_page(PAGES[row])
 
-    @staticmethod
-    def _operator_caption(op: OperatorInfo, state: HomeState) -> str:
-        return f"{op.label} ✓" if op.schema in state.loaded_marks else op.label
+    def _refresh_chrome(self) -> None:
+        """Apres une action du Check-in : barre et bas de barre relus (pastille),
+        pages inchangees (la page Check-in s'est deja redessinee)."""
+        self._read_snapshot()
+        self._build_chrome()
 
-    def _load_caption(self) -> str:
-        add = self._state.mode == MODE_ADD
-        if self._operator is None:
-            return tr("init.btn_add") if add else tr("init.btn_init")
-        if add:
-            return tr("home.btn_add", operator=self._operator.label)
-        return tr("home.btn_init", operator=self._operator.label)
+    # -- gestes ----------------------------------------------------------------------------
 
-    def _refresh_suffix(self) -> None:
-        """Case du suffixe recalculee pour l'operateur choisi (§ 6.4)."""
-        loaded = list(self._snapshot.project_operators) + list(self._snapshot.counts.per_operator)
-        checked, editable = suffix_state(loaded, self._operator.schema,
-                                         self._snapshot.project_suffix, self._snapshot.last_suffix)
-        self._suffix_proposed = checked
-        self._suffix_box.setChecked(checked)
-        self._suffix_box.setEnabled(editable)
-
-    # -- gestes ---------------------------------------------------------------------
-
-    def _select(self, op: OperatorInfo) -> None:
-        self._operator = op
-        self._selected_schema = op.schema
-        for schema, button in self._operator_buttons.items():
-            button.setChecked(schema == op.schema)
-        self._selection.set_operator(op.schema, op.label)
-        self._refresh_suffix()
-        self._load_button.setText(self._load_caption())
-
-    def _on_load(self) -> None:
-        op, widget = self._operator, self._selection
-        if op is None or widget is None:
-            return
-        suffix = self._suffix_box.isChecked()
-        editable = self._suffix_box.isEnabled()
-        basemaps = widget.selected_basemaps() if widget.want_basemap() else set()
-        count = self.actions.load(op, widget.selected_layers(), basemaps, widget.want_styles(), suffix)
-        if count > 0:
-            if editable and suffix != self._suffix_proposed:
-                # Choix de la personne (case modifiable, changee), apres un
-                # chargement reussi : memorise sur le poste (§ 9.5, T9-c3).
-                # Jamais la valeur imposee ou venue du projet.
-                QgsSettings().setValue(SUFFIX_SETTINGS_KEY, suffix)
+    def _on_load_done(self, loaded: bool) -> None:
+        if loaded:
             self.accept()
         else:
-            # Echec ou rien de nouveau : l'ecran reste ouvert, a jour
-            # (resume, fonds grises, mode, case du suffixe ; T9-c1b).
+            # Echec ou rien de nouveau : la fenetre reste ouverte, a jour (T9-c1b).
             self.render()
 
     def _on_connect(self) -> None:
         self.actions.connect()
         self.render()
 
-    def _on_saved_project(self) -> None:
-        self.accept()
-        self.actions.open_saved_project()
-
-    def _run_and_render(self, action) -> None:
-        action()
+    def _on_language(self, code: str) -> None:
+        self.actions.set_language(code)
         self.render()
+
+    # -- fermeture -------------------------------------------------------------------------
+
+    def _close_diagnostic(self) -> None:
+        panel = self._pages.get("diagnostic")
+        if panel is not None:
+            panel.close_panel()
+
+    def done(self, result) -> None:
+        # Toute fermeture (bouton, Echap, croix, chargement, projet ouvert) :
+        # un resultat reseau tardif du Diagnostic est ignore.
+        self._close_diagnostic()
+        super().done(result)
+
+    def exec(self) -> int:
+        # exec() peut aussi finir sans done() (fenetre cachee) ; le plugin
+        # detruit ensuite la fenetre (deleteLater) : resultat tardif ignore.
+        try:
+            return super().exec()
+        finally:
+            self._close_diagnostic()

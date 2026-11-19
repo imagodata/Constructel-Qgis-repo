@@ -41,6 +41,7 @@ class _W:
         self.tooltip = ""
         self.signals_blocked = False
         self.visible = True     # setVisible ; ``hidden`` ne suit que hide()
+        self.destroyed = _Sig()  # QObject.destroyed (jamais emis par la doublure)
 
     def setVisible(self, visible):
         self.visible = bool(visible)
@@ -176,16 +177,41 @@ class _GroupBox(_W):
 
 
 class _Dialog(_W):
+    """QDialog : accept / reject passent par done(), comme Qt (une fenetre
+    qui surcharge done() le voit pour toute fermeture)."""
+
     def __init__(self, parent=None):
         super().__init__()
         self.parent = parent
         self.closed = False
+        self.result = None
+        self.minimum_size = None
+        self.size = None
+        self.title = ""
+
+    def done(self, result):
+        self.closed = True
+        self.result = result
 
     def accept(self):
-        self.closed = True
+        self.done(1)
 
     def reject(self):
-        self.closed = True
+        self.done(0)
+
+    def exec(self):
+        """Boucle modale factice : rend tout de suite (le test joue les
+        gestes avant ou apres)."""
+        return self.result or 0
+
+    def setWindowTitle(self, title):
+        self.title = title
+
+    def setMinimumSize(self, width, height):
+        self.minimum_size = (width, height)
+
+    def resize(self, width, height):
+        self.size = (width, height)
 
 
 class _Layout:
@@ -226,6 +252,12 @@ class _Stack(_W):
             self.index = 0
         return len(self.pages) - 1
 
+    def removeWidget(self, widget):
+        """Comme Qt : la page sort de la pile (indices decales), sans etre detruite."""
+        current = self.currentWidget()
+        self.pages.remove(widget)
+        self.index = self.pages.index(current) if current in self.pages else (0 if self.pages else -1)
+
     def setCurrentIndex(self, index):
         self.index = index
 
@@ -258,7 +290,8 @@ class _ListWidget(_W):
     def setCurrentRow(self, row):
         if row != self.row:
             self.row = row
-            self.currentRowChanged.emit(row)
+            if not self.signals_blocked:
+                self.currentRowChanged.emit(row)
 
     def currentRow(self):
         return self.row
