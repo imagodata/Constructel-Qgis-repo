@@ -95,6 +95,19 @@ def _layer_label(entry: tuple) -> str:
     return entry[6]
 
 
+def step_number_label(number: str) -> QLabel:
+    """Numero d'etape (1 / 2 / 3), hors traduction, devant le titre."""
+    label = QLabel(number)
+    label.setStyleSheet("font-weight: bold;")
+    return label
+
+
+def step_title_label(title: str) -> QLabel:
+    label = QLabel(title)
+    label.setStyleSheet("font-weight: bold;")
+    return label
+
+
 class _Group:
     """Groupe de l'arbre : tuile, operateur (None si commune) et ses couches
     encore a charger (les couches deja chargees ne comptent pas)."""
@@ -160,10 +173,16 @@ class LayerSelectionWidget(QWidget):
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
         self._tree.itemChanged.connect(self._on_item_changed)
-        layout.addWidget(self._tree)
+        # Etape 3 « Couches » : l'entete porte aussi la case « Afficher toutes les couches ».
+        header = QHBoxLayout()
+        header.addWidget(step_number_label("3"))
+        header.addWidget(step_title_label(tr("home.step_layers")))
+        header.addStretch()
         self._chk_expert = QCheckBox(tr("home.show_expert"))
         self._chk_expert.toggled.connect(self.set_show_expert)
-        layout.addWidget(self._chk_expert)
+        header.addWidget(self._chk_expert)
+        layout.addLayout(header)
+        layout.addWidget(self._tree)
 
         # Fonds de plan et styles : un bloc a part, que la page place dans sa
         # ligne « Options » repliable (options_panel). Sans parent : jamais

@@ -38,6 +38,7 @@ from constructel_bridge_tests.fakes_widgets import (
     _ToolButton,
     _Tree,
     _W,
+    _texts,
     _widgets,
 )
 from constructel_bridge_tests.test_bridge18_layers import pi  # noqa: F401  (pi = fixture)
@@ -437,3 +438,20 @@ def test_summary_counts_what_will_be_added(load):
     assert page._count_label.text() == load.tr(
         "home.load_summary", layers=2 * zones + len(tile_keys("osiris")), basemaps=basemaps - 1)
 
+
+
+def test_steps_are_numbered_and_titled_and_the_expert_toggle_sits_on_the_layers_header(load):
+    page = _open(load)
+    texts = [t for t in _texts(page) if t]
+    order = [texts.index(t) for t in ("1", load.tr("home.step_perimeter"), "2", load.tr("home.step_presets"),
+                                      "3", load.tr("home.step_layers"))]
+    assert order == sorted(order)
+    for key in ("home.step_perimeter", "home.step_presets", "home.step_layers"):
+        assert not any(ch.isdigit() for ch in load.tr(key))             # le numero n'est jamais dans la traduction
+    # « Afficher toutes les couches » : meme ligne que l'en-tete de l'etape 3, avant l'arbre
+    selection_layout = page._selection.layout
+    header = next(item for item in selection_layout.items
+                  if isinstance(item, _Layout) and page._selection._chk_expert in item.items)
+    assert [w.text() for w in header.items if isinstance(w, _Label)] == ["3", load.tr("home.step_layers"),
+                                                                       load.tr("home.show_expert")]
+    assert selection_layout.items.index(header) < selection_layout.items.index(page._selection._tree)

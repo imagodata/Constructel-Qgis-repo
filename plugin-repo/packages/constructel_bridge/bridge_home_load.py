@@ -45,7 +45,7 @@ from .bridge_home_model import (
     suffix_state,
     toggle_operator,
 )
-from .bridge_layer_selection import LayerSelectionWidget
+from .bridge_layer_selection import LayerSelectionWidget, step_number_label, step_title_label
 from .bridge_operators import SUFFIX_SETTINGS_KEY
 from .bridge_presets import (
     LAST_SELECTION_KEY,
@@ -128,7 +128,11 @@ class LoadPage(QWidget):
             layout.addWidget(self._message_label)
 
         # -- Etape 1 : perimetre ------------------------------------------------------------
-        layout.addWidget(QLabel(tr("home.step_perimeter")))
+        step_one = QHBoxLayout()
+        step_one.addWidget(step_number_label("1"))
+        step_one.addWidget(step_title_label(tr("home.step_perimeter")))
+        step_one.addStretch()
+        layout.addLayout(step_one)
         perimeter = QHBoxLayout()
         for op in state.operators:
             caption = f"{op.label} ✓" if op.schema in state.loaded_marks else op.label
@@ -146,7 +150,8 @@ class LoadPage(QWidget):
 
         # -- Etape 2 : presets (menu) puis tuiles et arbre du widget ---------------------------
         header = QHBoxLayout()
-        header.addWidget(QLabel(tr("home.step_presets")))
+        header.addWidget(step_number_label("2"))
+        header.addWidget(step_title_label(tr("home.step_presets")))
         header.addStretch()
         self._presets_button = QToolButton()
         self._presets_button.setText(f"{tr('home.my_presets')} ▾")
@@ -211,7 +216,7 @@ class LoadPage(QWidget):
             if self._chosen:
                 self._selection.set_tiles(_FIRST_USE_TILES)
         else:
-            self._selection.apply_selection(self._restricted_selection(last))
+            self._selection.apply_selection(self._restricted(last)[1])
 
     # -- perimetre ----------------------------------------------------------------------
 
@@ -253,18 +258,20 @@ class LoadPage(QWidget):
 
     # -- presets ------------------------------------------------------------------------
 
-    def _restricted_selection(self, preset: UserPreset) -> LayerSelection:
-        """Selection de *preset* limitee aux operateurs utilisables ET a ceux
-        qu'il nomme : jamais les couches d'un operateur qu'il ne cite pas."""
+    def _restricted(self, preset: UserPreset) -> tuple:
+        """(operateurs, selection) de *preset* limites aux operateurs
+        utilisables ET a ceux qu'il nomme : jamais les couches d'un operateur
+        qu'il ne cite pas."""
         restricted = restrict_preset(preset, self._order)
         named = set(restricted.schemas)
-        return LayerSelection({s: keys for s, keys in restricted.selection.per_operator.items() if s in named},
-                              restricted.selection.common)
+        selection = LayerSelection({s: keys for s, keys in restricted.selection.per_operator.items() if s in named},
+                                   restricted.selection.common)
+        return tuple(s for s in self._order if s in named), selection
 
     def _choose_preset(self, preset: UserPreset) -> None:
-        restricted = restrict_preset(preset, self._order)
-        self._set_chosen(s for s in self._order if s in restricted.schemas)
-        self._selection.apply_selection(self._restricted_selection(preset))
+        schemas, selection = self._restricted(preset)
+        self._set_chosen(schemas)
+        self._selection.apply_selection(selection)
 
     def current_choice(self) -> UserPreset:
         """Perimetre et selection affiches, sans nom."""
