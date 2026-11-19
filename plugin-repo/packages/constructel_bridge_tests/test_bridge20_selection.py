@@ -453,3 +453,57 @@ def test_options_panel_holds_basemaps_and_styles_and_stays_readable(sel):
     assert widget._basemap_tree in inside and widget._chk_styles in inside
     assert widget._tree not in inside                                   # l'arbre des couches reste dans le widget
     assert widget.want_styles() is True and widget.want_basemap() is True
+
+
+# --- revue finale ---------------------------------------------------------------------------
+
+
+def test_none_then_an_operator_again_restores_its_tiles(sel):
+    # Spec § 7 : « Aucun » grise et decoche la rangee « Par operateur » ;
+    # cocher un operateur la reactive, etat repris du dernier choix.
+    widget = sel.LayerSelectionWidget()
+    widget.set_operators((WYRE,))
+    widget.toggle_tile("zones")
+    widget._items[("wyre", "ducts")].setCheckState(0, _CHECK.Checked)
+    widget.toggle_tile("osiris")
+    widget.set_operators(())
+    assert widget.selection().per_operator == {}                         # decochee
+    assert widget.tile_states()["zones"] == "disabled"
+    assert widget.selection().common == tile_keys("osiris")              # les communes restent
+    widget.set_operators((WYRE, ORANGE))
+    assert widget.tile_states()["zones"] == "on"                         # tuile pleine : etendue a Orange
+    assert _tile_keys_checked(widget, "orange", "zones") == tile_keys("zones")
+    assert _checked(widget._items[("wyre", "ducts")])                    # choix manuel repris
+    assert not _checked(widget._items[("orange", "ducts")])
+    # Repris une seule fois : un second passage par « Aucun » repart du choix courant.
+    widget.set_row("operator", False)
+    widget.set_operators(())
+    widget.set_operators((WYRE,))
+    assert not widget.selection().per_operator.get("wyre")
+
+
+def test_operator_row_shows_a_chip_per_ticked_operator(sel):
+    from constructel_bridge_tests.fakes_widgets import _widgets
+
+    widget = sel.LayerSelectionWidget()
+    assert widget.operator_chips() == []
+    widget.set_operators((WYRE, ORANGE))
+    assert widget.operator_chips() == ["Wyre", "Orange"]
+    chips = list(widget._chips)
+    assert all(chip in _widgets(widget) for chip in chips)               # sur la rangee « Par operateur »
+    widget.set_operators((ORANGE,))
+    assert widget.operator_chips() == ["Orange"]
+    assert all(chip.deleted and chip not in _widgets(widget) for chip in chips)
+    widget.set_operators(())
+    assert widget.operator_chips() == []
+
+
+def test_chips_have_no_hard_coded_colour():
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parent.parent / "constructel_bridge" / "bridge_layer_selection.py").read_text(
+        encoding="utf-8")
+    assert not re.search(r"background", src, re.IGNORECASE)
+    assert not re.search(r"#[0-9a-fA-F]{3,6}\b", src)
+    assert "palette(" in src

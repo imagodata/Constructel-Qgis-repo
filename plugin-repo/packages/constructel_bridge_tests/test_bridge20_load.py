@@ -252,7 +252,7 @@ def test_reorganize_runs_once_with_first_operator(bp18, pi, plugin18, monkeypatc
     assert pi.needs_reorganization(project.layerTreeRoot()) is False
 
 
-def test_common_only_load_reorganizes_a_1_8_project_once(bp18, pi, plugin18, monkeypatch):
+def test_common_only_load_reorganizes_a_1_8_project_once(bp18, pi, plugin18, monkeypatch):  # noqa: F811
     # Revue finale (spec § 8.2) : un chargement des seules couches communes
     # range aussi un projet 1.8, une fois, sans operateur a comparer.
     plugin, project, _layers = plugin18
@@ -267,7 +267,7 @@ def test_common_only_load_reorganizes_a_1_8_project_once(bp18, pi, plugin18, mon
     assert project.readEntry("bridge", "operator", "")[0] == "wyre"
 
 
-def test_reorganize_without_operator_never_forces_the_suffix(bp18, pi, plugin18):
+def test_reorganize_without_operator_never_forces_the_suffix(bp18, pi, plugin18):  # noqa: F811
     plugin, project, _layers = plugin18
     plugin._operator_registry = {"wyre": WYRE}
     assert plugin._reorganize_legacy_project(None, None) is None
