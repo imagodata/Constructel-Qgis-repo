@@ -1,0 +1,529 @@
+# Extrait de l'inventaire du schema Farois, lu par test_bridge_farois_schema.py.
+# Ne contient que les lignes "col" des relations NON operateur du LAYER_CATALOG
+# (bridge_project_init.py) : chantier.*, osiris.*, docs.v_element_documents_list,
+# ref.v_form_lists. Les tables operateur (wyre.*) n'y figurent pas.
+#
+# Format (celui de Farois sql/schema_inventory/golden.txt) :
+#   col <schema>.<table>.<colonne> <type>
+#
+# Rafraichir apres une migration Farois qui touche ces relations, depuis un
+# checkout de Farois a jour (a la racine du depot Farois) :
+#   grep -E '^col (chantier\.(interventions|incidents|permis_voirie|facade_planning|complaints|worksite_interventions|synergies)|osiris\.(frozen_zones|worksites|chantiers_autorises|phases_in_progress|hypercoordination_zones|deviations|events)|docs\.v_element_documents_list|ref\.v_form_lists)\.' \
+#     sql/schema_inventory/golden.txt > /tmp/rows.txt
+#   puis recopier ces lignes sous cet en-tete (les lignes commencant par # sont ignorees).
+# Si le test echoue apres un rafraichissement, le catalogue du plugin (table,
+# colonne de geometrie, cle primaire) est en retard sur Farois : le corriger.
+# Extrait du golden.txt de Farois (origin/main) du 2026-11-19.
+col chantier.complaints.actions text
+col chantier.complaints.address text
+col chantier.complaints.commune_id integer
+col chantier.complaints.commune_match_method text
+col chantier.complaints.complainant character varying(255)
+col chantier.complaints.contact_info character varying(255)
+col chantier.complaints.created_at timestamp without time zone
+col chantier.complaints.description text
+col chantier.complaints.geom public.geometry(Point,31370)
+col chantier.complaints.id uuid
+col chantier.complaints.import_source character varying(50)
+col chantier.complaints.imported_at timestamp with time zone
+col chantier.complaints.municipality character varying(100)
+col chantier.complaints.nature character varying(100)
+col chantier.complaints.owner character varying(255)
+col chantier.complaints.permis_id uuid
+col chantier.complaints.phase_id uuid
+col chantier.complaints.received_date date
+col chantier.complaints.resolved_date date
+col chantier.complaints.source_data jsonb
+col chantier.complaints.source_file text
+col chantier.complaints.source_key text
+col chantier.complaints.status character varying(30)
+col chantier.complaints.updated_at timestamp without time zone
+col chantier.complaints.zone_mro_id uuid
+col chantier.complaints.zone_pop_id uuid
+col chantier.facade_planning.aerial_count integer
+col chantier.facade_planning.block_number integer
+col chantier.facade_planning.comment text
+col chantier.facade_planning.created_at timestamp without time zone
+col chantier.facade_planning.crossing_count integer
+col chantier.facade_planning.derogation_notes text
+col chantier.facade_planning.egb_ok boolean
+col chantier.facade_planning.facade_poc_count integer
+col chantier.facade_planning.geocode_confidence double precision
+col chantier.facade_planning.geocode_query text
+col chantier.facade_planning.geocode_source character varying(40)
+col chantier.facade_planning.geocode_status character varying(40)
+col chantier.facade_planning.geocoded_at timestamp with time zone
+col chantier.facade_planning.geom public.geometry(Geometry,31370)
+col chantier.facade_planning.id uuid
+col chantier.facade_planning.import_source character varying(50)
+col chantier.facade_planning.imported_at timestamp with time zone
+col chantier.facade_planning.linear_meters numeric
+col chantier.facade_planning.mro_project character varying(100)
+col chantier.facade_planning.operateur_code character varying(30)
+col chantier.facade_planning.permis_id uuid
+col chantier.facade_planning.planned_end_date date
+col chantier.facade_planning.planned_start_date date
+col chantier.facade_planning.pop_code character varying(50)
+col chantier.facade_planning.riser_count integer
+col chantier.facade_planning.sig_ok boolean
+col chantier.facade_planning.source_data jsonb
+col chantier.facade_planning.source_file text
+col chantier.facade_planning.source_key text
+col chantier.facade_planning.status character varying(30)
+col chantier.facade_planning.streets text
+col chantier.facade_planning.ug_poc_count integer
+col chantier.facade_planning.updated_at timestamp without time zone
+col chantier.facade_planning.zone_mro_id uuid
+col chantier.facade_planning.zone_pop_id uuid
+col chantier.incidents.created_at timestamp without time zone
+col chantier.incidents.created_by uuid
+col chantier.incidents.description text
+col chantier.incidents.element_id uuid
+col chantier.incidents.element_type character varying(30)
+col chantier.incidents.geom public.geometry(Point,31370)
+col chantier.incidents.id uuid
+col chantier.incidents.incident_address character varying(200)
+col chantier.incidents.incident_type character varying(50)
+col chantier.incidents.intervention_id uuid
+col chantier.incidents.resolution_date date
+col chantier.incidents.resolution_description text
+col chantier.incidents.resolved_by uuid
+col chantier.incidents.severity character varying(20)
+col chantier.incidents.status character varying(30)
+col chantier.incidents.title character varying(200)
+col chantier.incidents.updated_at timestamp without time zone
+col chantier.incidents.zone_pop_id uuid
+col chantier.interventions.address character varying(255)
+col chantier.interventions.b1_dossier_osiris character varying(64)
+col chantier.interventions.beon_comments text
+col chantier.interventions.beon_related_id_externe character varying(50)
+col chantier.interventions.city character varying(100)
+col chantier.interventions.comment text
+col chantier.interventions.created_at timestamp without time zone
+col chantier.interventions.created_by uuid
+col chantier.interventions.customer_code character varying(100)
+col chantier.interventions.customer_total_cost numeric(12,2)
+col chantier.interventions.description text
+col chantier.interventions.element_id uuid
+col chantier.interventions.element_type character varying(30)
+col chantier.interventions.employee_name character varying(255)
+col chantier.interventions.employee_sap character varying(50)
+col chantier.interventions.end_date timestamp without time zone
+col chantier.interventions.estimated_duration_h numeric(5,2)
+col chantier.interventions.id uuid
+col chantier.interventions.id_externe character varying(50)
+col chantier.interventions.intervention_type character varying(50)
+col chantier.interventions.is_finished boolean
+col chantier.interventions.is_success boolean
+col chantier.interventions.last_sync timestamp without time zone
+col chantier.interventions.parent_intervention_id uuid
+col chantier.interventions.phase_id uuid
+col chantier.interventions.planned_date date
+col chantier.interventions.planned_end_date timestamp without time zone
+col chantier.interventions.planned_start_date timestamp without time zone
+col chantier.interventions.postal_code character varying(10)
+col chantier.interventions.result character varying(30)
+col chantier.interventions.site_manager_id uuid
+col chantier.interventions.source_data jsonb
+col chantier.interventions.source_structure_id uuid
+col chantier.interventions.start_date timestamp without time zone
+col chantier.interventions.status character varying(30)
+col chantier.interventions.subcontractor character varying(255)
+col chantier.interventions.supplier_total_cost numeric(12,2)
+col chantier.interventions.sync_qfield boolean
+col chantier.interventions.tags text
+col chantier.interventions.tags_label text
+col chantier.interventions.team character varying(100)
+col chantier.interventions.updated_at timestamp without time zone
+col chantier.interventions.work_order_code character varying(255)
+col chantier.interventions.work_type character varying(50)
+col chantier.interventions.zone_pop_id uuid
+col chantier.permis_voirie.aan_number character varying(40)
+col chantier.permis_voirie.actual_end_date date
+col chantier.permis_voirie.actual_start_date date
+col chantier.permis_voirie.address text
+col chantier.permis_voirie.ap_college text
+col chantier.permis_voirie.approval_date date
+col chantier.permis_voirie.authorized_end_date date
+col chantier.permis_voirie.authorized_start_date date
+col chantier.permis_voirie.b1_comment text
+col chantier.permis_voirie.b1_number character varying(50)
+col chantier.permis_voirie.b1_phase_downloaded boolean
+col chantier.permis_voirie.b2_number character varying(50)
+col chantier.permis_voirie.bgm_reference character varying(200)
+col chantier.permis_voirie.bgm_status character varying(30)
+col chantier.permis_voirie.cancellation_date date
+col chantier.permis_voirie.comment text
+col chantier.permis_voirie.commune_id integer
+col chantier.permis_voirie.coord_expression_deadline date
+col chantier.permis_voirie.coord_file_deadline date
+col chantier.permis_voirie.coord_leading_impetrant character varying(255)
+col chantier.permis_voirie.coord_participation_received_date date
+col chantier.permis_voirie.coord_participation_source text
+col chantier.permis_voirie.coord_remarks text
+col chantier.permis_voirie.coord_report_date date
+col chantier.permis_voirie.coord_sent_date date
+col chantier.permis_voirie.coord_sent_source text
+col chantier.permis_voirie.coord_trace_reused_date date
+col chantier.permis_voirie.created_at timestamp without time zone
+col chantier.permis_voirie.created_by uuid
+col chantier.permis_voirie.declaration_date date
+col chantier.permis_voirie.digi_participates boolean
+col chantier.permis_voirie.dossier_key character varying(120)
+col chantier.permis_voirie.drafter character varying(100)
+col chantier.permis_voirie.dxa_notice_end_date date
+col chantier.permis_voirie.dxa_notice_start_date date
+col chantier.permis_voirie.dxa_notice_status character varying(30)
+col chantier.permis_voirie.edl_apres boolean
+col chantier.permis_voirie.edl_avant boolean
+col chantier.permis_voirie.edl_flash boolean
+col chantier.permis_voirie.extended_end_date date
+col chantier.permis_voirie.extension_date date
+col chantier.permis_voirie.file_reference character varying(100)
+col chantier.permis_voirie.freeze_end_date date
+col chantier.permis_voirie.freeze_start_date date
+col chantier.permis_voirie.geocode_confidence numeric
+col chantier.permis_voirie.geocode_status character varying(20)
+col chantier.permis_voirie.geocoded_at timestamp without time zone
+col chantier.permis_voirie.geocoded_bounds public.geometry(MultiPoint,31370)
+col chantier.permis_voirie.geocoded_line public.geometry(LineString,31370)
+col chantier.permis_voirie.geocoded_point public.geometry(Point,31370)
+col chantier.permis_voirie.geom public.geometry(Geometry,31370)
+col chantier.permis_voirie.geom_source text
+col chantier.permis_voirie.given_to_ben boolean
+col chantier.permis_voirie.google_earth_url character varying(500)
+col chantier.permis_voirie.id uuid
+col chantier.permis_voirie.impetrants_date date
+col chantier.permis_voirie.impetrants_reference character varying(200)
+col chantier.permis_voirie.impetrants_status character varying(30)
+col chantier.permis_voirie.import_residual text
+col chantier.permis_voirie.import_residual_c text
+col chantier.permis_voirie.import_source character varying(255)
+col chantier.permis_voirie.klim_declared boolean
+col chantier.permis_voirie.last_imported_at timestamp with time zone
+col chantier.permis_voirie.managed_in_farois_at timestamp without time zone
+col chantier.permis_voirie.managed_in_farois_by uuid
+col chantier.permis_voirie.mro_project character varying(100)
+col chantier.permis_voirie.municipality character varying(100)
+col chantier.permis_voirie.notice text
+col chantier.permis_voirie.operateur_code character varying(30)
+col chantier.permis_voirie.osiris_dossier_length character varying(50)
+col chantier.permis_voirie.osiris_dossier_number character varying(50)
+col chantier.permis_voirie.osiris_facts jsonb
+col chantier.permis_voirie.osiris_geom_cleared_at timestamp with time zone
+col chantier.permis_voirie.osiris_id_ws integer
+col chantier.permis_voirie.osiris_match_distance_m double precision
+col chantier.permis_voirie.osiris_match_method text
+col chantier.permis_voirie.osiris_match_score numeric(5,2)
+col chantier.permis_voirie.osiris_number character varying(50)
+col chantier.permis_voirie.osiris_phase character varying(20)
+col chantier.permis_voirie.osiris_procedure character varying(30)
+col chantier.permis_voirie.panels_planned boolean
+col chantier.permis_voirie.panels_planned_date date
+col chantier.permis_voirie.passage_ccc boolean
+col chantier.permis_voirie.pca_coord character varying(100)
+col chantier.permis_voirie.pca_coordination boolean
+col chantier.permis_voirie.pca_ddl_date date
+col chantier.permis_voirie.pca_envoi_date date
+col chantier.permis_voirie.pca_pilote character varying(100)
+col chantier.permis_voirie.pca_remarks text
+col chantier.permis_voirie.pca_spatial_analysis text
+col chantier.permis_voirie.permit_type character varying(10)
+col chantier.permis_voirie.plan_cm boolean
+col chantier.permis_voirie.plan_cm_details character varying(100)
+col chantier.permis_voirie.plan_received_date date
+col chantier.permis_voirie.plan_sig boolean
+col chantier.permis_voirie.plan_sig_details character varying(100)
+col chantier.permis_voirie.planned_end_date date
+col chantier.permis_voirie.planned_start_date date
+col chantier.permis_voirie.plans_remarks text
+col chantier.permis_voirie.pop_code character varying(50)
+col chantier.permis_voirie.pop_permit_label character varying(60)
+col chantier.permis_voirie.postponed_start_date date
+col chantier.permis_voirie.postponement_date date
+col chantier.permis_voirie.receipt_acknowledgment_date date
+col chantier.permis_voirie.rejection_date date
+col chantier.permis_voirie.residents_informed boolean
+col chantier.permis_voirie.residents_informed_date date
+col chantier.permis_voirie.resumption_date date
+col chantier.permis_voirie.road_impact text
+col chantier.permis_voirie.smartwork_url character varying(500)
+col chantier.permis_voirie.source_data jsonb
+col chantier.permis_voirie.status character varying(50)
+col chantier.permis_voirie.submission_date date
+col chantier.permis_voirie.submission_deadline date
+col chantier.permis_voirie.suspension_date date
+col chantier.permis_voirie.team_code character varying(20)
+col chantier.permis_voirie.updated_at timestamp without time zone
+col chantier.permis_voirie.worksite_term_date date
+col chantier.permis_voirie.worksite_type character varying(50)
+col chantier.permis_voirie.zone_mro_id uuid
+col chantier.permis_voirie.zone_pop_id uuid
+col chantier.synergies.accepted_at timestamp with time zone
+col chantier.synergies.actual_savings numeric(12,2)
+col chantier.synergies.approval_date date
+col chantier.synergies.archive_reason character varying(64)
+col chantier.synergies.archived_at timestamp with time zone
+col chantier.synergies.comment text
+col chantier.synergies.completed_at timestamp with time zone
+col chantier.synergies.contact_date date
+col chantier.synergies.coordination_end_date date
+col chantier.synergies.coordination_owner character varying(200)
+col chantier.synergies.coordination_start_date date
+col chantier.synergies.created_at timestamp without time zone
+col chantier.synergies.created_by uuid
+col chantier.synergies.detected_at timestamp without time zone
+col chantier.synergies.detection_source character varying(30)
+col chantier.synergies.distance_m numeric(10,2)
+col chantier.synergies.estimated_savings numeric(12,2)
+col chantier.synergies.geom public.geometry(MultiPolygon,31370)
+col chantier.synergies.human_touched_at timestamp with time zone
+col chantier.synergies.id uuid
+col chantier.synergies.intervention_chantier_id uuid
+col chantier.synergies.matching_score numeric(5,2)
+col chantier.synergies.notified boolean
+col chantier.synergies.notified_at timestamp without time zone
+col chantier.synergies.osiris_missing_since timestamp with time zone
+col chantier.synergies.overlap_days integer
+col chantier.synergies.permis_id uuid
+col chantier.synergies.proposed_at timestamp with time zone
+col chantier.synergies.reference character varying(100)
+col chantier.synergies.savings_type character varying(50)
+col chantier.synergies.source_data jsonb
+col chantier.synergies.started_at timestamp with time zone
+col chantier.synergies.status character varying(30)
+col chantier.synergies.synergy_type character varying(30)
+col chantier.synergies.third_party_description text
+col chantier.synergies.third_party_end_date date
+col chantier.synergies.third_party_municipality character varying(100)
+col chantier.synergies.third_party_municipality_id integer
+col chantier.synergies.third_party_municipality_match_method text
+col chantier.synergies.third_party_nature character varying(255)
+col chantier.synergies.third_party_operator character varying(200)
+col chantier.synergies.third_party_operator_type character varying(100)
+col chantier.synergies.third_party_osiris_status character varying(100)
+col chantier.synergies.third_party_reference character varying(200)
+col chantier.synergies.third_party_road_manager character varying(255)
+col chantier.synergies.third_party_start_date date
+col chantier.synergies.third_party_street character varying(300)
+col chantier.synergies.unarchived_at timestamp with time zone
+col chantier.synergies.updated_at timestamp without time zone
+col chantier.synergies.wfs_osiris_ogc_fid integer
+col chantier.synergies.zone_mro_id uuid
+col chantier.worksite_interventions.actual_end_date date
+col chantier.worksite_interventions.actual_start_date date
+col chantier.worksite_interventions.address text
+col chantier.worksite_interventions.block_number integer
+col chantier.worksite_interventions.comment text
+col chantier.worksite_interventions.commune_id integer
+col chantier.worksite_interventions.commune_match_method text
+col chantier.worksite_interventions.created_at timestamp without time zone
+col chantier.worksite_interventions.created_by uuid
+col chantier.worksite_interventions.crossing_count integer
+col chantier.worksite_interventions.depth_cm integer
+col chantier.worksite_interventions.duct_count integer
+col chantier.worksite_interventions.edl_apres boolean
+col chantier.worksite_interventions.edl_avant boolean
+col chantier.worksite_interventions.external_reference character varying(200)
+col chantier.worksite_interventions.file_reference character varying(100)
+col chantier.worksite_interventions.geom public.geometry(Geometry,31370)
+col chantier.worksite_interventions.id uuid
+col chantier.worksite_interventions.linear_meters numeric
+col chantier.worksite_interventions.municipality character varying(100)
+col chantier.worksite_interventions.permis_id uuid
+col chantier.worksite_interventions.permit_type character varying(10)
+col chantier.worksite_interventions.phase_id uuid
+col chantier.worksite_interventions.planned_end_date date
+col chantier.worksite_interventions.planned_start_date date
+col chantier.worksite_interventions.poc_count integer
+col chantier.worksite_interventions.riser_count integer
+col chantier.worksite_interventions.sig_ok boolean
+col chantier.worksite_interventions.site_manager_name character varying(200)
+col chantier.worksite_interventions.source_data jsonb
+col chantier.worksite_interventions.status character varying(30)
+col chantier.worksite_interventions.subcontractor character varying(200)
+col chantier.worksite_interventions.team character varying(100)
+col chantier.worksite_interventions.trench_length_m numeric
+col chantier.worksite_interventions.updated_at timestamp without time zone
+col chantier.worksite_interventions.worksite_type character varying(30)
+col chantier.worksite_interventions.zone_mro_id uuid
+col chantier.worksite_interventions.zone_pop_id uuid
+col docs.v_element_documents_list.doc_kind text
+col docs.v_element_documents_list.doc_type character varying(30)
+col docs.v_element_documents_list.doc_url text
+col docs.v_element_documents_list.document_id uuid
+col docs.v_element_documents_list.element_id uuid
+col docs.v_element_documents_list.element_type character varying(30)
+col docs.v_element_documents_list.esid character varying(20)
+col docs.v_element_documents_list.excel_path character varying(500)
+col docs.v_element_documents_list.excel_url text
+col docs.v_element_documents_list.file_name character varying(255)
+col docs.v_element_documents_list.generation_date date
+col docs.v_element_documents_list.generation_timestamp character varying(20)
+col docs.v_element_documents_list.link_id uuid
+col docs.v_element_documents_list.link_type character varying(20)
+col docs.v_element_documents_list.marlin_id character varying(20)
+col docs.v_element_documents_list.nomenclature character varying(30)
+col docs.v_element_documents_list.pdf_path character varying(500)
+col docs.v_element_documents_list.pdf_url text
+col docs.v_element_documents_list.relevance character varying(20)
+col docs.v_element_documents_list.rn_global bigint
+col docs.v_element_documents_list.rn_par_type bigint
+col docs.v_element_documents_list.sharepoint_sync_status character varying(20)
+col docs.v_element_documents_list.source_system character varying(20)
+col docs.v_element_documents_list.status character varying(30)
+col docs.v_element_documents_list.version integer
+col docs.v_element_documents_list.zone_pop_id uuid
+col osiris.chantiers_autorises.authorized_end_date timestamp with time zone
+col osiris.chantiers_autorises.authorized_start_date timestamp with time zone
+col osiris.chantiers_autorises.av character varying
+col osiris.chantiers_autorises.creation_date timestamp with time zone
+col osiris.chantiers_autorises.geom public.geometry(MultiPolygon,31370)
+col osiris.chantiers_autorises.gml_id character varying
+col osiris.chantiers_autorises.id_ws double precision
+col osiris.chantiers_autorises.impetrant character varying
+col osiris.chantiers_autorises.methode character varying
+col osiris.chantiers_autorises.nature character varying
+col osiris.chantiers_autorises.ogc_fid integer
+col osiris.chantiers_autorises.pgm_end_date timestamp with time zone
+col osiris.chantiers_autorises.pgm_start_date timestamp with time zone
+col osiris.chantiers_autorises.procedure character varying
+col osiris.chantiers_autorises.road_clas character varying
+col osiris.chantiers_autorises.statut character varying
+col osiris.chantiers_autorises.surf double precision
+col osiris.chantiers_autorises.type_imp character varying
+col osiris.chantiers_autorises.zone_mro_id uuid
+col osiris.deviations.cmnt_fr text
+col osiris.deviations.cmnt_nl text
+col osiris.deviations.creation_date timestamp with time zone
+col osiris.deviations.geom public.geometry(MultiLineString,31370)
+col osiris.deviations.horaire_lov text
+col osiris.deviations.id_deviation_line integer
+col osiris.deviations.id_deviation_plan integer
+col osiris.deviations.id_ph integer
+col osiris.deviations.id_ws integer
+col osiris.deviations.imported_at timestamp with time zone
+col osiris.deviations.lab_fr text
+col osiris.deviations.lab_nl text
+col osiris.deviations.line_type_lov text
+col osiris.deviations.ogc_fid integer
+col osiris.deviations.type_user_lov text
+col osiris.events.creation_date timestamp with time zone
+col osiris.events.description_evt text
+col osiris.events.duration integer
+col osiris.events.end_date timestamp with time zone
+col osiris.events.evt_status_fr character varying(100)
+col osiris.events.evt_status_nl character varying(100)
+col osiris.events.geom public.geometry(MultiPolygon,31370)
+col osiris.events.id_evt integer
+col osiris.events.imp_fr character varying(255)
+col osiris.events.imp_nl character varying(255)
+col osiris.events.imported_at timestamp with time zone
+col osiris.events.name_fr text
+col osiris.events.name_nl text
+col osiris.events.ogc_fid integer
+col osiris.events.road_fr text
+col osiris.events.road_nl text
+col osiris.events.start_date timestamp with time zone
+col osiris.events.surface numeric
+col osiris.events.type_evt_fr character varying(200)
+col osiris.events.type_evt_nl character varying(200)
+col osiris.frozen_zones.end_date timestamp with time zone
+col osiris.frozen_zones.geom public.geometry(MultiPolygon,31370)
+col osiris.frozen_zones.id_frozen_zone integer
+col osiris.frozen_zones.id_ph integer
+col osiris.frozen_zones.id_ws integer
+col osiris.frozen_zones.imported_at timestamp with time zone
+col osiris.frozen_zones.ogc_fid integer
+col osiris.frozen_zones.start_date timestamp with time zone
+col osiris.frozen_zones.zone_mro_id uuid
+col osiris.hypercoordination_zones.geom public.geometry(MultiPolygon,31370)
+col osiris.hypercoordination_zones.id_hyperco integer
+col osiris.hypercoordination_zones.imported_at timestamp with time zone
+col osiris.hypercoordination_zones.name_fr character varying(255)
+col osiris.hypercoordination_zones.name_nl character varying(255)
+col osiris.hypercoordination_zones.ogc_fid integer
+col osiris.phases_in_progress.auto_duration integer
+col osiris.phases_in_progress.auto_end_date date
+col osiris.phases_in_progress.auto_start_date date
+col osiris.phases_in_progress.av_fr character varying(200)
+col osiris.phases_in_progress.av_nl character varying(200)
+col osiris.phases_in_progress.geom public.geometry(MultiPolygon,31370)
+col osiris.phases_in_progress.id_ph integer
+col osiris.phases_in_progress.id_ws integer
+col osiris.phases_in_progress.impetrant_fr character varying(255)
+col osiris.phases_in_progress.impetrant_nl character varying(255)
+col osiris.phases_in_progress.imported_at timestamp with time zone
+col osiris.phases_in_progress.last_duration integer
+col osiris.phases_in_progress.last_end_date date
+col osiris.phases_in_progress.last_start_date date
+col osiris.phases_in_progress.methode_fr character varying(100)
+col osiris.phases_in_progress.methode_nl character varying(100)
+col osiris.phases_in_progress.nature_fr character varying(255)
+col osiris.phases_in_progress.nature_nl character varying(255)
+col osiris.phases_in_progress.ogc_fid integer
+col osiris.phases_in_progress.ph_label_fr text
+col osiris.phases_in_progress.ph_label_nl text
+col osiris.phases_in_progress.phase_nr integer
+col osiris.phases_in_progress.real_duration integer
+col osiris.phases_in_progress.real_end_date date
+col osiris.phases_in_progress.real_start_date date
+col osiris.phases_in_progress.status_fr character varying(100)
+col osiris.phases_in_progress.status_nl character varying(100)
+col osiris.phases_in_progress.type character(1)
+col osiris.phases_in_progress.type_impetrant_fr character varying(200)
+col osiris.phases_in_progress.yn_bus character(1)
+col osiris.phases_in_progress.yn_cent_divi character(1)
+col osiris.phases_in_progress.yn_cycl character(1)
+col osiris.phases_in_progress.yn_heavy_vehicle character(1)
+col osiris.phases_in_progress.yn_metro character(1)
+col osiris.phases_in_progress.yn_park character(1)
+col osiris.phases_in_progress.yn_pmr character(1)
+col osiris.phases_in_progress.yn_publ_tran_infr character(1)
+col osiris.phases_in_progress.yn_side_walk character(1)
+col osiris.phases_in_progress.yn_train character(1)
+col osiris.phases_in_progress.yn_tram character(1)
+col osiris.phases_in_progress.yn_voir_pert character(1)
+col osiris.phases_in_progress.zone_mro_id uuid
+col osiris.worksites.auto_end_date date
+col osiris.worksites.auto_start_date date
+col osiris.worksites.classe_voirie character varying(10)
+col osiris.worksites.coor_nbr integer
+col osiris.worksites.creation_date timestamp with time zone
+col osiris.worksites.dura_open integer
+col osiris.worksites.geom public.geometry(MultiPolygon,31370)
+col osiris.worksites.gv_fr character varying(200)
+col osiris.worksites.gv_type character varying(50)
+col osiris.worksites.id_ws integer
+col osiris.worksites.imp_fr character varying(255)
+col osiris.worksites.imp_nl character varying(255)
+col osiris.worksites.imp_type character varying(50)
+col osiris.worksites.imp_type_fr character varying(200)
+col osiris.worksites.imported_at timestamp with time zone
+col osiris.worksites.inte_refe character varying(100)
+col osiris.worksites.label_fr text
+col osiris.worksites.label_nl text
+col osiris.worksites.mro_code text
+col osiris.worksites.nature_fr character varying(255)
+col osiris.worksites.nature_nl character varying(255)
+col osiris.worksites.ogc_fid integer
+col osiris.worksites.parent_id_ws integer
+col osiris.worksites.pgm_end_date date
+col osiris.worksites.pgm_start_date date
+col osiris.worksites.procedure character varying(50)
+col osiris.worksites.status_date timestamp with time zone
+col osiris.worksites.status_fr character varying(100)
+col osiris.worksites.status_nl character varying(100)
+col osiris.worksites.surface numeric
+col osiris.worksites.urgence character varying(50)
+col osiris.worksites.yn_avis_ccc character(1)
+col osiris.worksites.zone_mro_id uuid
+col osiris.worksites.zp_fr character varying(100)
+col ref.v_form_lists.category character varying
+col ref.v_form_lists.code character varying
+col ref.v_form_lists.label_en character varying(100)
+col ref.v_form_lists.label_fr character varying(100)
+col ref.v_form_lists.label_pt character varying(100)
+col ref.v_form_lists.rid bigint
+col ref.v_form_lists.sort_order integer
+col ref.v_form_lists.sub_type text

@@ -204,12 +204,18 @@ LAYER_CATALOG = [
 
 
     # -- Chantier ---------------------------------------------------------
-    ("interventions",      "Chantier",        "chantier", "interventions",      "geom", "id",  "Interventions"),
+    # Les cles du catalogue sont stables (presets enregistres, dernier choix) ;
+    # les tables suivent Farois. 2.0.3 : plaintes -> complaints,
+    # interventions_chantier -> worksite_interventions, planning_facades ->
+    # facade_planning (geom Geometry, plus None) ; interventions est une table
+    # sans geometrie (couche attributaire, geom None). Gardes par
+    # test_bridge_farois_schema.py contre farois_schema_snapshot.txt.
+    ("interventions",      "Chantier",        "chantier", "interventions",      None,   "id",  "Interventions"),
     ("incidents",          "Chantier",        "chantier", "incidents",          "geom", "id",  "Incidents"),
     ("permis_voirie",      "Chantier",        "chantier", "permis_voirie",      "geom", "id",  "Permis de voirie"),
-    ("planning_facades",   "Chantier",        "chantier", "planning_facades",   None,   "id",  "Planning facades"),
-    ("plaintes",           "Chantier",        "chantier", "plaintes",           "geom", "id",  "Plaintes"),
-    ("interventions_chantier", "Chantier",    "chantier", "interventions_chantier", "geom", "id", "Interventions chantier"),
+    ("planning_facades",   "Chantier",        "chantier", "facade_planning",    "geom", "id",  "Planning facades"),
+    ("plaintes",           "Chantier",        "chantier", "complaints",         "geom", "id",  "Plaintes"),
+    ("interventions_chantier", "Chantier",    "chantier", "worksite_interventions", "geom", "id", "Interventions chantier"),
     ("synergies",          "Chantier",        "chantier", "synergies",          "geom", "id",  "Synergies"),
 
     # -- OSIRIS -----------------------------------------------------------
