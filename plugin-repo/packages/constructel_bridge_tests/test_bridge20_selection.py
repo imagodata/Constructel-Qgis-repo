@@ -441,3 +441,15 @@ def test_operator_row_buttons_are_disabled_without_operator(sel):
     assert all(b.isEnabled() for b in widget._row_buttons["operator"])
     widget.set_operators(())
     assert all(not b.isEnabled() for b in widget._row_buttons["operator"])
+
+
+def test_options_panel_holds_basemaps_and_styles_and_stays_readable(sel):
+    widget = sel.LayerSelectionWidget()
+    panel = widget.options_panel()
+    assert panel is widget._options and panel is not widget
+    from constructel_bridge_tests.fakes_widgets import _widgets
+
+    inside = _widgets(panel)
+    assert widget._basemap_tree in inside and widget._chk_styles in inside
+    assert widget._tree not in inside                                   # l'arbre des couches reste dans le widget
+    assert widget.want_styles() is True and widget.want_basemap() is True
