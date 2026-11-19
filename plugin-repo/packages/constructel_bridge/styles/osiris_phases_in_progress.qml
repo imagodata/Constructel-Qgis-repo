@@ -1,17 +1,23 @@
 <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering">
+<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering" hasScaleBasedVisibilityFlag="1" minScale="100000" maxScale="1" labelsEnabled="0">
   <!--
     osiris_phases_in_progress.qml - Phases de chantier en cours OSIRIS
     Couche source: osiris.phases_in_progress
 
-    Categorise par status_fr (Autorisée, En cours, Avis flash).
+    Categorise par status_fr, sur les valeurs reellement importees (prod
+    18/11/2026) : Autorisée, En exécution, et trois etapes d'instruction
+    (Passage chez l'administrateur, Passage en CCC, Passage en sCCC),
+    meme rendu orange mais un symbole par categorie (2, 4, 5).
+    Retirees : « Vergund » (libelle NL, jamais dans status_fr), « En cours »
+    et « Avis flash » (aucune occurrence). Toute autre valeur -> « Autre ».
   -->
   <renderer-v2 type="categorizedSymbol" attr="status_fr" symbollevels="0">
     <categories>
       <category value="Autorisée" symbol="0" label="Autorisée" render="true"/>
-      <category value="Vergund" symbol="0" label="Vergund (Autorisée NL)" render="true"/>
-      <category value="En cours" symbol="1" label="En cours" render="true"/>
-      <category value="Avis flash" symbol="2" label="Avis flash" render="true"/>
+      <category value="En exécution" symbol="1" label="En exécution" render="true"/>
+      <category value="Passage chez l'administrateur" symbol="2" label="Passage chez l'administrateur" render="true"/>
+      <category value="Passage en CCC" symbol="4" label="Passage en CCC" render="true"/>
+      <category value="Passage en sCCC" symbol="5" label="Passage en sCCC" render="true"/>
       <category value="" symbol="3" label="Autre" render="true"/>
     </categories>
     <symbols>
@@ -28,7 +34,7 @@
           </Option>
         </layer>
       </symbol>
-      <!-- En cours: bleu -->
+      <!-- En exécution: bleu -->
       <symbol type="fill" name="1" alpha="0.6">
         <layer class="SimpleFill" enabled="1">
           <Option type="Map">
@@ -41,7 +47,7 @@
           </Option>
         </layer>
       </symbol>
-      <!-- Avis flash: orange vif -->
+      <!-- Instruction en cours (administrateur, CCC, sCCC): orange, contour tirete -->
       <symbol type="fill" name="2" alpha="0.6">
         <layer class="SimpleFill" enabled="1">
           <Option type="Map">
@@ -66,23 +72,39 @@
           </Option>
         </layer>
       </symbol>
+      <!-- Passage en CCC : meme rendu que le symbole 2. QGIS attribue un symbole
+           par categorie (symbolMap.take) : un nom de symbole partage n'est servi
+           qu'a la premiere categorie, les suivantes sont retirees au chargement. -->
+      <symbol type="fill" name="4" alpha="0.6">
+        <layer class="SimpleFill" enabled="1">
+          <Option type="Map">
+            <Option type="QString" name="color" value="255,120,30,80"/>
+            <Option type="QString" name="outline_color" value="230,90,10,200"/>
+            <Option type="QString" name="outline_style" value="dash"/>
+            <Option type="QString" name="outline_width" value="0.6"/>
+            <Option type="QString" name="outline_width_unit" value="MM"/>
+            <Option type="QString" name="style" value="solid"/>
+          </Option>
+        </layer>
+      </symbol>
+      <!-- Passage en sCCC : meme rendu que le symbole 2 -->
+      <symbol type="fill" name="5" alpha="0.6">
+        <layer class="SimpleFill" enabled="1">
+          <Option type="Map">
+            <Option type="QString" name="color" value="255,120,30,80"/>
+            <Option type="QString" name="outline_color" value="230,90,10,200"/>
+            <Option type="QString" name="outline_style" value="dash"/>
+            <Option type="QString" name="outline_width" value="0.6"/>
+            <Option type="QString" name="outline_width_unit" value="MM"/>
+            <Option type="QString" name="style" value="solid"/>
+          </Option>
+        </layer>
+      </symbol>
     </symbols>
   </renderer-v2>
 
-  <!-- Labels: impetrant + phase_nr -->
-  <labeling type="simple">
-    <settings>
-      <text-style fontFamily="Noto Sans" fontSize="7" fontWeight="50" textColor="40,40,40,255"
-                  fieldName="impetrant_fr || ' (ph.' || phase_nr || ')'" isExpression="1">
-      </text-style>
-      <text-buffer bufferDraw="1" bufferSize="0.8" bufferColor="255,255,255,200"/>
-      <placement placement="0" dist="0"/>
-      <rendering scaleMin="1" scaleMax="15000" scaleVisibility="1"/>
-    </settings>
-  </labeling>
-
-  <rendering>
-    <minScale>100000</minScale>
-    <maxScale>1</maxScale>
-  </rendering>
+  <!-- Visibilite par echelle : attributs de <qgis> (hasScaleBasedVisibilityFlag /
+       minScale / maxScale)  seule forme lue par QGIS. L'ancien bloc
+       <rendering><minScale>100000</minScale></rendering> etait ignore (couche
+       visible a toutes les echelles). Seuil inchange : 1:100 000. -->
 </qgis>

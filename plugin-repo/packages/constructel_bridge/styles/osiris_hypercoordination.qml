@@ -1,11 +1,11 @@
 <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering">
+<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering" hasScaleBasedVisibilityFlag="1" minScale="500000" maxScale="1" labelsEnabled="0">
   <!--
     osiris_hypercoordination.qml - Style QGIS pour les zones d'hypercoordination
     Couche source: osiris.hypercoordination_zones
 
     10 zones strategiques a Bruxelles ou la coordination est renforcee.
-    Style: violet semi-transparent, bordure epaisse pointillee, label nom FR.
+    Style: violet semi-transparent, bordure epaisse pointillee.
   -->
   <renderer-v2 type="singleSymbol" symbollevels="0" enableorderby="0" forceraster="0">
     <symbols>
@@ -46,24 +46,10 @@
     </symbols>
   </renderer-v2>
 
-  <!-- Labels: toujours visibles (seulement 10 zones) -->
-  <labeling type="simple">
-    <settings calloutType="simple">
-      <text-style fontFamily="Noto Sans" fontSize="9" fontWeight="75" textColor="80,0,120,255"
-                  fontItalic="0"
-                  fieldName="name_fr" isExpression="0"
-                  multilineAlign="1" previewBkgrdColor="255,255,255,255">
-      </text-style>
-      <text-format wrapChar="-" autoWrapLength="20"/>
-      <text-buffer bufferDraw="1" bufferSize="1.2" bufferColor="255,255,255,220"/>
-      <placement placement="0" dist="0" priority="10"/>
-    </settings>
-  </labeling>
-
   <!-- Rendering: always visible (only 10 features) -->
-  <rendering>
-    <minScale>500000</minScale>
-    <maxScale>1</maxScale>
-  </rendering>
+  <!-- Visibilite par echelle : attributs de <qgis> (hasScaleBasedVisibilityFlag /
+       minScale / maxScale)  seule forme lue par QGIS. L'ancien bloc
+       <rendering><minScale>500000</minScale></rendering> etait ignore (couche
+       visible a toutes les echelles). Seuil inchange : 1:500 000. -->
 
 </qgis>

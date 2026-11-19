@@ -1,5 +1,5 @@
 <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering">
+<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering" hasScaleBasedVisibilityFlag="1" minScale="100000" maxScale="1" labelsEnabled="0">
   <!--
     osiris_chantiers_proches.qml - Chantiers OSIRIS proches du reseau WYRE
     Couche source: osiris.v_chantiers_proches
@@ -74,22 +74,9 @@
     </symbols>
   </renderer-v2>
 
-  <!-- Labels: impetrant + distance -->
-  <labeling type="simple">
-    <settings>
-      <text-style fontFamily="Noto Sans" fontSize="7" fontWeight="50" textColor="40,40,40,255"
-                  fieldName="coalesce(&quot;impetrant&quot;, '?') || '\n' || round(&quot;dist_reseau_m&quot;, 0) || 'm'"
-                  isExpression="1" multilineAlign="1">
-      </text-style>
-      <text-buffer bufferDraw="1" bufferSize="0.8" bufferColor="255,255,255,200"/>
-      <placement placement="0" dist="0"/>
-      <rendering scaleMin="1" scaleMax="15000" scaleVisibility="1"/>
-    </settings>
-  </labeling>
-
-  <rendering>
-    <minScale>100000</minScale>
-    <maxScale>1</maxScale>
-  </rendering>
+  <!-- Visibilite par echelle : attributs de <qgis> (hasScaleBasedVisibilityFlag /
+       minScale / maxScale)  seule forme lue par QGIS. L'ancien bloc
+       <rendering><minScale>100000</minScale></rendering> etait ignore (couche
+       visible a toutes les echelles). Seuil inchange : 1:100 000. -->
 
 </qgis>
