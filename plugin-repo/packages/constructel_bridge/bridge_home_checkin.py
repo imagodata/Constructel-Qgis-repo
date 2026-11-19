@@ -22,7 +22,7 @@ from typing import Callable, Optional
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .bridge_diagnostic_dialog import _LEVEL_MARKS, action_label, check_message
+from .bridge_diagnostic_dialog import LEVEL_MARKS, action_label, check_message
 from .bridge_diagnostic import LEVEL_OK, LEVEL_RUNNING, LEVEL_WARNING, Check
 from .bridge_home_model import HomeActions, HomeSnapshot
 from .bridge_onboarding import filtermate_configured, resource_sharing_configured
@@ -33,9 +33,9 @@ SEPARATOR = " · "
 # Marque de chaque etat de partage (couleurs deja utilisees par le Diagnostic) ;
 # None = extension absente, sans objet.
 _SHARING_MARKS = {
-    True: _LEVEL_MARKS[LEVEL_OK],
-    False: _LEVEL_MARKS[LEVEL_WARNING],
-    None: ("–", _LEVEL_MARKS[LEVEL_RUNNING][1]),
+    True: LEVEL_MARKS[LEVEL_OK],
+    False: LEVEL_MARKS[LEVEL_WARNING],
+    None: ("–", LEVEL_MARKS[LEVEL_RUNNING][1]),
 }
 
 
@@ -124,7 +124,7 @@ class CheckinPage(QWidget):
 
     def _check_row(self, check: Check) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.addWidget(_mark_label(_LEVEL_MARKS.get(check.level, _LEVEL_MARKS[LEVEL_RUNNING])))
+        row.addWidget(_mark_label(LEVEL_MARKS.get(check.level, LEVEL_MARKS[LEVEL_RUNNING])))
         row.addWidget(_text_label(check_message(check)), 1)
         label = action_label(check.action)
         if label:
