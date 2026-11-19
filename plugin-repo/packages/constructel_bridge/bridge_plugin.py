@@ -3836,6 +3836,12 @@ class ConstructelBridgePlugin:
         l'installeur QGIS (K12) dure le temps de la fenetre."""
         from .bridge_home import HomeDialog
 
+        if self._home_dialog is not None:
+            # Deja ouverte (appel imbrique pendant une action de la fenetre) :
+            # jamais une seconde fenetre, elle affiche la page demandee.
+            # L'assistant du premier setup passe par _open_first_setup.
+            self._home_dialog.show_page(page)
+            return
         if self._connected and self._operators_unavailable:
             self._log("Liste des operateurs indisponible : chargement des couches Wyre (repli 1.8.4)",
                       Qgis.MessageLevel.Warning)

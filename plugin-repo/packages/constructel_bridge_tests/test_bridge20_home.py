@@ -544,6 +544,78 @@ def test_first_setup_triggered_by_the_connect_button_switches_this_window(home):
     assert [e for e in dialog.log if isinstance(e, tuple) and e[0] == "make_wizard"] == [("make_wizard", page)]
 
 
+def _hosted_wizard(home, **kwargs):
+    wizard = _Wizard()
+    dialog = _open(home, snap(**kwargs), page="checkin", start_wizard=True, wizard=wizard)
+    return dialog, dialog._pages["checkin"], wizard
+
+
+def _lock_buttons(dialog):
+    return list(dialog._lang_buttons.values()) + ([dialog._connect_button] if dialog._connect_button else [])
+
+
+def test_hosted_wizard_disables_language_and_connect(home):   # R13 (a1)
+    dialog, _page, _wizard = _hosted_wizard(home, **OFFLINE)
+    assert dialog._connect_button is not None
+    assert all(b.enabled is False for b in _lock_buttons(dialog))
+    dialog._lang_buttons["en"].clicked.emit(False)          # meme si le clic passait : ignore
+    assert ("set_language", "en") not in dialog.log
+
+
+def test_wizard_started_from_the_page_disables_language_too(home):   # R13 (a1)
+    wizard = _Wizard()
+    dialog = _open(home, page="checkin", wizard=wizard)
+    assert all(b.enabled for b in _lock_buttons(dialog))
+    dialog._pages["checkin"]._wizard_button.clicked.emit(False)
+    assert dialog._pages["checkin"]._wizard is wizard
+    assert all(b.enabled is False for b in _lock_buttons(dialog))
+
+
+def test_render_keeps_the_checkin_page_hosting_a_wizard(home):   # R13 (a2)
+    dialog, page, wizard = _hosted_wizard(home)
+    dialog.show_page("load")
+    load = dialog._pages["load"]
+    dialog.render()
+    assert dialog._pages["checkin"] is page and page._wizard is wizard
+    assert not page.deleted and not wizard.deleted and load.deleted
+    assert dialog._current == "load" and isinstance(_current(dialog), home.LoadPage)
+    dialog.show_page("checkin")
+    assert _current(dialog) is page
+
+
+def test_load_adding_nothing_keeps_the_hosted_wizard(home):   # R13 (a2), chemin _on_load_done(False)
+    dialog, page, wizard = _hosted_wizard(home)
+    dialog.actions = dataclasses.replace(dialog.actions, load=lambda *a: 0)
+    dialog.show_page("load")
+    old_load = dialog._pages["load"]
+    old_load._load_button.clicked.emit(False)
+    assert dialog.closed is False and old_load.deleted and dialog._pages["load"] is not old_load
+    assert dialog._pages["checkin"] is page and page._wizard is wizard and not wizard.deleted
+
+
+def test_buttons_are_enabled_again_when_the_wizard_finishes(home):   # R13 (a1)
+    dialog, page, wizard = _hosted_wizard(home, **OFFLINE)
+    wizard.finished.emit(1)
+    assert page._wizard is None
+    assert all(b.enabled for b in _lock_buttons(dialog))
+    dialog._lang_buttons["en"].clicked.emit(False)
+    assert ("set_language", "en") in dialog.log
+    assert dialog._pages["checkin"] is not page               # sans assistant, la page se redessine
+
+
+def test_request_is_applied_even_if_connect_raises(home):
+    dialog = _open(home, snap(**OFFLINE))
+
+    def failing():
+        dialog.request_page("checkin")
+        raise RuntimeError("connexion impossible")
+
+    dialog.actions = dataclasses.replace(dialog.actions, connect=failing)
+    with pytest.raises(RuntimeError):
+        dialog._connect_button.clicked.emit(False)
+    assert dialog._requested is None and dialog._current == "checkin"
+
+
 def test_checkin_opened_from_the_menu_does_not_start_the_wizard(home):
     dialog = _open(home, page="checkin", wizard=_Wizard())
     assert not any(isinstance(e, tuple) and e[0] == "make_wizard" for e in dialog.log)
@@ -718,6 +790,14 @@ def test_first_setup_while_the_window_is_open_switches_it_instead_of_opening_ano
     plugin._open_first_setup(True)
 
     assert requests == [(("checkin",), {"start_wizard": True})] and plugin._wizard_new_user is True
+
+
+def test_on_home_while_a_window_is_open_shows_the_page_in_it(bp18, homes, monkeypatch):
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    shown = []
+    plugin._home_dialog = types.SimpleNamespace(show_page=shown.append)
+    plugin._on_home("projects")
+    assert shown == ["projects"] and homes.created == []
 
 
 def test_open_window_is_known_only_while_it_runs(bp18, pi, homes, monkeypatch):  # noqa: F811

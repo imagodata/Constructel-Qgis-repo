@@ -104,12 +104,23 @@ class HomeDialog(QDialog):
             self._start_wizard = self._start_wizard or start_wizard
         self._keep_load_choice()
         self._close_diagnostic()
-        for page in self._pages.values():
+        # R13 : un Check-in qui heberge l'assistant n'est jamais detruit (sinon
+        # l'assistant disparait sans « finished » et le setup se rejoue au
+        # prochain demarrage) ; il garde sa page et son assistant.
+        kept = {name: page for name, page in self._pages.items()
+                if name == "checkin" and page.hosts_wizard()}
+        for name, page in self._pages.items():
+            if name in kept:
+                continue
             self._stack.removeWidget(page)
             # Suppression differee : render() peut venir d'un clic dans une page.
             page.hide()
             page.deleteLater()
-        self._pages, self._indexes = {}, {}
+        if kept:
+            self._start_wizard = False      # un assistant tourne deja : jamais un second
+        # Pile reduite aux pages gardees, dans leur ordre d'ajout.
+        self._pages = kept
+        self._indexes = {name: index for index, name in enumerate(kept)}
         self._diagnostic_left = False
         self._read_snapshot()
         self._build_chrome()
@@ -166,9 +177,11 @@ class HomeDialog(QDialog):
         status.addWidget(header, 1)
         layout.addLayout(status)
 
+        locked = self._wizard_hosted()      # R13 : rien qui redessine pendant l'assistant
         self._connect_button = None
         if not snapshot.connected:
             self._connect_button = QPushButton(tr("home.connect"))
+            self._connect_button.setEnabled(not locked)
             self._connect_button.clicked.connect(lambda _checked=False: self._on_connect())
             layout.addWidget(self._connect_button)
 
@@ -180,6 +193,7 @@ class HomeDialog(QDialog):
             button.setCheckable(True)
             button.setChecked(code == current)
             button.setFlat(True)
+            button.setEnabled(not locked)
             button.clicked.connect(lambda _checked=False, code=code: self._on_language(code))
             languages.addWidget(button)
             self._lang_buttons[code] = button
@@ -204,6 +218,10 @@ class HomeDialog(QDialog):
             start, self._start_wizard = self._start_wizard, False   # premier setup : une fois
             page = CheckinPage(snapshot, actions, self._stack, start_wizard=start, email=snapshot.email)
             page.on_change = self._refresh_chrome
+            page.on_wizard_started = self._lock_for_wizard
+            if page.hosts_wizard():        # premier setup : lance a la construction
+                self._pages["checkin"] = page
+                self._lock_for_wizard()
             return page
         status_text, local_checks, network_args = actions.diagnostic_inputs()
         return DiagnosticPanel(status_text, local_checks, network_args, actions.diagnostic_action, self._stack)
@@ -262,6 +280,17 @@ class HomeDialog(QDialog):
         if 0 <= row < len(PAGES) and PAGES[row] != self._current:
             self.show_page(PAGES[row])
 
+    def _wizard_hosted(self) -> bool:
+        page = self._pages.get("checkin")
+        return page is not None and page.hosts_wizard()
+
+    def _lock_for_wizard(self) -> None:
+        """R13 : assistant heberge -> langue et connexion inactives (elles
+        redessineraient la fenetre) ; reactivees par _refresh_chrome a sa fin."""
+        for button in list(self._lang_buttons.values()) + [self._connect_button]:
+            if button is not None:
+                button.setEnabled(False)
+
     def _refresh_chrome(self) -> None:
         """Apres une action du Check-in : barre et bas de barre relus (pastille),
         pages inchangees (la page Check-in s'est deja redessinee)."""
@@ -278,10 +307,18 @@ class HomeDialog(QDialog):
             self.render()
 
     def _on_connect(self) -> None:
-        self.actions.connect()
-        self.render()
+        if self._wizard_hosted():
+            return
+        try:
+            self.actions.connect()
+        finally:
+            # Meme si la connexion leve : une demande du plugin (request_page)
+            # ne reste jamais en attente, la fenetre reste a jour.
+            self.render()
 
     def _on_language(self, code: str) -> None:
+        if self._wizard_hosted():
+            return                          # R13 : boutons inactifs, defense en plus
         self.actions.set_language(code)
         self.render()
 

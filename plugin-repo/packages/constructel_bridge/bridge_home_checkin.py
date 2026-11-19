@@ -73,6 +73,9 @@ class CheckinPage(QWidget):
         self._message = ""                       # retour de la derniere action « Configurer »
         self._wizard = None                      # assistant heberge, None sinon
         self.on_change: Optional[Callable[[], None]] = None
+        # Assistant lance depuis la page (bouton) : la fenetre verrouille ce qui
+        # la redessinerait (langue, connexion) ; sa fin passe par on_change.
+        self.on_wizard_started: Optional[Callable[[], None]] = None
 
         self._layout = QVBoxLayout(self)
         self._layout.addWidget(_section_title(tr("home.checkin_title")))
@@ -201,6 +204,12 @@ class CheckinPage(QWidget):
         self._wizard_button.hide()
         self._layout.addWidget(wizard, 1)
         wizard.show()
+        if self.on_wizard_started is not None:
+            self.on_wizard_started()
+
+    def hosts_wizard(self) -> bool:
+        """True tant que l'assistant est heberge (lance, pas fini)."""
+        return self._wizard is not None
 
     def _on_wizard_finished(self, _result=0) -> None:
         wizard, self._wizard = self._wizard, None
