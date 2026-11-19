@@ -1,0 +1,140 @@
+"""Bridge 2.0, tache 10 (plan 2026-11-18, spec § 8.4) : revue i18n, version 2.0.0.
+
+- toutes les cles ajoutees par le chantier (home.*, diag.restart) existent en
+  FR / EN / PT, avec les memes variables {x} ;
+- aucun appel tr() des modules 2.0 n'a de cle dynamique ;
+- aucune cle orpheline nouvelle, et les cles de l'ecran 1.9 sont retirees ;
+- metadata.txt en version 2.0.0, avec son entree de changelog.
+"""
+from __future__ import annotations
+
+import ast
+import importlib.util
+import re
+from pathlib import Path
+
+import pytest
+
+PLUGIN_DIR = Path(__file__).resolve().parent.parent / "constructel_bridge"
+_PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
+
+
+def _load(name: str, relative: str):
+    spec = importlib.util.spec_from_file_location(name, PLUGIN_DIR / relative)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+TRANSLATIONS = _load("bridge20_translations", "i18n/translations.py").TRANSLATIONS
+
+# Cles ajoutees par les taches 2 a 9 de la 2.0 (diff de translations.py depuis la 1.9.0).
+KEYS_20 = [
+    "diag.restart",
+    "home.btn_load", "home.checkin_full", "home.checkin_plugins", "home.checkin_profile",
+    "home.checkin_profile_offline", "home.checkin_sharing", "home.checkin_title", "home.common_only",
+    "home.configure", "home.fm_configured", "home.fm_missing", "home.group_loaded", "home.load_partial",
+    "home.load_summary", "home.my_presets", "home.nav_checkin", "home.nav_diagnostic", "home.nav_load",
+    "home.nav_projects", "home.none_operator", "home.options",
+    "home.projects_common", "home.projects_error", "home.projects_offline", "home.projects_open",
+    "home.projects_projets", "home.projects_search", "home.projects_title",
+    "home.row_all", "home.row_common", "home.row_none", "home.row_operator",
+    "home.rs_configured", "home.rs_missing", "home.save_preset", "home.save_preset_prompt",
+    "home.sharing_na", "home.show_expert", "home.step_layers", "home.step_perimeter", "home.step_presets",
+    "home.tile.cables", "home.tile.cadastre", "home.tile.chantier", "home.tile.demand_points",
+    "home.tile.genie_civil", "home.tile.osiris", "home.tile.urbanisme", "home.tile.zones",
+    "home.tile_done", "home.tile_layers",
+]
+
+# Modules crees ou refaits par le chantier 2.0 : jamais de cle dynamique.
+MODULES_20 = ["bridge_presets.py", "bridge_layer_selection.py", "bridge_home_load.py", "bridge_home_checkin.py",
+              "bridge_home_projects.py", "bridge_home.py", "bridge_home_model.py"]
+
+# Cles de l'ecran 1.9 retirees avant (revue 1.9) ou pendant la 2.0 (taches 9 et 10).
+REMOVED_20 = ["home.common_tag", "init.custom_desc", "init.custom_select", "init.group_layers",
+              "init.group_template", "init.select_all", "init.select_none"]
+
+# Heritees d'avant le chantier 1.9 (test_bridge19_i18n.LEGACY_ORPHANS), seules orphelines admises.
+LEGACY_ORPHANS = {
+    "dialog.role", "dialog.save_password", "init.confirm", "init.confirm_title",
+    "lang.restart", "pg.already_configured",
+}
+DYNAMIC_PREFIXES = ("mtls.",)
+
+
+def _py_files():
+    return [p for p in sorted(PLUGIN_DIR.rglob("*.py")) if "i18n" not in p.parts]
+
+
+def _variables(text: str) -> set:
+    return set(_PLACEHOLDER_RE.findall(text))
+
+
+@pytest.mark.parametrize("key", KEYS_20)
+def test_bridge20_keys_present_with_the_same_variables_in_three_languages(key):
+    for lang in ("en", "fr", "pt"):
+        assert TRANSLATIONS[lang][key].strip(), (lang, key)
+    expected = _variables(TRANSLATIONS["en"][key])
+    for lang in ("fr", "pt"):
+        assert _variables(TRANSLATIONS[lang][key]) == expected, (lang, key)
+
+
+def test_languages_have_exactly_the_same_keys():
+    assert set(TRANSLATIONS["fr"]) == set(TRANSLATIONS["en"]) == set(TRANSLATIONS["pt"])
+
+
+@pytest.mark.parametrize("module", MODULES_20)
+def test_no_dynamic_tr_key_in_20_modules(module):
+    path = PLUGIN_DIR / module
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "tr":
+            first = node.args[0] if node.args else None
+            assert isinstance(first, ast.Constant) and isinstance(first.value, str), (
+                f"{module}:{node.lineno} tr() sans cle litterale : {ast.unparse(node)[:80]}"
+            )
+
+
+def test_every_20_key_is_used_by_the_plugin():
+    text = "".join(p.read_text(encoding="utf-8") for p in _py_files())
+    unused = [k for k in KEYS_20 if f'"{k}"' not in text and f"'{k}'" not in text]
+    assert unused == []
+
+
+def test_no_new_orphan_key_and_no_exception_list():
+    text = "".join(p.read_text(encoding="utf-8") for p in _py_files())
+    orphans = {
+        key for key in TRANSLATIONS["en"]
+        if f'"{key}"' not in text and f"'{key}'" not in text and not key.startswith(DYNAMIC_PREFIXES)
+    }
+    assert orphans == LEGACY_ORPHANS, {"new": orphans - LEGACY_ORPHANS, "now_used": LEGACY_ORPHANS - orphans}
+
+
+def test_1_9_screen_keys_are_gone_in_every_language():
+    for lang in ("en", "fr", "pt"):
+        assert [k for k in REMOVED_20 if k in TRANSLATIONS[lang]] == [], lang
+
+
+def test_portuguese_common_only_text_is_accented():
+    assert TRANSLATIONS["pt"]["home.common_only"] == (
+        "Nenhum operador disponível: só as camadas comuns podem ser carregadas.")
+
+
+def test_metadata_is_200():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    assert "\nversion=2.0.0\n" in meta and "\nchangelog=v2.0.0 - " in meta
+    # L'entree precedente reste dans l'historique, en retrait comme les autres.
+    assert meta.index("\nchangelog=v2.0.0 - ") < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - ")
+
+
+def test_200_changelog_is_ascii_and_mentions_the_delivered_features():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    start = meta.index("changelog=v2.0.0 - ")
+    entry = meta[start:meta.index("\n    v1.9.0 - ")]
+    assert entry.isascii(), [c for c in entry if ord(c) > 127]
+    assert "\n" not in entry
+    lowered = entry.lower()
+    for word in ("barre laterale", "charger", "projets", "check-in", "diagnostic", "plusieurs operateurs",
+                 "communes", "sans operateur", "deux rangees", "arbre", "mes presets", "dernier choix",
+                 "recherche", "schema projet", "assistant", "relancer", "setup non rejoue", "onboarding_done"):
+        assert word in lowered, word
+

@@ -39,7 +39,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Connection failed:\n{error}",
         "conn.established": "Connection established (ftth_editor)",
         "conn.connected_as": "Connected as {user}",
-        "conn.connect_first": "Connect first via Constructel Bridge > Database connection.",
 
         # -- Status --
         "status.not_connected": "Not connected.\nUse Constructel Bridge > Database connection.",
@@ -73,14 +72,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "Re-save the project with the correct server ({host}).",
 
         # -- Language dialog --
-        "lang.title": "Constructel Bridge - Language",
-        "lang.prompt": "Select language:",
         "lang.restart": "Language changed to {lang}. Restart QGIS or reconnect for full effect.",
         "lang.applied": "Language switched to {lang}. Forms, aliases and dropdowns updated.",
 
         # -- Load project from DB --
         "project.title": "Constructel Bridge - Load project",
-        "project.select": "Select a project to load:",
         "project.none_found": "No QGIS projects found in the database.",
         "project.no_table": "No QGIS project storage found in the database.\n"
                             "Save a project first via Project > Save to > PostgreSQL.",
@@ -91,8 +87,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- Init project --
         "init.group_basemaps": "Basemaps",
         "init.apply_styles": "Apply styles from database",
-        "init.btn_init": "Initialize",
-        "init.btn_add": "Add layers",
         "init.already_loaded": "Already loaded in project",
         "init.confirm_title": "Constructel Bridge - Initialize project",
         "init.confirm": "Initialize the current project with all Farois FTTH layers?\n\n"
@@ -101,7 +95,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.success_basemaps": "Basemaps added: {count}.",
         "init.nothing_added": "No layer added: already in the project or invalid (see the Constructel Bridge log).",
         "init.error": "Initialization error:\n{error}",
-        "home.no_operator": "No operator available: ask a Farois administrator for an operator scope.",
         "home.reorganized": "Project reorganized by operator (groups {operators} and Common): save it to keep this organization.",
         "home.reorganized_common": "Project reorganized (Common group): save it to keep this organization.",
         "home.load_partial": "Loading incomplete: failed for {operators} (see the log).",
@@ -110,24 +103,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.connect": "Connect",
         "home.connect_to_see": "Connect to see the operators you have access to",
         "home.common_only": "No operator available: only the common layers can be loaded.",
-        "home.tile_load": "Load layers",
-        "home.operator_label": "Operator:",
         "home.suffix_checkbox": "Add the operator name to the layers",
         "home.loaded_title": "Already in the project:",
         "home.loaded_operator": "✓ {operator} · {count} layers",
         "home.loaded_common": "{count} common layers",
         "home.loaded_basemaps": "{count} basemaps",
-        "home.btn_init": "Initialize · {operator}",
-        "home.btn_add": "Add layers · {operator}",
-        "home.tile_project": "Saved project",
-        "home.tile_project_sub": "open a project from the database",
-        "home.tile_checkin": "Check-in",
-        "home.tile_checkin_sub": "plugins {active}/{total}",
-        "home.tile_checkin_updates": "{count} to update",
-        "home.tile_diagnostic": "Diagnostics",
-        "home.tile_diagnostic_sub": "plugin {version} · check this workstation",
-        "home.tile_language": "Language",
-        "home.tile_language_sub": "FR · EN · PT",
         "home.tile_layers": "{count} layers",
         "home.tile_done": "already loaded",
         "home.group_loaded": "already loaded",
@@ -441,7 +421,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Connexion impossible:\n{error}",
         "conn.established": "Connexion etablie (ftth_editor)",
         "conn.connected_as": "Connecte en tant que {user}",
-        "conn.connect_first": "Connectez-vous d'abord via Constructel Bridge > Connexion base de donnees.",
 
         # -- Status --
         "status.not_connected": "Non connecte.\nUtilisez Constructel Bridge > Connexion base de donnees.",
@@ -475,14 +454,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "Re-sauvegardez le projet avec le bon serveur ({host}).",
 
         # -- Language dialog --
-        "lang.title": "Constructel Bridge - Langue",
-        "lang.prompt": "Choisissez la langue:",
         "lang.restart": "Langue changee en {lang}. Redemarrez QGIS ou reconnectez-vous pour un effet complet.",
         "lang.applied": "Langue basculee en {lang}. Formulaires, alias et listes deroulantes mis a jour.",
 
         # -- Load project from DB --
         "project.title": "Constructel Bridge - Charger un projet",
-        "project.select": "Selectionnez un projet a charger:",
         "project.none_found": "Aucun projet QGIS trouve dans la base de donnees.",
         "project.no_table": "Aucun stockage de projet QGIS trouve dans la base.\n"
                             "Sauvegardez d'abord un projet via Projet > Enregistrer sous > PostgreSQL.",
@@ -493,8 +469,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- Init projet --
         "init.group_basemaps": "Fonds de carte",
         "init.apply_styles": "Appliquer les styles depuis la base de donnees",
-        "init.btn_init": "Initialiser",
-        "init.btn_add": "Ajouter les couches",
         "init.already_loaded": "Deja charge dans le projet",
         "init.confirm_title": "Constructel Bridge - Initialiser projet",
         "init.confirm": "Initialiser le projet courant avec toutes les couches Farois FTTH ?\n\n"
@@ -503,7 +477,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.success_basemaps": "Fonds de plan ajoutés : {count}.",
         "init.nothing_added": "Aucune couche ajoutée : déjà dans le projet ou invalide (voir le journal Constructel Bridge).",
         "init.error": "Erreur d'initialisation :\n{error}",
-        "home.no_operator": "Aucun opérateur accessible : demande un scope opérateur à un administrateur Farois.",
         "home.reorganized": "Projet réorganisé par opérateur (groupes {operators} et Commun) : enregistre-le pour garder cette organisation.",
         "home.reorganized_common": "Projet réorganisé (groupe Commun) : enregistre-le pour garder cette organisation.",
         "home.load_partial": "Chargement incomplet : échec pour {operators} (voir le journal).",
@@ -512,24 +485,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.connect": "Se connecter",
         "home.connect_to_see": "Connecte-toi pour voir les opérateurs auxquels tu as accès",
         "home.common_only": "Aucun opérateur disponible : seules les couches communes peuvent être chargées.",
-        "home.tile_load": "Charger les couches",
-        "home.operator_label": "Opérateur :",
         "home.suffix_checkbox": "Ajouter le nom de l'opérateur aux couches",
         "home.loaded_title": "Déjà dans le projet :",
         "home.loaded_operator": "✓ {operator} · {count} couches",
         "home.loaded_common": "{count} couches communes",
         "home.loaded_basemaps": "{count} fonds de plan",
-        "home.btn_init": "Initialiser · {operator}",
-        "home.btn_add": "Ajouter les couches · {operator}",
-        "home.tile_project": "Projet enregistré",
-        "home.tile_project_sub": "ouvrir un projet en base",
-        "home.tile_checkin": "Check-in",
-        "home.tile_checkin_sub": "extensions {active}/{total}",
-        "home.tile_checkin_updates": "{count} à mettre à jour",
-        "home.tile_diagnostic": "Diagnostic",
-        "home.tile_diagnostic_sub": "plugin {version} · vérifier le poste",
-        "home.tile_language": "Langue",
-        "home.tile_language_sub": "FR · EN · PT",
         "home.tile_layers": "{count} couches",
         "home.tile_done": "déjà chargé",
         "home.group_loaded": "déjà chargé",
@@ -845,7 +805,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "conn.failed": "Ligacao impossivel:\n{error}",
         "conn.established": "Ligacao estabelecida (ftth_editor)",
         "conn.connected_as": "Ligado como {user}",
-        "conn.connect_first": "Ligue-se primeiro via Constructel Bridge > Ligacao a base de dados.",
 
         # -- Status --
         "status.not_connected": "Nao ligado.\nUse Constructel Bridge > Ligacao a base de dados.",
@@ -879,14 +838,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                            "Guarde novamente o projeto com o servidor correto ({host}).",
 
         # -- Language dialog --
-        "lang.title": "Constructel Bridge - Idioma",
-        "lang.prompt": "Selecione o idioma:",
         "lang.restart": "Idioma alterado para {lang}. Reinicie o QGIS ou volte a ligar para efeito completo.",
         "lang.applied": "Idioma alterado para {lang}. Formularios, alias e listas atualizados.",
 
         # -- Load project from DB --
         "project.title": "Constructel Bridge - Carregar projeto",
-        "project.select": "Selecione um projeto para carregar:",
         "project.none_found": "Nenhum projeto QGIS encontrado na base de dados.",
         "project.no_table": "Nenhum armazenamento de projetos QGIS encontrado na base.\n"
                             "Guarde primeiro um projeto via Projeto > Guardar como > PostgreSQL.",
@@ -897,8 +853,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # -- Init projeto --
         "init.group_basemaps": "Mapas base",
         "init.apply_styles": "Aplicar estilos da base de dados",
-        "init.btn_init": "Inicializar",
-        "init.btn_add": "Adicionar camadas",
         "init.already_loaded": "Ja carregado no projeto",
         "init.confirm_title": "Constructel Bridge - Inicializar projeto",
         "init.confirm": "Inicializar o projeto atual com todas as camadas Farois FTTH?\n\n"
@@ -907,7 +861,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "init.success_basemaps": "Mapas base adicionados: {count}.",
         "init.nothing_added": "Nenhuma camada adicionada: já no projeto ou inválida (ver o registo Constructel Bridge).",
         "init.error": "Erro de inicializacao:\n{error}",
-        "home.no_operator": "Nenhum operador acessivel: peca um scope de operador a um administrador Farois.",
         "home.reorganized": "Projeto reorganizado por operador (grupos {operators} e Comum): guarde-o para manter esta organizacao.",
         "home.reorganized_common": "Projeto reorganizado (grupo Comum): guarde-o para manter esta organizacao.",
         "home.load_partial": "Carregamento incompleto: falha para {operators} (ver o registo).",
@@ -915,25 +868,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.not_connected": "não ligado",
         "home.connect": "Ligar",
         "home.connect_to_see": "Liga-te para ver os operadores a que tens acesso",
-        "home.common_only": "Nenhum operador disponivel: so as camadas comuns podem ser carregadas.",
-        "home.tile_load": "Carregar camadas",
-        "home.operator_label": "Operador:",
+        "home.common_only": "Nenhum operador disponível: só as camadas comuns podem ser carregadas.",
         "home.suffix_checkbox": "Adicionar o nome do operador às camadas",
         "home.loaded_title": "Já no projeto:",
         "home.loaded_operator": "✓ {operator} · {count} camadas",
         "home.loaded_common": "{count} camadas comuns",
         "home.loaded_basemaps": "{count} mapas base",
-        "home.btn_init": "Inicializar · {operator}",
-        "home.btn_add": "Adicionar camadas · {operator}",
-        "home.tile_project": "Projeto guardado",
-        "home.tile_project_sub": "abrir um projeto da base de dados",
-        "home.tile_checkin": "Check-in",
-        "home.tile_checkin_sub": "extensões {active}/{total}",
-        "home.tile_checkin_updates": "{count} a atualizar",
-        "home.tile_diagnostic": "Diagnóstico",
-        "home.tile_diagnostic_sub": "plugin {version} · verificar o posto",
-        "home.tile_language": "Idioma",
-        "home.tile_language_sub": "FR · EN · PT",
         "home.tile_layers": "{count} camadas",
         "home.tile_done": "já carregado",
         "home.group_loaded": "já carregado",

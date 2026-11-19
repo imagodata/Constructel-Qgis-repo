@@ -1010,8 +1010,8 @@ def test_ad_password_never_lands_in_the_shared_password_attribute(bp18, monkeypa
 
 
 def test_first_run_dialog_success_runs_the_onboarding_once(bp18, monkeypatch, tmp_path):
-    # I-3 (sonde de revue) : chemin de mise a jour normal (onboarding_done
-    # efface a chaque changement de version).
+    # I-3 (sonde de revue) : premier demarrage reussi par le dialogue, setup
+    # jamais termine (onboarding_done absent) : l'assistant ne s'ouvre qu'une fois.
     from qgis.core import QgsSettings
 
     plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None, None], ask=(LOGIN, "ad-pw"))

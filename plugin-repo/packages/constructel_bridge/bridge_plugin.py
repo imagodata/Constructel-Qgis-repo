@@ -854,6 +854,9 @@ def _get_plugin_version() -> str:
 
 PLUGIN_VERSION = _get_plugin_version()
 
+# 2.0 (spec § 8.4) : rattrapage ponctuel du setup, pose une fois par poste.
+ONBOARDING_CATCHUP_KEY = "constructel_bridge/onboarding_catchup_2_0"
+
 
 def _clear_audit_identity(forget_email: bool = True):
     """Retire app.current_user de PGOPTIONS et oublie l'adresse en cache.
@@ -1115,8 +1118,10 @@ class ConstructelBridgePlugin:
         # Detecter install/mise a jour: mettre a jour la version stockee
         settings = QgsSettings()
         stored_version = settings.value("constructel_bridge/plugin_version", "")
+        # 2.0 (spec § 6.5) : une mise a jour n'efface plus onboarding_done,
+        # l'assistant ne revient pas a chaque version.
+        self._catch_up_setup(settings, stored_version)
         if stored_version != PLUGIN_VERSION:
-            settings.remove("constructel_bridge/onboarding_done")
             settings.setValue("constructel_bridge/plugin_version", PLUGIN_VERSION)
             self._log(
                 f"Plugin {'installed' if not stored_version else 'updated'}: "
@@ -1631,6 +1636,20 @@ class ConstructelBridgePlugin:
                     self._open_first_setup(is_new_user)
                 except Exception as exc:
                     self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
+
+    @staticmethod
+    def _catch_up_setup(settings, stored_version) -> None:
+        """Rattrapage ponctuel de la 2.0 (spec § 8.4) : la 1.9.0 effacait
+        onboarding_done et ne le remettait a vrai qu'en fin d'assistant
+        connecte. Un poste deja installe (plugin_version anterieure
+        enregistree) est donc considere comme configure, une seule fois (cle
+        dediee). Un poste vierge garde l'assistant ; un nouvel utilisateur le
+        voit de toute facon (is_new_user a la connexion)."""
+        if settings.value(ONBOARDING_CATCHUP_KEY, False, type=bool):
+            return
+        if stored_version:
+            settings.setValue("constructel_bridge/onboarding_done", True)
+        settings.setValue(ONBOARDING_CATCHUP_KEY, True)
 
     def _auto_connect(self):
         """Tente une connexion silencieuse au demarrage du plugin.

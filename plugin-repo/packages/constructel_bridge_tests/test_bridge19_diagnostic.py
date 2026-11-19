@@ -621,14 +621,18 @@ def test_run_network_checks_returns_version_then_server(pki):
 
 def test_run_network_checks_share_one_deadline():
     # Depot et serveur muets : les deux verifications courent en parallele,
-    # l'ensemble tient dans le delai d'une seule (pas 2 x 0,6 s).
+    # l'ensemble tient dans le delai d'une seule (pas 2 x 0,6 s). Borne stricte a
+    # 2 x timeout : deux verifications en sequence attendraient au moins 2 x 0,6 s
+    # (delais reels), donc jamais en dessous ; en parallele il reste 0,6 s de marge
+    # pour une machine chargee (l'ancienne borne a 1,1 s etait instable).
+    timeout = 0.6
     with _server(_silent) as http_port, _server(_silent) as pg_port:
         start = time.monotonic()
         checks = bd.run_network_checks("127.0.0.1", pg_port, REAL_CA_BUNDLE, "1.9.0",
-                                       url=f"http://127.0.0.1:{http_port}/plugins.xml", timeout=0.6)
+                                       url=f"http://127.0.0.1:{http_port}/plugins.xml", timeout=timeout)
         elapsed = time.monotonic() - start
     assert [(c.key, c.level) for c in checks] == [("version", "warning"), ("server", "error")]
-    assert elapsed < 1.1
+    assert elapsed < 2 * timeout
 
 
 # --- Ordre d'affichage -------------------------------------------------------------
