@@ -205,7 +205,9 @@ def test_checkin_wizard_refreshes_identity_after_it_finishes(bp):
     # est relue a sa fin (signal finished), plus apres un exec() modal.
     # Comportement : test_bridge19_checkin.py::test_checkin_wizard_connected_keeps_profile_and_refreshes_identity_at_the_end.
     src = inspect.getsource(bp.ConstructelBridgePlugin._make_onboarding_wizard)
-    assert "finished.connect" in src and "self._refresh_audit_identity()" in src
+    assert "finished.connect" in src and "self._refresh_identity_after_wizard()" in src
+    assert "self._refresh_audit_identity()" in inspect.getsource(
+        bp.ConstructelBridgePlugin._refresh_identity_after_wizard)
 
 
 # --- _on_before_commit --------------------------------------------------

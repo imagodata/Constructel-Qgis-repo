@@ -1006,6 +1006,8 @@ class ConstructelBridgePlugin:
         # d'une meme fenetre d'accueil (Diagnostic, Check-in ; un seul fetch, K12).
         self._diagnostic_session = None
         self._wizard_new_user = False   # premier setup : assistant pour un nouvel utilisateur
+        self._home_dialog = None        # fenetre d'accueil ouverte (une seule a la fois)
+        self._identity_refresh_pending = False   # assistant avec profil pas encore relu
 
     # =====================================================================
     # QGIS Plugin lifecycle
@@ -3842,10 +3844,15 @@ class ConstructelBridgePlugin:
         try:
             dialog = HomeDialog(self._home_actions(), self.iface.mainWindow(),
                                 page=page, start_wizard=start_wizard)
+            self._home_dialog = dialog
             dialog.exec()
         finally:
+            self._home_dialog = None
             self._diagnostic_session = None
             self._wizard_new_user = False
+            # Fenetre fermee pendant l'assistant (sans « finished ») : l'adresse
+            # d'audit est quand meme relue, une fois.
+            self._refresh_identity_after_wizard()
             if dialog is not None:
                 # La sonde reseau du Diagnostic survit a la fenetre (gardee par
                 # bridge_diagnostic_dialog) ; son resultat tardif est ignore.
@@ -3853,8 +3860,13 @@ class ConstructelBridgePlugin:
 
     def _open_first_setup(self, is_new_user: bool) -> None:
         """Ouverture automatique au premier setup (gardes I-3 / I13 chez les
-        appelants) : la fenetre, page Check-in, assistant lance."""
+        appelants) : la fenetre, page Check-in, assistant lance. Fenetre deja
+        ouverte (connexion par son bouton « Se connecter ») : elle bascule sur
+        le Check-in a son redessin, jamais une seconde fenetre."""
         self._wizard_new_user = bool(is_new_user)
+        if self._home_dialog is not None:
+            self._home_dialog.request_page("checkin", start_wizard=True)
+            return
         self._on_home("checkin", start_wizard=True)
 
     def _home_actions(self):
@@ -4341,7 +4353,11 @@ class ConstructelBridgePlugin:
         projet »). Jamais de boite : la page est seule a parler (tache 9, un
         message par echec), le detail est au journal.
         """
-        cur = self._conn.cursor()
+        try:
+            cur = self._conn.cursor()
+        except Exception as exc:  # noqa: BLE001 -- connexion perdue : dit par la page Projets
+            self._log(tr("project.list_error", error=exc), Qgis.MessageLevel.Warning)
+            return None
         try:
             results: list[dict] = []
             errors: list[Exception] = []
@@ -4420,8 +4436,20 @@ class ConstructelBridgePlugin:
             include_profile=include_profile,
         )
         if include_profile:
-            wizard.finished.connect(lambda _result=0: self._refresh_audit_identity())
+            self._identity_refresh_pending = True
+            wizard.finished.connect(lambda _result=0: self._refresh_identity_after_wizard())
         return wizard
+
+    def _refresh_identity_after_wizard(self) -> None:
+        """Relit l'adresse d'audit apres un assistant avec profil : a sa fin,
+        ou a la fermeture de la fenetre qui l'hebergeait ; une seule fois."""
+        if not self._identity_refresh_pending:
+            return
+        self._identity_refresh_pending = False
+        try:
+            self._refresh_audit_identity()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Relecture de l'adresse d'audit impossible : {exc}", Qgis.MessageLevel.Warning)
 
     def _configure_sharing(self, kind: str) -> str:
         """« Configurer » de la page Check-in (``HomeActions.configure_sharing``) :
@@ -4479,10 +4507,16 @@ class ConstructelBridgePlugin:
         """Page Diagnostic (``HomeActions.diagnostic_inputs``), utilisable hors
         connexion : (texte d'etat, verifications locales, arguments de la sonde
         reseau). Aucune session PostgreSQL (la sonde serveur s'arrete apres la
-        poignee de main TLS), aucun secret de l'Auth Manager lu."""
+        poignee de main TLS), aucun secret de l'Auth Manager lu. Listes de
+        QGIS illisibles : aucune verification locale, la page s'ouvre quand meme."""
+        try:
+            local_checks = self._diagnostic_local_checks()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant pour la fenetre
+            self._log(f"Diagnostic : verifications locales illisibles ({exc})", Qgis.MessageLevel.Warning)
+            local_checks = []
         return (
             self._status_text(),
-            self._diagnostic_local_checks(),
+            local_checks,
             {
                 "host": DEFAULT_HOST,
                 "port": DEFAULT_PORT,

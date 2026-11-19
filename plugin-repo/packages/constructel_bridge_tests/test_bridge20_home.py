@@ -56,7 +56,6 @@ from constructel_bridge_tests.fakes_widgets import (
     _Tree,
     _W,
     _texts,
-    _widgets,
 )
 from constructel_bridge_tests.test_bridge18_connect import _initgui_ready, _make_plugin
 from constructel_bridge_tests.test_bridge18_layers import (  # noqa: F401  (pi = fixture)
@@ -454,6 +453,20 @@ def test_forced_or_project_suffix_is_never_remembered(home):
     assert home.settings().value(bo.SUFFIX_SETTINGS_KEY, None) is None
 
 
+def test_suffix_follows_project_operators_without_layers(home):
+    # 1.9 : un operateur inscrit au projet sans couche compte pour le suffixe.
+    dialog = _open(home, snap(operators=(WYRE,), project_operators=("orange",), project_suffix=False))
+    box = dialog._pages["load"]._suffix_box
+    assert (box.checked, box.enabled) == (True, False)
+
+
+def test_operator_outside_scopes_never_gets_a_button(home):   # K14
+    dialog = _open(home, snap(operators=(WYRE,), counts=Counts({"orange": 9}, 0, 0)))
+    page = dialog._pages["load"]
+    assert set(page._operator_buttons) == {"wyre"}
+    assert page._summary_label.text() == home.tr("home.loaded_operator", operator="Orange", count=9)
+
+
 # --- Projets ------------------------------------------------------------------------------
 
 
@@ -509,6 +522,25 @@ def test_first_setup_starts_the_wizard_in_the_checkin_page_once(home):
     assert dialog.log.count(("make_wizard", page)) == 1 and page._wizard is wizard
     wizard.finished.emit(1)
     dialog.render()
+    assert [e for e in dialog.log if isinstance(e, tuple) and e[0] == "make_wizard"] == [("make_wizard", page)]
+
+
+def test_first_setup_triggered_by_the_connect_button_switches_this_window(home):
+    # « Se connecter » dans la fenetre declenche le premier setup : le plugin
+    # demande le Check-in avec l'assistant (request_page), applique au redessin
+    # qui suit la connexion ; jamais une seconde fenetre.
+    wizard = _Wizard()
+    dialog = _open(home, snap(**OFFLINE), wizard=wizard)
+    dialog.actions = dataclasses.replace(
+        dialog.actions, connect=lambda: dialog.request_page("checkin", start_wizard=True))
+    dialog.snapshots.append(snap())
+
+    dialog._connect_button.clicked.emit(False)
+
+    page = dialog._pages["checkin"]
+    assert dialog._current == "checkin" and _current(dialog) is page and page._wizard is wizard
+    assert dialog._sidebar.currentRow() == 2
+    dialog.render()                                     # redessin suivant : pas de second assistant
     assert [e for e in dialog.log if isinstance(e, tuple) and e[0] == "make_wizard"] == [("make_wizard", page)]
 
 
@@ -677,6 +709,26 @@ def test_first_setup_once_the_ui_is_ready_opens_home_once(bp18, monkeypatch, tmp
     assert opened == [(("checkin",), {"start_wizard": True})]
 
 
+def test_first_setup_while_the_window_is_open_switches_it_instead_of_opening_another(bp18, monkeypatch):
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    requests = []
+    plugin._home_dialog = types.SimpleNamespace(request_page=lambda *a, **k: requests.append((a, k)))
+    monkeypatch.setattr(plugin, "_on_home", lambda *a, **k: pytest.fail("seconde fenetre"))
+
+    plugin._open_first_setup(True)
+
+    assert requests == [(("checkin",), {"start_wizard": True})] and plugin._wizard_new_user is True
+
+
+def test_open_window_is_known_only_while_it_runs(bp18, pi, homes, monkeypatch):  # noqa: F811
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    plugin._connected = False
+    seen = []
+    monkeypatch.setattr(_RecordingHome, "exec", lambda self: seen.append(plugin._home_dialog is self) or 0)
+    plugin._on_home()
+    assert seen == [True] and plugin._home_dialog is None
+
+
 def test_first_setup_is_not_replayed_once_done(bp18, monkeypatch, tmp_path):
     plugin, *_ = _make_plugin(bp18, monkeypatch, tmp_path, [None], stored_ad_pw="ad-pw")
     opened = []
@@ -706,6 +758,17 @@ def test_diagnostic_inputs_need_no_connection(bp18, monkeypatch):
     assert status == bp18.tr("status.not_connected") and local == checks
     assert network == {"host": bp18.DEFAULT_HOST, "port": bp18.DEFAULT_PORT,
                        "cafile": str(bp18.ca_bundle_path(PLUGIN_DIR)), "installed_version": bp18.PLUGIN_VERSION}
+
+
+def test_diagnostic_inputs_survive_unreadable_plugin_lists(bp18, monkeypatch):
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    plugin._connected = False
+
+    def boom():
+        raise RuntimeError("qgis.utils indisponible")
+
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", boom)
+    assert plugin._diagnostic_inputs()[1] == []
 
 
 def test_configure_sharing_dispatches_by_kind(bp18, monkeypatch):

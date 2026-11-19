@@ -263,6 +263,18 @@ def test_liste_projets_sans_aucune_table_rend_une_liste_vide(bp18, plugin, fake_
     assert plugin._list_db_projects() == [] and shown == []
 
 
+def test_liste_projets_connexion_perdue_rend_none_sans_boite(bp18, plugin, monkeypatch):
+    # Curseur impossible (connexion fermee cote serveur) : la page Projets le
+    # dit ; la fenetre ne plante pas.
+    shown = _record_message_boxes(bp18, monkeypatch)
+
+    def closed():
+        raise RuntimeError("connection already closed")
+
+    plugin._conn.cursor = closed
+    assert plugin._list_db_projects() is None and shown == []
+
+
 def test_liste_projets_repli_sans_operateur(plugin, fake_cursor):
     plugin._operators = []
     plugin._list_db_projects()

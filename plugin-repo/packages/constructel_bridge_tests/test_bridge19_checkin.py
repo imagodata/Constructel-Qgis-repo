@@ -432,6 +432,46 @@ def test_checkin_wizard_connected_keeps_profile_and_refreshes_identity_at_the_en
     assert refreshed == [1]
 
 
+def test_identity_is_refreshed_once_even_if_the_window_closes_during_the_wizard(checkin, monkeypatch):
+    plugin, _created = checkin
+    plugin._connected = True
+    plugin._auth_mode = "shared"
+    refreshed = []
+    monkeypatch.setattr(plugin, "_refresh_audit_identity", lambda: refreshed.append(1))
+
+    class Home:
+        def __init__(self, actions, parent=None, page="load", start_wizard=False):
+            self.actions, self.start_wizard = actions, start_wizard
+
+        def exec(self):
+            if self.start_wizard:
+                self.actions.make_wizard(None)     # assistant lance puis fenetre fermee
+            return 0
+
+        def deleteLater(self):
+            pass
+
+    fake = types.ModuleType("constructel_bridge.bridge_home")
+    fake.HomeDialog = Home
+    monkeypatch.setitem(sys.modules, "constructel_bridge.bridge_home", fake)
+
+    plugin._on_home("checkin", start_wizard=True)
+    plugin._on_home("checkin")                     # pas d'assistant : rien a relire
+
+    assert refreshed == [1]
+
+
+def test_checkin_wizard_finished_then_window_closed_refreshes_once(checkin, monkeypatch):
+    plugin, _created = checkin
+    plugin._connected = True
+    plugin._auth_mode = "shared"
+    refreshed = []
+    monkeypatch.setattr(plugin, "_refresh_audit_identity", lambda: refreshed.append(1))
+    plugin._make_onboarding_wizard(None).finished.emit(1)
+    plugin._refresh_identity_after_wizard()        # fermeture de la fenetre ensuite
+    assert refreshed == [1]
+
+
 def test_checkin_wizard_connected_nominal_keeps_profile_page_without_db_writes(checkin, bp18):
     plugin, created = checkin
     plugin._connected = True

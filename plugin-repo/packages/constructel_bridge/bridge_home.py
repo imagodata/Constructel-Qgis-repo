@@ -70,6 +70,7 @@ class HomeDialog(QDialog):
         self._load_choice = None        # choix de la page Charger, garde d'un redessin a l'autre
         self._load_editable = False     # la page Charger etait-elle utilisable (connecte) ?
         self._diagnostic_left = False   # panneau clos en quittant sa page : relance au retour
+        self._requested = None          # (page, assistant) demandes par le plugin, cf. request_page
         self._footer = None
         self._connect_button = None
         self._lang_buttons: dict = {}
@@ -96,6 +97,11 @@ class HomeDialog(QDialog):
         """Reconstruit barre et pages depuis ``actions.snapshot()`` ; la page
         courante et le choix de Charger sont gardes, les autres pages seront
         reconstruites a leur prochain affichage."""
+        if self._requested is not None:
+            page, start_wizard = self._requested
+            self._requested = None
+            self._current = page if page in PAGES else self._current
+            self._start_wizard = self._start_wizard or start_wizard
         self._keep_load_choice()
         self._close_diagnostic()
         for page in self._pages.values():
@@ -244,6 +250,13 @@ class HomeDialog(QDialog):
             self._sidebar.setCurrentRow(PAGES.index(name))
         finally:
             self._sidebar.blockSignals(blocked)
+
+    def request_page(self, name: str, start_wizard: bool = False) -> None:
+        """Demande du plugin pendant une action de la fenetre, appliquee au
+        redessin qui la suit : « Se connecter » qui declenche le premier setup
+        bascule CETTE fenetre sur le Check-in, assistant lance, au lieu d'en
+        ouvrir une seconde par-dessus."""
+        self._requested = (name, bool(start_wizard))
 
     def _on_row_changed(self, row: int) -> None:
         if 0 <= row < len(PAGES) and PAGES[row] != self._current:
