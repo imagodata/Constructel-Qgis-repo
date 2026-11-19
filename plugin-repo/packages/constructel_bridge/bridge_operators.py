@@ -59,6 +59,8 @@ FALLBACK_OPERATOR = OperatorInfo("WYRE", "Wyre", OPERATOR_TEMPLATE_SCHEMA)
 # historique (1.8) quand la liste des operateurs est vide.
 BROWSER_EXTRA_SCHEMAS = ("osiris",)
 PROJECT_EXTRA_SCHEMAS = ("public",)
+# Schema transverse des projets partages (2.0 R7) : liste seulement s'il existe en base.
+PROJET_SCHEMA = "projet"
 
 
 def browser_schemas(operators: Sequence[OperatorInfo]) -> str:
