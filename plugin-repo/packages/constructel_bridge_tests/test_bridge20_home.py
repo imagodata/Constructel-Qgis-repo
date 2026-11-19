@@ -943,3 +943,51 @@ def test_load_selection_warns_when_the_first_operator_is_unknown(bp18, pi, monke
 
     assert reorganized == []
     assert any("wyre" in m[0] and "1.8" in m[0] for m in QgsMessageLog._messages)
+
+
+# --- Revue finale ----------------------------------------------------------------------------
+
+
+def test_home_snapshot_falls_back_on_the_1_9_last_operator(bp18, pi, onb, monkeypatch, tmp_path):  # noqa: F811
+    # Revue finale : poste venu de la 1.9, ni LAST_SELECTION_KEY ni
+    # LAST_OPERATORS_KEY : la preselection suit LAST_OPERATOR_KEY.
+    from qgis.core import QgsSettings
+
+    plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
+    plugin._operators = [WYRE, ORANGE]
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    QgsSettings().setValue(bo.LAST_OPERATOR_KEY, "orange")
+
+    snapshot = plugin.home_snapshot()
+
+    assert snapshot.last_selection == UserPreset("", ("orange",), LayerSelection({}, frozenset()))
+    assert hm.home_state(snapshot).preselected == ("orange",)
+    # La cle 2.0 prime sur celle de la 1.9.
+    QgsSettings().setValue(bo.LAST_OPERATORS_KEY, "wyre")
+    assert plugin.home_snapshot().last_selection.schemas == ("wyre",)
+
+
+def test_diagnostic_action_survives_unreadable_local_checks(bp18, monkeypatch):
+    # Revue finale : une exception des verifications locales apres l'action
+    # ne sort jamais du slot Qt (pas de boite d'erreur Python) : avertissement
+    # journalise, dernieres verifications connues rendues.
+    from qgis.core import QgsMessageLog
+
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    plugin._connected = False
+    checks = [bd.Check("identity", "ok", "diag.identity_ok", {"login": "jdoe"})]
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: checks)
+    assert plugin._diagnostic_inputs()[1] == checks
+
+    def boom():
+        raise RuntimeError("qgis.utils indisponible")
+
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", boom)
+    QgsMessageLog._messages.clear()
+    manager = bd.Check("plugin", "ok", "diag.plugin_ok", {"name": "A"})     # sans action : relecture seule
+    assert plugin._run_diagnostic_action(manager) == checks
+    assert any("qgis.utils indisponible" in m[0] for m in QgsMessageLog._messages)
+    # Sans verifications connues : liste vide.
+    fresh = bp18.ConstructelBridgePlugin(_FakeIface())
+    monkeypatch.setattr(fresh, "_diagnostic_local_checks", boom)
+    assert fresh._run_diagnostic_action(manager) == []

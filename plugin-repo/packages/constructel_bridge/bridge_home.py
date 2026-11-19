@@ -49,6 +49,12 @@ from .i18n import SUPPORTED_LANGUAGES, get_language, tr
 
 PAGES = ("load", "projects", "checkin", "diagnostic")
 _SIDEBAR_WIDTH = 230
+# Taille par defaut et minimale, bornees a l'ecran disponible (anti-objectif
+# § 4 : 1366x768 sans debordement) ; marges pour le cadre et la barre de titre
+# de la fenetre, hors de la geometrie du contenu.
+_DEFAULT_SIZE = (1100, 720)
+_MINIMUM_SIZE = (980, 640)
+_FRAME_MARGIN = (16, 48)
 _STATUS_DOT = "●"
 
 
@@ -68,6 +74,7 @@ class HomeDialog(QDialog):
         self._pages: dict = {}
         self._indexes: dict = {}
         self._load_choice = None        # choix de la page Charger, garde d'un redessin a l'autre
+        self._load_options = None       # ses options (fonds de plan, styles, suffixe), idem
         self._load_editable = False     # la page Charger etait-elle utilisable (connecte) ?
         self._diagnostic_left = False   # panneau clos en quittant sa page : relance au retour
         self._requested = None          # (page, assistant) demandes par le plugin, cf. request_page
@@ -76,8 +83,9 @@ class HomeDialog(QDialog):
         self._lang_buttons: dict = {}
 
         self.setWindowTitle("Constructel Bridge")
-        self.setMinimumSize(980, 640)
-        self.resize(1100, 720)
+        size, minimum = self._fitted_sizes()
+        self.setMinimumSize(*minimum)
+        self.resize(*size)
 
         root = QHBoxLayout(self)
         self._side = QWidget(self)
@@ -125,6 +133,42 @@ class HomeDialog(QDialog):
         self._read_snapshot()
         self._build_chrome()
         self.show_page(self._current)
+
+    def _fitted_sizes(self) -> tuple:
+        """((largeur, hauteur), (largeur min, hauteur min)) : 1100x720 et
+        980x640 quand ils tiennent dans l'ecran disponible, sinon l'ecran
+        disponible moins les marges du cadre et de la barre de titre."""
+        available = self._available_size()
+        if available is None:
+            return _DEFAULT_SIZE, _MINIMUM_SIZE
+        room = tuple(max(1, side - margin) for side, margin in zip(available, _FRAME_MARGIN))
+        size = tuple(min(wanted, side) for wanted, side in zip(_DEFAULT_SIZE, room))
+        minimum = tuple(min(wanted, side) for wanted, side in zip(_MINIMUM_SIZE, room))
+        return size, minimum
+
+    def _available_size(self):
+        """(largeur, hauteur) de l'ecran disponible (hors barre des taches),
+        None si illisible : Qt5 avant 5.14 (pas de ``screen()``), Qt6, doublures."""
+        screen = None
+        try:
+            screen = self.screen()
+        except Exception:  # noqa: BLE001 -- QWidget.screen() absent (Qt < 5.14, doublures)
+            screen = None
+        if screen is None:
+            try:
+                from qgis.PyQt.QtGui import QGuiApplication
+
+                screen = QGuiApplication.primaryScreen()
+            except Exception:  # noqa: BLE001 -- pas d'application graphique
+                screen = None
+        if screen is None:
+            return None
+        try:
+            geometry = screen.availableGeometry()
+            width, height = int(geometry.width()), int(geometry.height())
+        except Exception:  # noqa: BLE001 -- geometrie illisible : tailles par defaut
+            return None
+        return (width, height) if width > 0 and height > 0 else None
 
     def _read_snapshot(self) -> None:
         self._snapshot = self.actions.snapshot()
@@ -211,7 +255,8 @@ class HomeDialog(QDialog):
         if name == "load":
             snapshot, state = self._load_inputs()
             self._load_editable = state.load_enabled
-            return LoadPage(snapshot, state, actions, self._on_load_done, self._stack)
+            options = self._load_options if self._load_choice is not None else None
+            return LoadPage(snapshot, state, actions, self._on_load_done, self._stack, options=options)
         if name == "projects":
             return ProjectsPage(actions, snapshot.connected, snapshot.labels, self.accept, self._stack)
         if name == "checkin":
@@ -224,7 +269,9 @@ class HomeDialog(QDialog):
                 self._lock_for_wizard()
             return page
         status_text, local_checks, network_args = actions.diagnostic_inputs()
-        return DiagnosticPanel(status_text, local_checks, network_args, actions.diagnostic_action, self._stack)
+        panel = DiagnosticPanel(status_text, local_checks, network_args, actions.diagnostic_action, self._stack)
+        panel.on_change = self._refresh_chrome      # pastille du Check-in apres une installation
+        return panel
 
     def _load_inputs(self) -> tuple:
         """(instantane, etat) de la page Charger : apres un redessin, le choix
@@ -241,6 +288,7 @@ class HomeDialog(QDialog):
         page = self._pages.get("load")
         if page is not None and self._load_editable:
             self._load_choice = page.current_choice()
+            self._load_options = page.current_options()
 
     # -- navigation ------------------------------------------------------------------------
 
@@ -268,6 +316,30 @@ class HomeDialog(QDialog):
             self._sidebar.setCurrentRow(PAGES.index(name))
         finally:
             self._sidebar.blockSignals(blocked)
+        self._set_default_buttons()
+
+    def _set_default_buttons(self) -> None:
+        """Entree ne presse jamais un bouton de la barre ou d'une page (dans un
+        QDialog, tout QPushButton est « autoDefault ») : aucun bouton par
+        defaut, sauf « Charger » quand la page Charger est affichee. Rejoue
+        apres chaque redessin et chaque construction de page. Les boutons
+        d'un dialogue heberge (assistant du Check-in) gardent les leurs."""
+        page = self._pages.get("load") if self._current == "load" else None
+        default = page.default_button() if page is not None else None
+        for button in self.findChildren(QPushButton):
+            if not self._owns(button):
+                continue
+            button.setAutoDefault(False)
+            button.setDefault(button is default)
+
+    def _owns(self, button) -> bool:
+        """*button* releve de cette fenetre et non d'un dialogue heberge."""
+        parent = button.parentWidget()
+        while parent is not None and parent is not self:
+            if isinstance(parent, QDialog):
+                return False
+            parent = parent.parentWidget()
+        return True
 
     def request_page(self, name: str, start_wizard: bool = False) -> None:
         """Demande du plugin pendant une action de la fenetre, appliquee au
@@ -292,10 +364,12 @@ class HomeDialog(QDialog):
                 button.setEnabled(False)
 
     def _refresh_chrome(self) -> None:
-        """Apres une action du Check-in : barre et bas de barre relus (pastille),
-        pages inchangees (la page Check-in s'est deja redessinee)."""
+        """Apres une action du Check-in ou du Diagnostic : barre et bas de
+        barre relus (pastille), pages inchangees (la page s'est deja
+        redessinee)."""
         self._read_snapshot()
         self._build_chrome()
+        self._set_default_buttons()
 
     # -- gestes ----------------------------------------------------------------------------
 

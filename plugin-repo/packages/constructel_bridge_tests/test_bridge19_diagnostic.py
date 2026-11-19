@@ -1108,9 +1108,13 @@ class _Button(_W):
         super().__init__(*args)
         self._text = text
         self.clicked = _Sig()
+        self.auto_default = True
 
     def text(self):
         return self._text
+
+    def setAutoDefault(self, value):
+        self.auto_default = bool(value)
 
 
 class _Layout:

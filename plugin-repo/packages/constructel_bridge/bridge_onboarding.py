@@ -199,49 +199,57 @@ def _resource_sharing_groups(settings) -> list:
     return groups
 
 
+def _resource_sharing_repos(settings) -> tuple:
+    """Lecture commune au constat et a « Configurer » (une seule regle) :
+    (groupe portant l'URL Constructel ou None, groupe nomme « Constructel »
+    ou None, plus grand index numerique ou -1). Un depot a l'URL Constructel
+    compte quel que soit son nom ; un depot « Constructel » a une autre URL
+    est a corriger."""
+    base = "ResourceSharing/repositories"
+    with_url, named, max_index = None, None, -1
+    for group in _resource_sharing_groups(settings):
+        try:
+            max_index = max(max_index, int(group))
+        except ValueError:
+            pass
+        name = settings.value(f"{base}/{group}/name", "")
+        url = settings.value(f"{base}/{group}/url", "")
+        if url == RESOURCE_SHARING_REPO_URL and with_url is None:
+            with_url = group
+        elif name == RESOURCE_SHARING_REPO_NAME and named is None:
+            named = group
+    return with_url, named, max_index
+
+
 def resource_sharing_configured(settings=None) -> Optional[bool]:
-    """Depot Resource Sharing « Constructel » configure (nom ET URL attendus) ?
-    ``None`` si l'extension n'est ni disponible ni active. Lecture des seuls
-    reglages ``ResourceSharing/repositories`` : ni reseau, ni etat interne de
-    l'extension."""
+    """Depot Resource Sharing Constructel configure (un depot a l'URL
+    Constructel, quel que soit son nom) ? Meme regle que
+    ``configure_resource_sharing``, qui finit toujours dans un etat accepte
+    ici. ``None`` si l'extension n'est ni disponible ni active. Lecture des
+    seuls reglages ``ResourceSharing/repositories`` : ni reseau, ni etat
+    interne de l'extension."""
     if not _plugin_present("qgis_resource_sharing"):
         return None
     settings = settings if settings is not None else QgsSettings()
-    base = "ResourceSharing/repositories"
-    for group in _resource_sharing_groups(settings):
-        name = settings.value(f"{base}/{group}/name", "")
-        url = settings.value(f"{base}/{group}/url", "")
-        if name == RESOURCE_SHARING_REPO_NAME and url == RESOURCE_SHARING_REPO_URL:
-            return True
-    return False
+    return _resource_sharing_repos(settings)[0] is not None
 
 
 def configure_resource_sharing(settings=None) -> str:
-    """Ajoute (ou met a jour l'URL du) depot Resource Sharing « Constructel » ;
-    rend le message traduit de ce qui a ete fait."""
+    """Ajoute le depot Resource Sharing « Constructel », ou corrige l'URL du
+    depot de ce nom ; rien si un depot a deja l'URL Constructel. Rend le
+    message traduit de ce qui a ete fait."""
     if not _plugin_present("qgis_resource_sharing"):
         return tr("onboard.action.rs_not_installed")
 
     settings = settings if settings is not None else QgsSettings()
     base = "ResourceSharing/repositories"
-    max_index = -1
-
-    for group in _resource_sharing_groups(settings):
-        try:
-            idx = int(group)
-            if idx > max_index:
-                max_index = idx
-        except ValueError:
-            continue
-
-        name = settings.value(f"{base}/{group}/name", "")
-        url = settings.value(f"{base}/{group}/url", "")
-        if name == RESOURCE_SHARING_REPO_NAME or url == RESOURCE_SHARING_REPO_URL:
-            if name == RESOURCE_SHARING_REPO_NAME and url != RESOURCE_SHARING_REPO_URL:
-                settings.setValue(f"{base}/{group}/url", RESOURCE_SHARING_REPO_URL)
-                return tr("onboard.action.rs_updated",
-                          name=RESOURCE_SHARING_REPO_NAME, url=RESOURCE_SHARING_REPO_URL)
-            return tr("onboard.action.rs_exists", name=RESOURCE_SHARING_REPO_NAME)
+    with_url, named, max_index = _resource_sharing_repos(settings)
+    if with_url is not None:
+        return tr("onboard.action.rs_exists", name=RESOURCE_SHARING_REPO_NAME)
+    if named is not None:
+        settings.setValue(f"{base}/{named}/url", RESOURCE_SHARING_REPO_URL)
+        return tr("onboard.action.rs_updated",
+                  name=RESOURCE_SHARING_REPO_NAME, url=RESOURCE_SHARING_REPO_URL)
 
     new_index = max_index + 1
     settings.setValue(f"{base}/{new_index}/name", RESOURCE_SHARING_REPO_NAME)

@@ -249,6 +249,8 @@ class QPushButton(_Widget):
         self._text = text
         self._checkable = False
         self._checked = False
+        self._auto_default = True
+        self._default = False
         self.toggled = _Signal()
         self.clicked = _Signal()
 
@@ -261,6 +263,18 @@ class QPushButton(_Widget):
 
     def isChecked(self):
         return self._checked
+
+    def setAutoDefault(self, value):
+        self._auto_default = bool(value)
+
+    def autoDefault(self):
+        return self._auto_default
+
+    def setDefault(self, value):
+        self._default = bool(value)
+
+    def isDefault(self):
+        return self._default
 
 
 class QDialogButtonBox(_Widget):
