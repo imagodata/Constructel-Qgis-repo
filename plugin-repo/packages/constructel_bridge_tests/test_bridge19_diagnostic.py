@@ -1189,28 +1189,84 @@ def _rows(dialog):
             for r in range(count)]
 
 
-def test_dialog_shows_local_checks_and_runs_network_checks_in_a_task(dlg):
-    dialog = dlg.DiagnosticDialog(None, "Non connecte.", LOCAL, NET_ARGS, lambda c: LOCAL)
-    assert dialog.title == dlg.tr("diag.title")
-    assert len(dlg.tasks) == 1 and dialog._task is dlg.tasks[0]   # reference gardee
-    task = dlg.tasks[0]
-    assert task.kwargs == {"network_args": NET_ARGS} and task.on_finished == dialog._on_network_done
-    assert [r[1] for r in _rows(dialog)] == [
+def test_panel_shows_local_checks_and_runs_network_checks_in_a_task(dlg):
+    panel = dlg.DiagnosticPanel("Non connecte.", LOCAL, NET_ARGS, lambda c: LOCAL)
+    assert len(dlg.tasks) == 1 and panel._task is dlg.tasks[0]   # reference gardee
+    assert panel._task in dlg._PENDING_TASKS
+    assert dlg.tasks[0].kwargs == {"network_args": NET_ARGS}
+    assert [r[1] for r in _rows(panel)] == [
         dlg.tr("diag.running"), dlg.tr("diag.plugin_missing", name="QField Sync"), dlg.tr("diag.identity_ok", login="jdoe")]
-    assert _rows(dialog)[1][2] == dlg.tr("diag.action_install")
+    assert _rows(panel)[1][2] == dlg.tr("diag.action_install")
+
+
+def test_task_on_finished_is_wired_to_the_panel(dlg):
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    task = dlg.tasks[0]
+    task.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("farois.test", 5432, "ok", "")])
+    assert _rows(panel)[0][1] == dlg.tr("diag.version_ok", installed="1.9.0")
+    assert task not in dlg._PENDING_TASKS
+
+
+def test_restart_button_is_labelled_and_wired(dlg):
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    assert panel._restart_button.text() == dlg.tr("diag.restart")
+    panel._restart_button.clicked.emit(False)
+    assert len(dlg.tasks) == 2
+
+
+def test_restart_runs_a_new_network_task(dlg):
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    first = dlg.tasks[0]
+    first.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("farois.test", 5432, "ok", "")])
+    assert _rows(panel)[0][1] == dlg.tr("diag.version_ok", installed="1.9.0")
+
+    panel.restart()
+
+    assert len(dlg.tasks) == 2 and panel._task is dlg.tasks[1] and panel._task is not first
+    assert dlg.tasks[1].kwargs == {"network_args": NET_ARGS} and dlg.tasks[1] in dlg._PENDING_TASKS
+    # lignes reseau repassees « ... », lignes locales inchangees
+    assert [r[1] for r in _rows(panel)] == [
+        dlg.tr("diag.running"), dlg.tr("diag.plugin_missing", name="QField Sync"), dlg.tr("diag.identity_ok", login="jdoe")]
+    dlg.tasks[1].on_finished(None, [bd.version_check("1.9.0", "1.9.1"), bd.server_check("farois.test", 5432, "ok", "")])
+    assert _rows(panel)[0][1] == dlg.tr("diag.version_update", installed="1.9.0", latest="1.9.1")
+
+
+def test_stale_result_of_a_replaced_task_does_not_release_or_overwrite_the_new_one(dlg):
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    first = dlg.tasks[0]
+    panel.restart()
+    second = dlg.tasks[1]
+    first.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert first not in dlg._PENDING_TASKS and second in dlg._PENDING_TASKS
+    assert _rows(panel)[0][1] == dlg.tr("diag.running")
+
+
+def test_restart_during_an_action_is_drawn_after_it(dlg):
+    holder = {}
+
+    def on_action(check):
+        panel = holder["panel"]
+        rows = panel._rows
+        panel.restart()
+        assert panel._rows is rows and not rows.deleted
+        return LOCAL
+
+    holder["panel"] = panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, on_action)
+    panel._rows.layout.cells[(1, 2)].clicked.emit(False)
+    assert len(dlg.tasks) == 2 and _rows(panel)[0][1] == dlg.tr("diag.running")
 
 
 def test_task_function_runs_the_network_checks_off_the_ui(dlg, monkeypatch):
     seen = []
     monkeypatch.setattr(dlg, "run_network_checks", lambda **kw: seen.append(kw) or ["checks"])
-    dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     task = dlg.tasks[0]
     assert task.function(task, *task.args, **task.kwargs) == ["checks"]
     assert seen == [NET_ARGS]
 
 
 def test_network_result_is_shown_in_the_spec_order(dlg):
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     old_rows = dialog._rows
     dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.1"), bd.server_check("farois.test", 5432, "ok", "")])
     rows = _rows(dialog)
@@ -1223,10 +1279,10 @@ def test_network_result_is_shown_in_the_spec_order(dlg):
     assert old_rows.hidden and old_rows.deleted and dialog._rows is not old_rows
 
 
-def test_result_is_ignored_once_the_dialog_is_closed(dlg):
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+def test_result_is_ignored_once_the_panel_is_closed(dlg):
+    dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     rows = dialog._rows
-    dialog.reject()
+    dialog.close_panel()
     dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
     assert dialog._rows is rows and _rows(dialog)[0][1] == dlg.tr("diag.running")
 
@@ -1236,11 +1292,11 @@ def test_pending_task_outlives_the_deleted_dialog(dlg):
     # tache en cours reste referencee par le module jusqu'a sa fin (sinon le
     # wrapper Python de la QgsTask pourrait etre collecte en plein travail),
     # puis est relachee. Son resultat tardif reste ignore.
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     task = dlg.tasks[0]
     assert task in dlg._PENDING_TASKS
     rows = dialog._rows
-    dialog.reject()
+    dialog.close_panel()
     dialog.deleteLater()
     del dialog
 
@@ -1250,24 +1306,24 @@ def test_pending_task_outlives_the_deleted_dialog(dlg):
     assert not rows.deleted and rows.layout.cells[(0, 1)].text() == dlg.tr("diag.running")
 
 
-def test_result_is_ignored_after_exec_however_it_ended(dlg):
+def test_wrapper_dialog_result_is_ignored_after_exec_however_it_ended(dlg):
     # exec() peut finir sans done() (dialogue cache par QGIS) : le dialogue
-    # va etre detruit, un resultat tardif ne doit plus toucher ses widgets.
+    # va etre detruit, un resultat tardif ne doit plus toucher les widgets du panneau.
     dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
-    rows = dialog._rows
+    rows = dialog.panel._rows
     dialog.exec()
-    dialog._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
-    assert dialog._rows is rows and not rows.deleted
+    dialog.panel._on_network_done(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert dialog.panel._rows is rows and not rows.deleted
 
 
-def test_finished_task_is_released_while_the_dialog_is_open(dlg):
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+def test_finished_task_is_released_while_the_panel_is_open(dlg):
+    dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     dialog._on_network_done(Exception("Task canceled"))
     assert dialog._task not in dlg._PENDING_TASKS
 
 
 def test_failed_or_cancelled_task_shows_both_network_checks_failed(dlg):
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     dialog._on_network_done(Exception("Task canceled"))   # QgsTaskWrapper : on_finished(exception) sans resultat
     rows = _rows(dialog)
     assert rows[0][1] == dlg.tr("diag.version_unknown", installed="1.9.0", error="Task canceled")
@@ -1278,7 +1334,7 @@ def test_action_button_runs_on_action_and_redraws_local_checks(dlg):
     calls = []
     refreshed = [bd.Check("plugin", "warning", "diag.plugin_inactive", {"name": "QField Sync"}, "activate", "qfieldsync"),
                  LOCAL[1]]
-    dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: calls.append(c) or refreshed)
+    dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: calls.append(c) or refreshed)
     button = dialog._rows.layout.cells[(1, 2)]
     button.clicked.emit(False)
     assert calls == [LOCAL[0]]
@@ -1299,14 +1355,49 @@ def test_network_result_during_an_action_is_drawn_after_it(dlg):
         assert dialog._rows is rows and not rows.deleted
         return LOCAL
 
-    holder["dialog"] = dialog = dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, on_action)
+    holder["dialog"] = dialog = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, on_action)
     dialog._rows.layout.cells[(1, 2)].clicked.emit(False)
     assert [r[1] for r in _rows(dialog)][0::2] == [
         dlg.tr("diag.version_ok", installed="1.9.0"), dlg.tr("diag.server_ok", host="h", port=1)]
 
 
+class _Untouchable:
+    """Double qui leve des qu'une methode de widget est appelee."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"widget touched after close: {name}")
+
+
+def test_late_network_result_after_close_is_ignored(dlg):
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    task = dlg.tasks[0]
+    panel.close_panel()
+    # Widgets remplaces par une doublure qui leve a la moindre methode appelee
+    # (comme un objet C++ detruit) : le resultat tardif ne doit rien toucher.
+    for attr in ("_layout", "_rows", "_restart_button"):
+        setattr(panel, attr, _Untouchable())
+    panel.setEnabled = panel.hide = panel.deleteLater = _Untouchable()
+
+    task.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    task.on_finished(Exception("Task canceled"))
+
+    assert task not in dlg._PENDING_TASKS
+
+
+def test_wrapper_dialog_hosts_the_panel_and_closes_it(dlg):
+    dialog = dlg.DiagnosticDialog(None, "Non connecte.", LOCAL, NET_ARGS, lambda c: LOCAL)
+    assert dialog.title == dlg.tr("diag.title")
+    assert isinstance(dialog.panel, dlg.DiagnosticPanel) and len(dlg.tasks) == 1
+    assert dialog.panel._task is dlg.tasks[0]
+    assert [r[1] for r in _rows(dialog.panel)][0] == dlg.tr("diag.running")
+    rows = dialog.panel._rows
+    dialog.reject()                      # bouton Fermer / Echap / croix
+    dlg.tasks[0].on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert dialog.panel._rows is rows and not rows.deleted
+
+
 def test_task_is_named_after_the_diagnostic(dlg):
-    dlg.DiagnosticDialog(None, "", LOCAL, NET_ARGS, lambda c: LOCAL)
+    dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     assert dlg.tasks[0].description == dlg.tr("diag.title")
 
 
@@ -1333,3 +1424,14 @@ def test_dialog_module_uses_literal_keys_only():
     src = (PLUGIN_DIR / "bridge_diagnostic_dialog.py").read_text(encoding="utf-8")
     assert not re.search(r"\btr\(\s*f[\"']", src) and not re.search(r"\btr\(\s*[a-z_]", src)
 
+
+
+def test_restart_label_is_translated_in_all_languages():
+    from constructel_bridge.i18n.translations import TRANSLATIONS
+
+    assert (TRANSLATIONS["fr"]["diag.restart"], TRANSLATIONS["en"]["diag.restart"],
+            TRANSLATIONS["pt"]["diag.restart"]) == ("Relancer", "Run again", "Executar novamente")
+
+
+def test_level_marks_are_public_with_a_legacy_alias(dlg):
+    assert dlg.LEVEL_MARKS is dlg._LEVEL_MARKS and set(dlg.LEVEL_MARKS) == {"ok", "warning", "error", "running"}

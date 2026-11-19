@@ -190,6 +190,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "diag.action_update": "Update",
         "diag.action_activate": "Enable",
         "diag.action_plugin_manager": "Plugin manager",
+        "diag.restart": "Run again",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "User profile",
@@ -580,6 +581,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "diag.action_update": "Mettre à jour",
         "diag.action_activate": "Activer",
         "diag.action_plugin_manager": "Gestionnaire d'extensions",
+        "diag.restart": "Relancer",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Profil utilisateur",
@@ -972,6 +974,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "diag.action_update": "Atualizar",
         "diag.action_activate": "Ativar",
         "diag.action_plugin_manager": "Gestor de extensões",
+        "diag.restart": "Executar novamente",
 
         # -- Onboarding: Page 1 - User profile --
         "onboard.user.title": "Perfil do utilizador",
