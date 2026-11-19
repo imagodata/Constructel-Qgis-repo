@@ -61,7 +61,8 @@ def _text_label(text: str) -> QLabel:
 
 class CheckinPage(QWidget):
     """Page « Check-in ». *start_wizard* : lance l'assistant des l'ouverture
-    (premier setup). *email* : e-mail du profil, s'il est connu de l'appelant."""
+    (premier setup). *email* : e-mail du profil, s'il est connu de l'appelant
+    (``HomeSnapshot.email``) ; le login vient de ``HomeSnapshot.login``."""
 
     def __init__(self, snapshot: HomeSnapshot, actions: HomeActions, parent=None,
                  start_wizard: bool = False, email: str = ""):
@@ -72,6 +73,9 @@ class CheckinPage(QWidget):
         self._message = ""                       # retour de la derniere action « Configurer »
         self._wizard = None                      # assistant heberge, None sinon
         self.on_change: Optional[Callable[[], None]] = None
+        # Assistant lance depuis la page (bouton) : la fenetre verrouille ce qui
+        # la redessinerait (langue, connexion) ; sa fin passe par on_change.
+        self.on_wizard_started: Optional[Callable[[], None]] = None
 
         self._layout = QVBoxLayout(self)
         self._layout.addWidget(_section_title(tr("home.checkin_title")))
@@ -90,7 +94,7 @@ class CheckinPage(QWidget):
 
     def _profile_text(self) -> str:
         snapshot = self._snapshot
-        login = snapshot.header.split(SEPARATOR)[0].strip() if snapshot.connected else ""
+        login = snapshot.login.strip() if snapshot.connected else ""
         if not login:
             return tr("home.checkin_profile_offline")
         text = tr("home.checkin_profile", login=login)
@@ -200,6 +204,12 @@ class CheckinPage(QWidget):
         self._wizard_button.hide()
         self._layout.addWidget(wizard, 1)
         wizard.show()
+        if self.on_wizard_started is not None:
+            self.on_wizard_started()
+
+    def hosts_wizard(self) -> bool:
+        """True tant que l'assistant est heberge (lance, pas fini)."""
+        return self._wizard is not None
 
     def _on_wizard_finished(self, _result=0) -> None:
         wizard, self._wizard = self._wizard, None

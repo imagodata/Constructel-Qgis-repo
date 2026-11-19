@@ -21,18 +21,9 @@ if TYPE_CHECKING:  # annotations seulement : modules Qt / reseau
     from .bridge_presets import LayerSelection, UserPreset
     from .bridge_project_init import LoadedCounts
 
-# Cles de message (tr litteral dans bridge_home, K11).
+# Cles de message (tr litteral dans bridge_home_load, K11).
 MESSAGE_CONNECT = "home.connect_to_see"
 MESSAGE_COMMON_ONLY = "home.common_only"
-
-# Obsolete (1.9) : gardes seulement pour que bridge_home.py (1.9) reste
-# importable jusqu'a sa reecriture (tache 5) ; plus utilises par le modele.
-SELECTOR_NONE = "none"
-SELECTOR_LABEL = "label"
-SELECTOR_BUTTONS = "buttons"
-MODE_INIT = "init"
-MODE_ADD = "add"
-MESSAGE_NO_OPERATOR = "home.no_operator"
 
 
 @dataclass(frozen=True)
@@ -60,6 +51,8 @@ class HomeSnapshot:
     project_operators: tuple = ()    # bridge/operator : operateurs de l'identite du projet
     user_presets: tuple = ()     # UserPreset enregistres sur le poste
     checkin: Optional[CheckinState] = None   # pastille du Check-in, None tant que non calcule
+    login: str = ""              # profil du Check-in ; "" hors connexion
+    email: str = ""              # adresse d'audit de la session, "" si inconnue
 
 
 @dataclass(frozen=True)
@@ -161,8 +154,6 @@ def suffix_state(loaded_schemas: Iterable[str], selected_schemas: Iterable[str],
     Au moins deux schemas entre ceux deja charges et ceux choisis : suffixe
     obligatoire, case cochee et grisee (§ 6.4). Sinon choix libre : celui du
     projet s'il en a fait un, a defaut le dernier choix du poste (§ 9.5)."""
-    if isinstance(selected_schemas, str):   # appelant 1.9 : un seul schema
-        selected_schemas = (selected_schemas,)
     if len(set(loaded_schemas) | set(selected_schemas)) >= 2:
         return True, False
     if project_suffix is not None:

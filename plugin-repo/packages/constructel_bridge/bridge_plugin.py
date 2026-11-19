@@ -39,13 +39,12 @@ from qgis.PyQt.QtNetwork import QSslCertificate
 from qgis.PyQt.QtWidgets import (
     QAction,
     QDialog,
-    QInputDialog,
     QMenu,
     QMessageBox,
     QToolButton,
 )
 
-from .i18n import SUPPORTED_LANGUAGES, get_language, init_language, set_language, tr
+from .i18n import SUPPORTED_LANGUAGES, init_language, set_language, tr
 from . import bridge_sketcher
 from .bridge_diagnostic import identity_check, plugin_checks, plugin_summary, plugin_version_from_metadata
 from .bridge_presets import (
@@ -1004,8 +1003,11 @@ class ConstructelBridgePlugin:
         # D2, lui, est marque SUR la couche (SCOPE_LOCK_PROPERTY).
         self._layer_error_slots = {}
         # Bridge 1.9 : session de l'installeur QGIS partagee par les actions
-        # d'une meme execution du Diagnostic (un seul fetch, K12).
+        # d'une meme fenetre d'accueil (Diagnostic, Check-in ; un seul fetch, K12).
         self._diagnostic_session = None
+        self._wizard_new_user = False   # premier setup : assistant pour un nouvel utilisateur
+        self._home_dialog = None        # fenetre d'accueil ouverte (une seule a la fois)
+        self._identity_refresh_pending = False   # assistant avec profil pas encore relu
 
     # =====================================================================
     # QGIS Plugin lifecycle
@@ -1047,26 +1049,30 @@ class ConstructelBridgePlugin:
         self._actions.append(action_retry)
         self._action_retry = action_retry
 
+        # Bridge 2.0 (tache 9) : chaque entree ouvre la fenetre unique sur sa
+        # page. Lambdas : triggered / clicked passent « checked », jamais pris
+        # pour un nom de page.
         action_status = QAction(icon_status, tr("menu.status"), parent)
-        action_status.triggered.connect(self._on_diagnostic)
+        action_status.triggered.connect(lambda _checked=False: self._on_home("diagnostic"))
         self._actions.append(action_status)
 
         action_onboarding = QAction(icon_onboarding, tr("menu.onboarding"), parent)
-        action_onboarding.triggered.connect(self._on_onboarding)
+        action_onboarding.triggered.connect(lambda _checked=False: self._on_home("checkin"))
         self._actions.append(action_onboarding)
 
         action_load_project = QAction(icon_load, tr("menu.load_project"), parent)
-        action_load_project.triggered.connect(self._on_load_project)
+        action_load_project.triggered.connect(lambda _checked=False: self._on_home("projects"))
         self._actions.append(action_load_project)
 
         icon_init = theme("/mActionNewMap.svg")
         action_init_project = QAction(icon_init, tr("menu.init_project"), parent)
         # Bridge 1.9 (D15) : « Accueil · charger les couches » ouvre l'accueil.
-        action_init_project.triggered.connect(self._on_home)
+        action_init_project.triggered.connect(lambda _checked=False: self._on_home("load"))
         self._actions.append(action_init_project)
 
+        # Langue : selecteur FR · EN · PT en bas de la barre laterale (spec § 7).
         action_language = QAction(icon_language, tr("menu.language"), parent)
-        action_language.triggered.connect(self._on_change_language)
+        action_language.triggered.connect(lambda _checked=False: self._on_home("load"))
         self._actions.append(action_language)
 
         # -- Menu Database (sous-menu Constructel Bridge) ---------------------
@@ -1102,7 +1108,7 @@ class ConstructelBridgePlugin:
         self._tool_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         # Bridge 1.9 (O1) : le clic principal ouvre l'ecran d'accueil,
         # connecte ou non.
-        self._tool_button.clicked.connect(self._on_home)
+        self._tool_button.clicked.connect(lambda _checked=False: self._on_home("load"))
 
         self._toolbar_action = self.iface.addToolBarWidget(self._tool_button)
 
@@ -1622,7 +1628,7 @@ class ConstructelBridgePlugin:
             # du premier demarrage reussi) -- relu avant de le relancer.
             if is_new_user or not QgsSettings().value("constructel_bridge/onboarding_done", False):
                 try:
-                    self._run_onboarding(is_new_user)
+                    self._open_first_setup(is_new_user)
                 except Exception as exc:
                     self._log(f"Onboarding failed: {exc}", Qgis.MessageLevel.Warning)
 
@@ -1974,29 +1980,20 @@ class ConstructelBridgePlugin:
     # Language
     # =====================================================================
 
-    def _on_change_language(self):
-        """Dialogue de changement de langue."""
-        items = [f"{LANG_LABELS[l]} ({l})" for l in SUPPORTED_LANGUAGES]
-        current_idx = list(SUPPORTED_LANGUAGES).index(get_language())
-        choice, ok = QInputDialog.getItem(
-            self.iface.mainWindow(),
-            tr("lang.title"),
-            tr("lang.prompt"),
-            items,
-            current_idx,
-            False,
+    def _set_language(self, lang_code: str) -> None:
+        """Langue choisie dans la fenetre d'accueil (FR · EN · PT, spec § 7) :
+        menus, couches et bandeaux suivent ; la fenetre se redessine elle-meme.
+        Code inconnu : rien."""
+        if lang_code not in SUPPORTED_LANGUAGES:
+            return
+        set_language(lang_code)
+        self._refresh_action_labels()
+        # Appliquer les traductions sur toutes les couches
+        bridge_sketcher.apply_all_translations(lang_code)
+        self.iface.messageBar().pushSuccess(
+            "Constructel Bridge",
+            tr("lang.applied", lang=LANG_LABELS.get(lang_code, lang_code)),
         )
-        if ok and choice:
-            lang_code = choice.split("(")[-1].rstrip(")")
-            set_language(lang_code)
-            # Refresh menu labels
-            self._refresh_action_labels()
-            # Appliquer les traductions sur toutes les couches
-            bridge_sketcher.apply_all_translations(lang_code)
-            self.iface.messageBar().pushSuccess(
-                "Constructel Bridge",
-                tr("lang.applied", lang=LANG_LABELS.get(lang_code, lang_code)),
-            )
 
     def _refresh_action_labels(self):
         """Met a jour les labels des actions apres changement de langue."""
@@ -2282,7 +2279,7 @@ class ConstructelBridgePlugin:
             if not onboarding_done or is_new_user:
                 if self._ui_ready:
                     self._pending_onboarding = None  # I-3 : jamais deux fois
-                    self._run_onboarding(is_new_user)
+                    self._open_first_setup(is_new_user)
                 else:
                     # I13 : pas d'assistant modal sous l'ecran de demarrage.
                     self._pending_onboarding = bool(is_new_user or self._pending_onboarding)
@@ -3830,37 +3827,68 @@ class ConstructelBridgePlugin:
     # Ecran d'accueil (spec 2026-11-12 § 6.1, § 6.2, § 6.6 ; tache 9)
     # =====================================================================
 
-    def _on_home(self):
-        """Clic principal et « Accueil · charger les couches » : ecran
-        d'accueil, connecte ou non (O1). Hors connexion, rien ne tente la
-        base : l'instantane ne lit que le projet et le poste."""
+    def _on_home(self, page: str = "load", start_wizard: bool = False):
+        """Fenetre d'accueil (2.0), ouverte sur *page* (« load », « projects »,
+        « checkin », « diagnostic ») : clic principal et toutes les entrees du
+        menu (spec § 7), connecte ou non (O1). Hors connexion, rien ne tente la
+        base : l'instantane ne lit que le projet et le poste. *start_wizard* :
+        la page Check-in lance l'assistant (premier setup). La session de
+        l'installeur QGIS (K12) dure le temps de la fenetre."""
         from .bridge_home import HomeDialog
 
+        if self._home_dialog is not None:
+            # Deja ouverte (appel imbrique pendant une action de la fenetre) :
+            # jamais une seconde fenetre, elle affiche la page demandee.
+            # L'assistant du premier setup passe par _open_first_setup.
+            self._home_dialog.show_page(page)
+            return
         if self._connected and self._operators_unavailable:
             self._log("Liste des operateurs indisponible : chargement des couches Wyre (repli 1.8.4)",
                       Qgis.MessageLevel.Warning)
-        dialog = HomeDialog(self._home_actions(), self.iface.mainWindow())
+        self._diagnostic_session = None   # creee au premier besoin (_run_diagnostic_action)
+        dialog = None
         try:
+            dialog = HomeDialog(self._home_actions(), self.iface.mainWindow(),
+                                page=page, start_wizard=start_wizard)
+            self._home_dialog = dialog
             dialog.exec()
         finally:
-            _delete_dialog(dialog)
+            self._home_dialog = None
+            self._diagnostic_session = None
+            self._wizard_new_user = False
+            # Fenetre fermee pendant l'assistant (sans « finished ») : l'adresse
+            # d'audit est quand meme relue, une fois.
+            self._refresh_identity_after_wizard()
+            if dialog is not None:
+                # La sonde reseau du Diagnostic survit a la fenetre (gardee par
+                # bridge_diagnostic_dialog) ; son resultat tardif est ignore.
+                _delete_dialog(dialog)
+
+    def _open_first_setup(self, is_new_user: bool) -> None:
+        """Ouverture automatique au premier setup (gardes I-3 / I13 chez les
+        appelants) : la fenetre, page Check-in, assistant lance. Fenetre deja
+        ouverte (connexion par son bouton « Se connecter ») : elle bascule sur
+        le Check-in a son redessin, jamais une seconde fenetre."""
+        self._wizard_new_user = bool(is_new_user)
+        if self._home_dialog is not None:
+            self._home_dialog.request_page("checkin", start_wizard=True)
+            return
+        self._on_home("checkin", start_wizard=True)
 
     def _home_actions(self):
         from .bridge_home_model import HomeActions
 
-        # Task 9 : les champs ci-dessous marques « placeholder » n'ont pas encore
-        # de methode du plugin ; l'accueil v2 (tache 5) ne les appelle pas.
         return HomeActions(
             snapshot=self.home_snapshot,
             connect=self._on_connect,
             load=self._load_selection,
-            list_projects=lambda *a: None,                  # Task 9
-            open_project=lambda *a: False,                  # Task 9
-            diagnostic_inputs=lambda *a: ("", [], {}),      # Task 9
-            diagnostic_action=lambda *a: [],                # Task 9
-            configure_sharing=lambda *a: "",                # Task 9
-            make_wizard=lambda *a: None,                    # Task 9
-            set_language=lambda *a: None,                   # Task 9
+            list_projects=self._list_db_projects,
+            open_project=self._open_db_project,
+            diagnostic_inputs=self._diagnostic_inputs,
+            diagnostic_action=self._run_diagnostic_action,
+            configure_sharing=self._configure_sharing,
+            make_wizard=self._make_onboarding_wizard,
+            set_language=self._set_language,
             save_presets=self._save_user_presets,
         )
 
@@ -3906,6 +3934,7 @@ class ConstructelBridgePlugin:
         labels.update({schema: op.label for schema, op in self._operator_registry.items()})
         labels.update({op.schema: op.label for op in operators})
         settings = QgsSettings()
+        summary = self._home_plugin_summary()
         return HomeSnapshot(
             connected=connected,
             header=self._home_header() if connected else "",
@@ -3915,18 +3944,38 @@ class ConstructelBridgePlugin:
             last_selection=self._home_last_selection(settings),
             project_suffix=info["operator_suffix"],
             last_suffix=parse_suffix_flag(settings.value(SUFFIX_SETTINGS_KEY, False)),
-            plugin_summary=self._home_plugin_summary(),
+            plugin_summary=summary,
             plugin_version=PLUGIN_VERSION,
             project_operators=tuple(info["operators"]),
             user_presets=tuple(presets_from_json(settings.value(USER_PRESETS_KEY, ""))),
-            checkin=None,   # Task 9
+            checkin=self._home_checkin_state(summary),
+            login=self._home_login() if connected else "",
+            email=(self._bridge_user_email or "") if connected else "",
         )
 
+    def _home_login(self) -> str:
+        """Login de la session : nominatif, sinon l'utilisateur Bridge."""
+        return (self._pg_login if self._auth_mode == AUTH_MODE_NOMINAL else self._bridge_user) or ""
+
     def _home_header(self) -> str:
-        """« login · perimetre » (en-tete de l'accueil, § 6.1)."""
-        login = self._pg_login if self._auth_mode == AUTH_MODE_NOMINAL else (self._bridge_user or "")
+        """« login · perimetre » (bas de la barre laterale, § 6.1)."""
+        login = self._home_login()
         scope = self._scope_text()
         return f"{login} · {scope}" if login else scope
+
+    def _home_checkin_state(self, summary):
+        """Pastille du Check-in : extensions (*summary*) et partages Constructel,
+        lus sur le poste sans reseau (§ 6.4, § 6.5). Un etat de partage
+        illisible compte comme sans objet : l'accueil s'ouvre quand meme."""
+        from .bridge_home_model import CheckinState
+
+        try:
+            from .bridge_onboarding import filtermate_configured, resource_sharing_configured
+
+            return CheckinState(summary, resource_sharing_configured(), filtermate_configured())
+        except Exception as exc:  # noqa: BLE001 -- pastille, jamais bloquant
+            self._log(f"Accueil : etat des partages illisible ({exc})", Qgis.MessageLevel.Warning)
+            return CheckinState(summary, None, None)
 
     def _home_plugin_summary(self):
         """Resume des extensions recommandees (tuile Check-in, K3), calcule
@@ -3967,6 +4016,10 @@ class ConstructelBridgePlugin:
             first = by_schema.get(plan[0][0]) if plan[0][0] is not None else None
             if first is not None:
                 suffix = self._reorganize_legacy_project(first, suffix)
+            elif plan[0][0] is not None:
+                # Revue tache 2 : jamais en silence (l'entree echouera plus bas).
+                self._log(f"Chargement : operateur {plan[0][0]!r} absent des operateurs proposes, "
+                          f"reorganisation des projets 1.8 sautee", Qgis.MessageLevel.Warning)
             if sum(1 for schema, _keys in plan if schema is not None) > 1:
                 suffix = True  # deux operateurs ou plus : suffixe obligatoire (§ 6.4)
 
@@ -4075,52 +4128,13 @@ class ConstructelBridgePlugin:
     # Charger un projet depuis PostgreSQL
     # =====================================================================
 
-    def _on_load_project(self):
-        """Liste les projets QGIS stockes en base et charge celui choisi."""
-        if not self._connected:
-            QMessageBox.warning(
-                self.iface.mainWindow(),
-                "Constructel Bridge",
-                tr("conn.connect_first"),
-            )
-            return
-
-        # Lister les projets disponibles
-        projects = self._list_db_projects()
-        if projects is None:
-            return  # erreur deja affichee
-        if not projects:
-            QMessageBox.information(
-                self.iface.mainWindow(),
-                tr("project.title"),
-                tr("project.none_found"),
-            )
-            return
-
-        # Dialogue de selection
-        items = [f"{p['name']}  ({p['schema']})" for p in projects]
-        choice, ok = QInputDialog.getItem(
-            self.iface.mainWindow(),
-            tr("project.title"),
-            tr("project.select"),
-            items,
-            0,
-            False,
-        )
-        if not ok or not choice:
-            return
-
-        # Retrouver le projet selectionne
-        idx = items.index(choice)
-        selected = projects[idx]
-        self._open_db_project(selected["schema"], selected["name"])
-
     def _open_db_project(self, schema: str, name: str) -> bool:
         """Charge le projet *name* du schema *schema* (2.0, plan tache 8).
 
-        Partie de ``_on_load_project`` apres le choix : la page Projets de
-        l'accueil et l'entree de menu appellent ici. Retourne True si le
-        projet est charge ; sinon l'erreur est journalisee et affichee."""
+        Bouton « Ouvrir » de la page Projets de l'accueil
+        (``HomeActions.open_project``, apres la fermeture de la fenetre).
+        Retourne True si le projet est charge ; sinon l'erreur est journalisee
+        et affichee."""
         project = QgsProject.instance()
 
         # Charger le projet en passant par _read_and_clean_project()
@@ -4334,14 +4348,22 @@ class ConstructelBridgePlugin:
         return result
 
     def _list_db_projects(self) -> list[dict] | None:
-        """Interroge PostgreSQL pour lister les projets QGIS stockes.
+        """Interroge PostgreSQL pour lister les projets QGIS stockes (page
+        Projets de l'accueil, ``HomeActions.list_projects``).
 
         Cherche la table ``qgis_projects`` dans les schemas des operateurs
-        utilisables et dans public. Un schema en echec est journalise et
-        saute, les autres restent listes (relecture finale M1) ; l'erreur
-        n'est affichee que si aucun projet n'a pu etre liste.
+        utilisables, dans public et dans ``projet`` s'il existe. Un schema en
+        echec est journalise et saute, les autres restent listes (relecture
+        finale M1). Rien de liste et au moins un schema en echec : None (la
+        page dit que la liste est illisible) ; aucune table : [] (« aucun
+        projet »). Jamais de boite : la page est seule a parler (tache 9, un
+        message par echec), le detail est au journal.
         """
-        cur = self._conn.cursor()
+        try:
+            cur = self._conn.cursor()
+        except Exception as exc:  # noqa: BLE001 -- connexion perdue : dit par la page Projets
+            self._log(tr("project.list_error", error=exc), Qgis.MessageLevel.Warning)
+            return None
         try:
             results: list[dict] = []
             errors: list[Exception] = []
@@ -4377,28 +4399,15 @@ class ConstructelBridgePlugin:
 
             if not results:
                 if errors:  # rien de liste et au moins un schema en echec
-                    QMessageBox.warning(
-                        self.iface.mainWindow(),
-                        tr("project.title"),
-                        tr("project.list_error", error=errors[0]),
-                    )
+                    self._log(tr("project.list_error", error=errors[0]), Qgis.MessageLevel.Warning)
                     return None
-                QMessageBox.information(
-                    self.iface.mainWindow(),
-                    tr("project.title"),
-                    tr("project.no_table"),
-                )
-                return None
+                self._log(tr("project.no_table"))
+                return []
 
             return results
 
-        except Exception as exc:
-            self._log(f"list_db_projects error: {exc}", Qgis.MessageLevel.Warning)
-            QMessageBox.warning(
-                self.iface.mainWindow(),
-                tr("project.title"),
-                tr("project.list_error", error=exc),
-            )
+        except Exception as exc:  # noqa: BLE001 -- dit par la page Projets
+            self._log(tr("project.list_error", error=exc), Qgis.MessageLevel.Warning)
             return None
         finally:
             cur.close()
@@ -4407,14 +4416,19 @@ class ConstructelBridgePlugin:
     # Onboarding
     # =====================================================================
 
-    def _run_onboarding(self, is_new_user: bool, include_profile: bool = True):
-        """Ouvre l'assistant. *include_profile* False (check-in hors
-        connexion, spec 2026-11-12 § 6.6) : sans page Profil et sans aucun
-        acces a la base."""
+    def _make_onboarding_wizard(self, parent):
+        """Assistant du Check-in (``HomeActions.make_wizard``), heberge par la
+        page Check-in (*parent*) : plus de fenetre modale. Hors connexion
+        (spec 2026-11-12 § 6.6) : sans page Profil et sans aucun acces a la
+        base. Premier setup : pour un nouvel utilisateur si _open_first_setup
+        l'a demande (une fois). Connecte : l'adresse d'audit est relue a la
+        fin de l'assistant (il peut la modifier)."""
         from .bridge_onboarding import OnboardingWizard
 
+        include_profile = bool(self._connected)
+        is_new_user, self._wizard_new_user = self._wizard_new_user, False
         wizard = OnboardingWizard(
-            parent=self.iface.mainWindow(),
+            parent=parent,
             username=self._bridge_user or "",
             user_id=self._bridge_user_id or "",
             is_new_user=is_new_user,
@@ -4427,14 +4441,33 @@ class ConstructelBridgePlugin:
             email_domain=EMAIL_DOMAIN,
             include_profile=include_profile,
         )
-        wizard.exec()
         if include_profile:
-            self._refresh_audit_identity()
+            self._identity_refresh_pending = True
+            wizard.finished.connect(lambda _result=0: self._refresh_identity_after_wizard())
+        return wizard
 
-    def _on_onboarding(self):
-        # Check-in lancable sans connexion : les plugins recommandes, Resource
-        # Sharing et le resume n'ont pas besoin de la base ; le profil, si.
-        self._run_onboarding(is_new_user=False, include_profile=self._connected)
+    def _refresh_identity_after_wizard(self) -> None:
+        """Relit l'adresse d'audit apres un assistant avec profil : a sa fin,
+        ou a la fermeture de la fenetre qui l'hebergeait ; une seule fois."""
+        if not self._identity_refresh_pending:
+            return
+        self._identity_refresh_pending = False
+        try:
+            self._refresh_audit_identity()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Relecture de l'adresse d'audit impossible : {exc}", Qgis.MessageLevel.Warning)
+
+    def _configure_sharing(self, kind: str) -> str:
+        """« Configurer » de la page Check-in (``HomeActions.configure_sharing``) :
+        meme code que l'assistant ; rend le message a afficher."""
+        from .bridge_onboarding import configure_filtermate_sharing, configure_resource_sharing
+
+        if kind == "resource_sharing":
+            return configure_resource_sharing()
+        if kind == "filtermate":
+            return configure_filtermate_sharing(self._log)
+        self._log(f"Check-in : partage inconnu {kind!r}", Qgis.MessageLevel.Warning)
+        return ""
 
     # =====================================================================
     # Statut et diagnostic (spec 2026-11-12 § 6.6, D13, D15)
@@ -4476,40 +4509,33 @@ class ConstructelBridgePlugin:
         ))
         return checks
 
-    def _on_diagnostic(self) -> None:
-        """Entree « Statut et diagnostic » : utilisable hors connexion. Aucune
-        session PostgreSQL (la sonde serveur s'arrete apres la poignee de
-        main TLS), aucun secret de l'Auth Manager lu."""
-        from .bridge_diagnostic_dialog import DiagnosticDialog
-        from .bridge_onboarding import PluginInstallerSession
-
-        self._diagnostic_session = PluginInstallerSession()
-        dialog = None
+    def _diagnostic_inputs(self) -> tuple:
+        """Page Diagnostic (``HomeActions.diagnostic_inputs``), utilisable hors
+        connexion : (texte d'etat, verifications locales, arguments de la sonde
+        reseau). Aucune session PostgreSQL (la sonde serveur s'arrete apres la
+        poignee de main TLS), aucun secret de l'Auth Manager lu. Listes de
+        QGIS illisibles : aucune verification locale, la page s'ouvre quand meme."""
         try:
-            dialog = DiagnosticDialog(
-                self.iface.mainWindow(),
-                self._status_text(),
-                self._diagnostic_local_checks(),
-                {
-                    "host": DEFAULT_HOST,
-                    "port": DEFAULT_PORT,
-                    "cafile": str(ca_bundle_path(os.path.dirname(__file__))),
-                    "installed_version": PLUGIN_VERSION,
-                },
-                self._run_diagnostic_action,
-            )
-            dialog.exec()
-        finally:
-            self._diagnostic_session = None
-            if dialog is not None:
-                # La tache reseau en cours survit au dialogue (gardee par
-                # bridge_diagnostic_dialog) ; son resultat tardif est ignore.
-                _delete_dialog(dialog)
+            local_checks = self._diagnostic_local_checks()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant pour la fenetre
+            self._log(f"Diagnostic : verifications locales illisibles ({exc})", Qgis.MessageLevel.Warning)
+            local_checks = []
+        return (
+            self._status_text(),
+            local_checks,
+            {
+                "host": DEFAULT_HOST,
+                "port": DEFAULT_PORT,
+                "cafile": str(ca_bundle_path(os.path.dirname(__file__))),
+                "installed_version": PLUGIN_VERSION,
+            },
+        )
 
     def _run_diagnostic_action(self, check) -> list:
-        """Action d'une ligne du Diagnostic, puis verifications locales
-        recalculees. Installation / activation / mise a jour : UNIQUEMENT via
-        install_or_activate_plugin (K12), session partagee par l'execution."""
+        """Action d'une ligne du Diagnostic ou du Check-in, puis verifications
+        locales recalculees. Installation / activation / mise a jour :
+        UNIQUEMENT via install_or_activate_plugin (K12), session creee au
+        premier besoin et partagee jusqu'a la fermeture de la fenetre."""
         if check.action == "plugin_manager":
             self.iface.actionManagePlugins().trigger()
         elif check.action in ("install", "update", "activate"):
@@ -4519,7 +4545,9 @@ class ConstructelBridgePlugin:
                 install_or_activate_plugin,
             )
 
-            session = self._diagnostic_session or PluginInstallerSession()
+            if self._diagnostic_session is None:
+                self._diagnostic_session = PluginInstallerSession()
+            session = self._diagnostic_session
             try:
                 outcome = install_or_activate_plugin(
                     check.target, upgrade=(check.action == "update"), session=session,

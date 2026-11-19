@@ -361,6 +361,17 @@ def test_offline_profile_text(page_mod, monkeypatch):
     assert page_mod.tr("home.checkin_profile_offline") in _texts(page)
 
 
+def test_profile_reads_the_login_field_not_the_header(page_mod, monkeypatch):
+    # Tache 9 : login et e-mail sont des champs de HomeSnapshot (plus de
+    # decoupage de l'en-tete « login · perimetre »).
+    _states(monkeypatch, page_mod, None, None)
+    page = page_mod.CheckinPage(snap(header="Bruxelles · 10 MRO", login="s.ducournau"), _Actions())
+    profile = page._profile_label.text()
+    assert profile == page_mod.tr("home.checkin_profile", login="s.ducournau") and "Bruxelles" not in profile
+    page = page_mod.CheckinPage(snap(login=""), _Actions())
+    assert page._profile_label.text() == page_mod.tr("home.checkin_profile_offline")
+
+
 def test_email_is_shown_when_known(page_mod, monkeypatch):
     _states(monkeypatch, page_mod, None, None)
     page = page_mod.CheckinPage(snap(), _Actions(), email="jdoe@constructel.be")

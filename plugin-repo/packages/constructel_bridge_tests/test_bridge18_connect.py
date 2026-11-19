@@ -930,12 +930,13 @@ def test_onboarding_waits_for_the_interactive_phase(bp18, monkeypatch, tmp_path)
     plugin, _calls, _asked, _cur = _make_plugin(bp18, monkeypatch, tmp_path, [None], stored_ad_pw="ad-pw")
     QgsSettings().remove("constructel_bridge/onboarding_done")
     runs = []
-    plugin._run_onboarding = lambda is_new: runs.append(is_new)
+    # 2.0 (tache 9) : l'assistant s'ouvre dans la fenetre, page Check-in.
+    plugin._on_home = lambda *a, **k: runs.append((a, k, plugin._wizard_new_user))
 
     plugin._auto_connect()
     assert runs == []
     plugin._startup_interactive()
-    assert runs == [False]
+    assert runs == [(("checkin",), {"start_wizard": True}, False)]
 
 
 # --- périmètre (D1/D3) --------------------------------------------------------------
@@ -1017,11 +1018,11 @@ def test_first_run_dialog_success_runs_the_onboarding_once(bp18, monkeypatch, tm
     QgsSettings().remove("constructel_bridge/onboarding_done")
     runs = []
 
-    def _wizard(is_new):
-        runs.append(is_new)
+    def _home(*args, **kwargs):   # 2.0 : fenetre ouverte sur le Check-in, assistant lance
+        runs.append(plugin._wizard_new_user)
         QgsSettings().setValue("constructel_bridge/onboarding_done", True)
 
-    plugin._run_onboarding = _wizard
+    plugin._on_home = _home
 
     _start(plugin)
 

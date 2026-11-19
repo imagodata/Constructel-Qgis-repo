@@ -36,7 +36,7 @@ def snap(**kw):
     base = dict(connected=True, header="jdoe · 10 MRO", operators=(WYRE, ORANGE), counts=Counts({}, 0, 0),
                 labels={"wyre": "Wyre", "orange": "Orange"}, last_selection=None, project_suffix=None,
                 last_suffix=False, plugin_summary=bd.PluginSummary(5, 6, 1), plugin_version="2.0.0",
-                project_operators=())
+                project_operators=(), login="jdoe")
     return hm.HomeSnapshot(**{**base, **kw})
 
 
@@ -167,11 +167,18 @@ def test_checkin_badge_ignores_absent_extensions():
 # --- messages --------------------------------------------------------------------------
 
 
-def test_message_keys_and_deprecated_aliases():
+def test_message_keys_and_no_19_alias_left():
     assert (hm.MESSAGE_CONNECT, hm.MESSAGE_COMMON_ONLY) == ("home.connect_to_see", "home.common_only")
-    # R2 : symboles 1.9 gardes (bridge_home.py reste importable jusqu'a la tache 5).
-    assert {hm.SELECTOR_NONE, hm.SELECTOR_LABEL, hm.SELECTOR_BUTTONS, hm.MODE_INIT, hm.MODE_ADD,
-            hm.MESSAGE_NO_OPERATOR} == {"none", "label", "buttons", "init", "add", "home.no_operator"}
+    # R2 leve en tache 9 : l'ecran 1.9 est reecrit, ses symboles disparaissent.
+    for name in ("SELECTOR_NONE", "SELECTOR_LABEL", "SELECTOR_BUTTONS", "MODE_INIT", "MODE_ADD",
+                 "MESSAGE_NO_OPERATOR"):
+        assert not hasattr(hm, name), name
+
+
+def test_suffix_state_takes_a_sequence_of_schemas_only():
+    # Plus de cale 1.9 (un schema seul en texte) : l'appelant passe une sequence.
+    import inspect
+    assert "isinstance" not in inspect.getsource(hm.suffix_state)
 
 
 # --- forme -----------------------------------------------------------------------------
@@ -183,7 +190,13 @@ def test_snapshot_fields():
     assert names[:12] == ["connected", "header", "operators", "counts", "labels", "last_selection",
                           "project_suffix", "last_suffix", "plugin_summary", "plugin_version",
                           "project_operators", "user_presets"]
-    assert names[-1] == "checkin"
+    assert names[-3:] == ["checkin", "login", "email"]   # tache 9 : profil du Check-in
+
+
+def test_snapshot_login_and_email_default_to_empty():
+    snapshot = hm.HomeSnapshot(connected=False, header="", operators=(), counts=Counts({}, 0, 0), labels={},
+                               last_selection=None, project_suffix=None, last_suffix=False)
+    assert (snapshot.login, snapshot.email) == ("", "")
 
 
 def test_home_actions_fields():
