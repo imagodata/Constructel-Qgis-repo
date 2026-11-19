@@ -45,6 +45,9 @@ OPERATOR_AUTO_KEYS = frozenset({"docs_elements"})
 
 LAST_SELECTION_KEY = "constructel_bridge/last_selection"
 USER_PRESETS_KEY = "constructel_bridge/user_presets"
+# Nom reserve du preset qui memorise le dernier choix (LAST_SELECTION_KEY) :
+# jamais liste dans « Mes presets », jamais un nom de preset utilisateur.
+LAST_SELECTION_NAME = "__last__"
 
 STATE_ON = "on"
 STATE_OFF = "off"

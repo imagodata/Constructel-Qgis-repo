@@ -95,6 +95,19 @@ def _layer_label(entry: tuple) -> str:
     return entry[6]
 
 
+def step_number_label(number: str) -> QLabel:
+    """Numero d'etape (1 / 2 / 3), hors traduction, devant le titre."""
+    label = QLabel(number)
+    label.setStyleSheet("font-weight: bold;")
+    return label
+
+
+def step_title_label(title: str) -> QLabel:
+    label = QLabel(title)
+    label.setStyleSheet("font-weight: bold;")
+    return label
+
+
 class _Group:
     """Groupe de l'arbre : tuile, operateur (None si commune) et ses couches
     encore a charger (les couches deja chargees ne comptent pas)."""
@@ -156,19 +169,26 @@ class LayerSelectionWidget(QWidget):
                 self._tiles[tile] = button
             layout.addLayout(tiles)
 
-        columns = QHBoxLayout()
-        side_layers = QVBoxLayout()
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
         self._tree.itemChanged.connect(self._on_item_changed)
-        side_layers.addWidget(self._tree)
+        # Etape 3 « Couches » : l'entete porte aussi la case « Afficher toutes les couches ».
+        header = QHBoxLayout()
+        header.addWidget(step_number_label("3"))
+        header.addWidget(step_title_label(tr("home.step_layers")))
+        header.addStretch()
         self._chk_expert = QCheckBox(tr("home.show_expert"))
         self._chk_expert.toggled.connect(self.set_show_expert)
-        side_layers.addWidget(self._chk_expert)
-        columns.addLayout(side_layers, 3)
+        header.addWidget(self._chk_expert)
+        layout.addLayout(header)
+        layout.addWidget(self._tree)
 
-        side = QVBoxLayout()
+        # Fonds de plan et styles : un bloc a part, que la page place dans sa
+        # ligne « Options » repliable (options_panel). Sans parent : jamais
+        # affiche tant que personne ne le place dans une mise en page.
+        self._options = QWidget()
+        options_layout = QVBoxLayout(self._options)
         basemap_box = QGroupBox(tr("init.group_basemaps"))
         basemap_layout = QVBoxLayout(basemap_box)
         self._basemap_tree = QTreeWidget()
@@ -177,14 +197,11 @@ class LayerSelectionWidget(QWidget):
         self._fill_basemaps()
         self._basemap_tree.itemChanged.connect(lambda _item, _column=0: self._notify())
         basemap_layout.addWidget(self._basemap_tree)
-        side.addWidget(basemap_box)
+        options_layout.addWidget(basemap_box)
         self._chk_styles = QCheckBox(tr("init.apply_styles"))
         self._chk_styles.setChecked(True)
         self._chk_styles.toggled.connect(lambda _checked=False: self._notify())
-        side.addWidget(self._chk_styles)
-        side.addStretch()
-        columns.addLayout(side, 2)
-        layout.addLayout(columns)
+        options_layout.addWidget(self._chk_styles)
 
     def _fill_basemaps(self):
         basemap_groups = {}
@@ -452,6 +469,13 @@ class LayerSelectionWidget(QWidget):
             self._tree.blockSignals(blocked)
 
     # -- fonds de plan et styles (inchanges depuis 1.9) --------------------------------------
+
+    def options_panel(self) -> QWidget:
+        """Bloc « fonds de plan + appliquer les styles », a placer par
+        l'appelant dans sa propre mise en page (ligne « Options » de la page
+        de chargement). ``selected_basemaps`` / ``want_styles`` le lisent
+        toujours ici."""
+        return self._options
 
     def selected_basemaps(self) -> set:
         """Cles des fonds de plan coches, sans ceux deja charges."""

@@ -40,6 +40,13 @@ class _W:
         self.deleted = False
         self.tooltip = ""
         self.signals_blocked = False
+        self.visible = True     # setVisible ; ``hidden`` ne suit que hide()
+
+    def setVisible(self, visible):
+        self.visible = bool(visible)
+
+    def isVisible(self):
+        return self.visible
 
     def setEnabled(self, enabled):
         self.enabled = bool(enabled)
@@ -111,6 +118,8 @@ class _CheckBox(_Button):
 
 class _ToolButton(_Button):
     """QToolButton : bouton (tuile) avec menu optionnel."""
+
+    ToolButtonPopupMode = types.SimpleNamespace(InstantPopup=2)
 
     def __init__(self, text="", *args):
         super().__init__(text, *args)

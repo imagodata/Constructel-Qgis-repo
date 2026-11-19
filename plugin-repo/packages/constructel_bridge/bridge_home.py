@@ -31,6 +31,8 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from .bridge_home_load import SEPARATOR as _SEP
+from .bridge_home_load import summary_text  # noqa: F401  (deplace en 2.0, reste importable d'ici)
 from .bridge_home_model import (
     MODE_ADD,
     SELECTOR_BUTTONS,
@@ -51,20 +53,8 @@ _MESSAGES = {
     "home.no_operator": lambda: tr("home.no_operator"),
     "home.common_only": lambda: tr("home.common_only"),   # 2.0 : lue par le modele v2 (tache 5)
 }
-_SEP = " · "
 _CONNECTED_COLOR = "#2e7d32"
 _OFFLINE_COLOR = "#9e9e9e"
-
-
-def summary_text(snapshot: HomeSnapshot, state: HomeState) -> str:
-    """« ✓ Wyre · 14 couches · 3 fonds de plan » : chaque operateur charge,
-    les couches communes, les fonds de plan ; jamais le modele (D11)."""
-    parts = [tr("home.loaded_operator", operator=label, count=count) for label, count in state.summary]
-    if snapshot.counts.common:
-        parts.append(tr("home.loaded_common", count=snapshot.counts.common))
-    if snapshot.counts.basemaps:
-        parts.append(tr("home.loaded_basemaps", count=snapshot.counts.basemaps))
-    return _SEP.join(parts)
 
 
 def checkin_subtitle(summary) -> str:
