@@ -47,7 +47,7 @@ def test_catchup_key_name(bp18):
 def test_update_no_longer_clears_onboarding_done(bp18, monkeypatch):
     plugin, _iface, settings = _gui(bp18, monkeypatch, stored_version="1.9.0", done=True)
     assert settings.value(DONE, False) is True
-    assert settings.value(VERSION) == "2.0.0" == bp18.PLUGIN_VERSION
+    assert settings.value(VERSION) == bp18.PLUGIN_VERSION
     plugin.unload()
 
 
@@ -63,14 +63,14 @@ def test_catchup_marks_setup_done_once_for_existing_install(bp18, monkeypatch):
     plugin2._get_qgis_username = lambda: "JDoe"
     plugin2.initGui()
     assert settings.value(DONE, False) is False
-    assert settings.value(VERSION) == "2.0.0"
+    assert settings.value(VERSION) == bp18.PLUGIN_VERSION
     plugin2.unload()
 
 
 def test_fresh_install_still_gets_the_wizard(bp18, monkeypatch):
     plugin, iface, settings = _gui(bp18, monkeypatch)                 # aucune plugin_version
     assert settings.value(DONE, None) is None                         # pas de rattrapage
-    assert settings.value(VERSION) == "2.0.0"
+    assert settings.value(VERSION) == bp18.PLUGIN_VERSION
     assert settings.value(bp18.ONBOARDING_CATCHUP_KEY, False) is True    # joue une fois, sans effet
     opened = []
     plugin._on_home = lambda *a, **k: opened.append((a, k))
@@ -97,7 +97,7 @@ def test_catchup_survives_a_rollback_to_1_9(bp18, monkeypatch):
     plugin2._get_qgis_username = lambda: "JDoe"
     plugin2.initGui()
     assert settings.value(DONE, False) is True
-    assert settings.value(VERSION) == "2.0.0"
+    assert settings.value(VERSION) == bp18.PLUGIN_VERSION
     opened = []
     plugin2._on_home = lambda *a, **k: opened.append((a, k))
     iface.initializationCompleted.emit()

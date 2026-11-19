@@ -370,6 +370,12 @@ class _Tree(_W):
 
 
 class _Item:
+    # Comme QTreeWidgetItem sous PyQt : non hachable (pas de cle de dict ni d'element de set).
+    __hash__ = None
+
+    def __eq__(self, other):
+        return self is other
+
     def __init__(self, parent, texts):
         self._text = texts[0]
         self.children = []

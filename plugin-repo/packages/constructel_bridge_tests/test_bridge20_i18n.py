@@ -119,16 +119,24 @@ def test_portuguese_common_only_text_is_accented():
         "Nenhum operador disponível: só as camadas comuns podem ser carregadas.")
 
 
-def test_metadata_is_200():
+def test_metadata_is_201():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    assert "\nversion=2.0.0\n" in meta and "\nchangelog=v2.0.0 - " in meta
-    # L'entree precedente reste dans l'historique, en retrait comme les autres.
-    assert meta.index("\nchangelog=v2.0.0 - ") < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - ")
+    assert "\nversion=2.0.1\n" in meta and "\nchangelog=v2.0.1 - " in meta
+    # Les entrees precedentes restent dans l'historique, en retrait comme les autres.
+    assert (meta.index("\nchangelog=v2.0.1 - ") < meta.index("\n    v2.0.0 - ")
+            < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - "))
+
+
+def test_201_changelog_is_ascii_and_names_the_fix():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    entry = meta[meta.index("changelog=v2.0.1 - "):meta.index("\n    v2.0.0 - ")]
+    assert entry.isascii() and "\n" not in entry
+    assert "qtreewidgetitem" in entry.lower() and "vrais widgets qt" in entry.lower()
 
 
 def test_200_changelog_is_ascii_and_mentions_the_delivered_features():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    start = meta.index("changelog=v2.0.0 - ")
+    start = meta.index("v2.0.0 - ")
     entry = meta[start:meta.index("\n    v1.9.0 - ")]
     assert entry.isascii(), [c for c in entry if ord(c) > 127]
     assert "\n" not in entry

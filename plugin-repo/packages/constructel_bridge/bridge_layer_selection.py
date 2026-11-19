@@ -140,7 +140,7 @@ class LayerSelectionWidget(QWidget):
         self._tiles: Dict[str, QToolButton] = {}
         self._row_buttons: Dict[str, Tuple[QPushButton, QPushButton]] = {}
         self._groups: list = []
-        self._group_of: Dict[object, _Group] = {}
+        self._group_of: Dict[int, _Group] = {}  # id(element de groupe) -> groupe
         self._chips: list = []          # pastilles des operateurs coches (rangee « Par operateur »)
         # « Aucun » : choix des tuiles operateur mis de cote, repris quand un
         # operateur est de nouveau coche (§ 7) ; None sinon.
@@ -296,7 +296,9 @@ class LayerSelectionWidget(QWidget):
             group_item.setDisabled(True)
         group_item.setExpanded(bool(loadable))     # groupe entierement charge : replie
         self._groups.append(group)
-        self._group_of[group_item] = group
+        # Cle id() : QTreeWidgetItem n'est pas hachable sous PyQt (2.0.1) ;
+        # le dictionnaire est vide a chaque reconstruction de l'arbre.
+        self._group_of[id(group_item)] = group
 
     def _refresh(self):
         """Legendes et cases des groupes, texte et etat des tuiles. Appelant :
@@ -353,7 +355,7 @@ class LayerSelectionWidget(QWidget):
     def _on_item_changed(self, item, _column=0):
         """Case cochee par l'utilisateur : une case de groupe se propage a ses
         couches cochables."""
-        group = self._group_of.get(item)
+        group = self._group_of.get(id(item))
 
         def change():
             if group is not None:
