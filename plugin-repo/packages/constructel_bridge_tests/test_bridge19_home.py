@@ -217,13 +217,9 @@ def test_home_texts_in_three_languages():
     assert TRANSLATIONS["pt"]["menu.init_project"] == "Início · carregar camadas"
     assert fr["home.connect_to_see"] == "Connecte-toi pour voir les opérateurs auxquels tu as accès"
     assert fr["home.suffix_checkbox"] == "Ajouter le nom de l'opérateur aux couches"
-    assert fr["home.btn_init"].format(operator="Wyre") == "Initialiser · Wyre"
-    assert fr["home.btn_add"].format(operator="Orange") == "Ajouter les couches · Orange"
     # D11 : le resume ne nomme pas le modele.
     assert " · ".join([fr["home.loaded_operator"].format(operator="Wyre", count=14),
                        fr["home.loaded_basemaps"].format(count=3)]) == "✓ Wyre · 14 couches · 3 fonds de plan"
-    assert fr["home.tile_checkin_sub"].format(active=5, total=6) + " · " + fr["home.tile_checkin_updates"].format(
-        count=1) == "extensions 5/6 · 1 à mettre à jour"
 
 
 # --- cote plugin ------------------------------------------------------------------------

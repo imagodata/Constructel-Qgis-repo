@@ -1,4 +1,4 @@
-"""Bridge 1.9, tache 10 : revue i18n, metadata 1.9.0.
+"""Bridge 1.9, tache 10 : revue i18n, metadata 1.9.0 (liste alignee en tache 10 de la 2.0).
 
 - toutes les cles ajoutees par le chantier (home.*, diag.*, profil hors
   connexion) existent en FR / EN / PT ;
@@ -7,7 +7,7 @@
   oublie leverait KeyError a l'affichage) ;
 - aucune cle orpheline nouvelle (les orphelines heritees sont listees) ;
 - le groupe « Commun » est traduit ;
-- version et changelog 1.9.0.
+- l'entree 1.9.0 du changelog (la version courante est verifiee par test_bridge20_i18n).
 """
 from __future__ import annotations
 
@@ -34,12 +34,9 @@ TRANSLATIONS = _load("bridge19_translations", "i18n/translations.py").TRANSLATIO
 GROUP_NAMES = _load("bridge19_layer_translations", "i18n/layer_translations.py").GROUP_NAMES
 
 KEYS_19 = [
-    "home.no_operator", "home.reorganized", "home.not_connected", "home.connect", "home.tile_load",
-    "home.operator_label", "home.btn_init", "home.btn_add", "home.loaded_title", "home.loaded_operator",
+    "home.reorganized", "home.not_connected", "home.connect", "home.loaded_title", "home.loaded_operator",
     "home.loaded_basemaps", "home.connect_to_see", "home.suffix_checkbox",
-    "home.tile_project", "home.tile_project_sub", "home.tile_checkin", "home.tile_checkin_sub",
-    "home.tile_checkin_updates", "home.tile_diagnostic", "home.tile_diagnostic_sub",
-    "home.tile_language", "home.tile_language_sub", "onboard.action.profile_offline",
+    "onboard.action.profile_offline",
     "diag.title", "diag.running", "diag.section_connection", "diag.version_ok", "diag.version_update",
     "diag.version_unknown", "diag.plugin_ok", "diag.plugin_update", "diag.plugin_inactive",
     "diag.plugin_missing", "diag.server_ok", "diag.server_unreachable", "diag.server_tls_refused",
@@ -63,20 +60,16 @@ LEGACY_ORPHANS = {
     "dialog.role", "dialog.save_password", "init.confirm", "init.confirm_title",
     "lang.restart", "pg.already_configured",
 }
-# Orphelines depuis la tache 9 (2.0) : ecran 1.9 (tuiles, selecteur, libelles
-# « Initialiser / Ajouter »), QInputDialog de la langue et des projets, avis
-# « connecte-toi d'abord » de l'ancien _on_load_project. Gardees en attendant leur
-# retrait en tache 10 (plan 2026-11-18 : cles, KEYS_19 et cette liste ensemble).
-ORPHANS_UNTIL_T10 = {
-    "conn.connect_first", "home.btn_add", "home.btn_init", "home.no_operator", "home.operator_label",
-    "home.tile_checkin", "home.tile_checkin_sub", "home.tile_checkin_updates", "home.tile_diagnostic",
-    "home.tile_diagnostic_sub", "home.tile_language", "home.tile_language_sub", "home.tile_load",
-    "home.tile_project", "home.tile_project_sub", "init.btn_add", "init.btn_init", "lang.prompt",
-    "lang.title", "project.select",
-}
 DYNAMIC_PREFIXES = ("mtls.",)
 # Cles retirees par la revue : plus aucun appelant depuis l'accueil (init.*) et le Diagnostic (status.title).
-REMOVED_KEYS = ["status.title", "init.title", "init.title_add"]
+REMOVED_KEYS = ["status.title", "init.title", "init.title_add"] + sorted(
+    # Retirees en tache 10 (2.0) : ecran 1.9 (tuiles, selecteur, Initialiser / Ajouter), QInputDialog
+    # de la langue et des projets, avis « connecte-toi d'abord » de l'ancien chargement de projet.
+    {"conn.connect_first", "home.btn_add", "home.btn_init", "home.no_operator", "home.operator_label",
+     "home.tile_checkin", "home.tile_checkin_sub", "home.tile_checkin_updates", "home.tile_diagnostic",
+     "home.tile_diagnostic_sub", "home.tile_language", "home.tile_language_sub", "home.tile_load",
+     "home.tile_project", "home.tile_project_sub", "init.btn_add", "init.btn_init", "lang.prompt",
+     "lang.title", "project.select"})
 
 
 def _py_files():
@@ -136,20 +129,20 @@ def test_no_new_orphan_key():
         key for key in TRANSLATIONS["en"]
         if f'"{key}"' not in text and f"'{key}'" not in text and not key.startswith(DYNAMIC_PREFIXES)
     }
-    expected = LEGACY_ORPHANS | ORPHANS_UNTIL_T10
-    assert orphans == expected, {"new": orphans - expected, "now_used": expected - orphans}
+    assert orphans == LEGACY_ORPHANS, {"new": orphans - LEGACY_ORPHANS, "now_used": LEGACY_ORPHANS - orphans}
 
 
-def test_metadata_is_190():
+def test_metadata_keeps_the_190_entry():
+    # Depuis la 2.0 la version courante est 2.0.0 (test_bridge20_i18n) : l'entree 1.9.0 reste
+    # dans l'historique, en retrait comme les autres, avant la 1.8.4.
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    assert "\nversion=1.9.0\n" in meta and "\nchangelog=v1.9.0 - " in meta
-    # L'entree precedente reste dans l'historique, en retrait comme les autres.
-    assert "\n    v1.8.4 - " in meta
+    assert "\n    v1.9.0 - " in meta and "\n    v1.8.4 - " in meta
+    assert meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - ")
 
 
 def test_190_changelog_is_ascii_and_mentions_the_delivered_features():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    start = meta.index("changelog=v1.9.0 - ")
+    start = meta.index("\n    v1.9.0 - ") + 1
     entry = meta[start:meta.index("\n    v1.8.4 - ")]
     assert entry.isascii(), [c for c in entry if ord(c) > 127]
     assert "\n" not in entry
@@ -165,7 +158,7 @@ def test_190_changelog_final_review_wording():
     # noms de couches sont traduits, comme en 1.8 : « ne les modifie jamais »
     # etait inexact).
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    entry = meta[meta.index("changelog=v1.9.0 - "):meta.index("\n    v1.8.4 - ")]
+    entry = meta[meta.index("\n    v1.9.0 - ") + 1:meta.index("\n    v1.8.4 - ")]
     lowered = entry.lower()
     assert "python 3.9" in lowered and "qgis 3.28" in lowered
     assert "str | none" in lowered and "from __future__" in lowered and "typeerror" in lowered
