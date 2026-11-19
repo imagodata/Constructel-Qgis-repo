@@ -1056,6 +1056,7 @@ class _W:
         self.deleted = False
         self.layout = None
         self.style = ""
+        self.destroyed = _Sig()
 
     def setEnabled(self, enabled):
         self.enabled = bool(enabled)
@@ -1210,8 +1211,14 @@ def test_task_on_finished_is_wired_to_the_panel(dlg):
 def test_restart_button_is_labelled_and_wired(dlg):
     panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
     assert panel._restart_button.text() == dlg.tr("diag.restart")
+    # Desactive tant que la sonde tourne (pas de sondes empilees), reactive a sa fin.
+    assert panel._restart_button.enabled is False
+    dlg.tasks[0].on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert panel._restart_button.enabled is True
     panel._restart_button.clicked.emit(False)
-    assert len(dlg.tasks) == 2
+    assert len(dlg.tasks) == 2 and panel._restart_button.enabled is False
+    dlg.tasks[1].on_finished(Exception("Task canceled"))   # echec : bouton reactive aussi
+    assert panel._restart_button.enabled is True
 
 
 def test_restart_runs_a_new_network_task(dlg):
@@ -1382,6 +1389,51 @@ def test_late_network_result_after_close_is_ignored(dlg):
     task.on_finished(Exception("Task canceled"))
 
     assert task not in dlg._PENDING_TASKS
+
+
+def test_late_result_after_the_panel_is_destroyed_without_close_panel(dlg):
+    # Panneau heberge detruit sans close_panel() (fenetre parente fermee,
+    # page remplacee) : le signal destroyed suffit a ignorer le resultat tardif.
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    task = dlg.tasks[0]
+    panel.destroyed.emit()
+    for attr in ("_layout", "_rows", "_restart_button"):
+        setattr(panel, attr, _Untouchable())
+    panel.setEnabled = panel.hide = panel.deleteLater = _Untouchable()
+
+    task.on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+
+    assert task not in dlg._PENDING_TASKS
+    panel.restart()   # un panneau detruit ne se rouvre pas
+    assert len(dlg.tasks) == 1
+
+
+def test_deleted_cpp_object_during_render_marks_the_panel_closed(dlg):
+    # Filet : detruit sans signal observe, le rendu leve RuntimeError.
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+
+    class _Deleted:
+        def replaceWidget(self, *_a):
+            raise RuntimeError("wrapped C/C++ object of type DiagnosticPanel has been deleted")
+
+    panel._layout = _Deleted()
+    dlg.tasks[0].on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert dlg.tasks[0] not in dlg._PENDING_TASKS
+    panel.restart()
+    assert len(dlg.tasks) == 1
+
+
+def test_restart_after_close_panel_reopens_the_panel(dlg):
+    panel = dlg.DiagnosticPanel("", LOCAL, NET_ARGS, lambda c: LOCAL)
+    panel.close_panel()
+    dlg.tasks[0].on_finished(None, [bd.version_check("1.9.0", "1.9.0"), bd.server_check("h", 1, "ok", "")])
+    assert _rows(panel)[0][1] == dlg.tr("diag.running")   # ferme : ignore
+
+    panel.restart()
+
+    assert len(dlg.tasks) == 2
+    dlg.tasks[1].on_finished(None, [bd.version_check("1.9.0", "1.9.1"), bd.server_check("h", 1, "ok", "")])
+    assert _rows(panel)[0][1] == dlg.tr("diag.version_update", installed="1.9.0", latest="1.9.1")
 
 
 def test_wrapper_dialog_hosts_the_panel_and_closes_it(dlg):

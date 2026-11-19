@@ -122,6 +122,13 @@ class DiagnosticPanel(QWidget):
         self._closed = False
         self._busy = False  # action en cours (boucle d'evenements imbriquee possible)
         self._task = None
+        # Drapeau de destruction hors de l'objet C++ : un panneau heberge peut
+        # etre detruit sans close_panel() (fenetre parente fermee, page
+        # remplacee, decharge du plugin). La fermeture ne capture que ce dict
+        # (jamais self), lu par le chemin du resultat tardif.
+        state = {"destroyed": False}
+        self._state = state
+        self.destroyed.connect(lambda *_args: state.update(destroyed=True))
 
         self._layout = QVBoxLayout(self)
         title = QLabel(tr("diag.section_connection"))
@@ -135,6 +142,7 @@ class DiagnosticPanel(QWidget):
         self._layout.addWidget(self._rows)
         self._restart_button = QPushButton(tr("diag.restart"))
         self._restart_button.clicked.connect(lambda _checked=False: self.restart())
+        self._restart_button.setEnabled(False)  # reactive a la fin de la sonde reseau
         self._layout.addWidget(self._restart_button)
 
         self._start_network_task()
@@ -205,8 +213,8 @@ class DiagnosticPanel(QWidget):
         (peut-etre deja detruit) : seuls des attributs Python sont lus."""
         task = self._task if task is None else task
         _release_task(task)
-        if self._closed or task is not self._task:
-            return  # panneau ferme, ou tache remplacee par restart()
+        if self._state["destroyed"] or self._closed or task is not self._task:
+            return  # panneau detruit ou ferme, ou tache remplacee par restart()
         if exception is not None or not result:
             error = str(exception) if exception is not None else "no result"
             args = self._network_args
@@ -218,16 +226,31 @@ class DiagnosticPanel(QWidget):
         # Pendant une action (fetch de l'installeur, gestionnaire d'extensions :
         # boucle d'evenements imbriquee), ne pas detruire les lignes dont le
         # bouton est en cours de clic : _run_action redessine a la fin.
-        if not self._busy:
-            self._render()
+        try:
+            if not self._busy:
+                self._render()
+            self._restart_button.setEnabled(True)
+        except RuntimeError:
+            # « wrapped C/C++ object has been deleted » : panneau detruit sans
+            # destroyed ni close_panel(). Plus rien a afficher, ni a rouvrir.
+            self._state["destroyed"] = True
+            self._closed = True
 
     def restart(self) -> None:
         """Relance la sonde reseau : lignes reseau repassees a « ... », nouvelle
         tache. Le resultat de la tache precedente, s'il arrive, est ignore."""
+        if self._state["destroyed"]:
+            return  # un panneau detruit ne se rouvre pas
         self._closed = False
         self._network_checks = None
-        if not self._busy:  # pendant une action, _run_action redessine a la fin
-            self._render()
+        try:
+            if not self._busy:  # pendant une action, _run_action redessine a la fin
+                self._render()
+            self._restart_button.setEnabled(False)  # reactive a la fin de la sonde
+        except RuntimeError:
+            self._state["destroyed"] = True
+            self._closed = True
+            return
         self._start_network_task()
 
     def close_panel(self) -> None:
