@@ -1,5 +1,5 @@
 <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering">
+<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering" hasScaleBasedVisibilityFlag="1" minScale="100000" maxScale="1" labelsEnabled="0">
   <!--
     osiris_deviations.qml - Lignes de deviation routiere OSIRIS
     Couche source: osiris.deviations
@@ -40,8 +40,8 @@
       </symbol>
     </symbols>
   </renderer-v2>
-  <rendering>
-    <minScale>100000</minScale>
-    <maxScale>1</maxScale>
-  </rendering>
+  <!-- Visibilite par echelle : attributs de <qgis> (hasScaleBasedVisibilityFlag /
+       minScale / maxScale)  seule forme lue par QGIS. L'ancien bloc
+       <rendering><minScale>100000</minScale></rendering> etait ignore (couche
+       visible a toutes les echelles). Seuil inchange : 1:100 000. -->
 </qgis>

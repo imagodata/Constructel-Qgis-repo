@@ -1,21 +1,24 @@
 <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering">
+<qgis version="3.28" styleCategories="Symbology|Labeling|Rendering" hasScaleBasedVisibilityFlag="1" minScale="100000" maxScale="1" labelsEnabled="0">
   <!--
     osiris_chantiers_autorises.qml - Style QGIS pour les chantiers autorises OSIRIS
     Couche source: osiris.v_chantiers_proches ou osiris.chantiers_autorises
 
-    Categorise par procedure (OSIRIS, PCA, OSIRIS_LIGHT, URGENCE).
+    Categorise par procedure, sur les codes reellement importes d'OSIRIS
+    (A, E, PCA, CA ; constat prod du 18/11/2026). Libelles : docs/integrations/OSIRIS_BRUSSELS.md §4.1-4.2.
+    Les anciennes categories OSIRIS / OSIRIS_LIGHT / URGENCE etaient le
+    vocabulaire des dossiers Farois (chantier.*), jamais present ici.
   -->
   <renderer-v2 type="categorizedSymbol" attr="procedure" symbollevels="0" enableorderby="0">
     <categories>
-      <category value="OSIRIS" symbol="0" label="OSIRIS (standard)" render="true"/>
-      <category value="PCA" symbol="1" label="PCA (pre-chantier)" render="true"/>
-      <category value="OSIRIS_LIGHT" symbol="2" label="OSIRIS Light (simplifie)" render="true"/>
-      <category value="URGENCE" symbol="3" label="Urgence" render="true"/>
-      <category value="" symbol="4" label="Autre" render="true"/>
+      <category value="A" symbol="0" label="A — Autorisation" render="true"/>
+      <category value="E" symbol="2" label="E — Exemption (OSIRIS Light)" render="true"/>
+      <category value="PCA" symbol="1" label="PCA — Programmation + CA" render="true"/>
+      <category value="CA" symbol="3" label="CA — Coordination + Autorisation" render="true"/>
+      <category value="" symbol="4" label="Autre / non renseigné" render="true"/>
     </categories>
     <symbols>
-      <!-- OSIRIS: vert -->
+      <!-- A (autorisation): vert -->
       <symbol type="fill" name="0" alpha="0.5">
         <layer class="SimpleFill" enabled="1">
           <Option type="Map">
@@ -39,7 +42,7 @@
           </Option>
         </layer>
       </symbol>
-      <!-- OSIRIS_LIGHT: jaune-vert -->
+      <!-- E (exemption, OSIRIS Light): jaune-vert -->
       <symbol type="fill" name="2" alpha="0.5">
         <layer class="SimpleFill" enabled="1">
           <Option type="Map">
@@ -51,12 +54,12 @@
           </Option>
         </layer>
       </symbol>
-      <!-- URGENCE: rouge-orange -->
+      <!-- CA (coordination + autorisation): violet -->
       <symbol type="fill" name="3" alpha="0.5">
         <layer class="SimpleFill" enabled="1">
           <Option type="Map">
-            <Option type="QString" name="color" value="255,80,30,80"/>
-            <Option type="QString" name="outline_color" value="220,50,20,200"/>
+            <Option type="QString" name="color" value="150,80,190,70"/>
+            <Option type="QString" name="outline_color" value="110,50,150,200"/>
             <Option type="QString" name="outline_width" value="0.6"/>
             <Option type="QString" name="outline_width_unit" value="MM"/>
             <Option type="QString" name="style" value="solid"/>
@@ -78,21 +81,9 @@
     </symbols>
   </renderer-v2>
 
-  <!-- Labels -->
-  <labeling type="simple">
-    <settings>
-      <text-style fontFamily="Noto Sans" fontSize="7" fontWeight="50" textColor="40,40,40,255"
-                  fieldName="impetrant" isExpression="0">
-      </text-style>
-      <text-buffer bufferDraw="1" bufferSize="0.8" bufferColor="255,255,255,200"/>
-      <placement placement="0" dist="0"/>
-      <rendering scaleMin="1" scaleMax="15000" scaleVisibility="1"/>
-    </settings>
-  </labeling>
-
-  <rendering>
-    <minScale>100000</minScale>
-    <maxScale>1</maxScale>
-  </rendering>
+  <!-- Visibilite par echelle : attributs de <qgis> (hasScaleBasedVisibilityFlag /
+       minScale / maxScale)  seule forme lue par QGIS. L'ancien bloc
+       <rendering><minScale>100000</minScale></rendering> etait ignore (couche
+       visible a toutes les echelles). Seuil inchange : 1:100 000. -->
 
 </qgis>
