@@ -14,7 +14,7 @@
     <rules key="{root}">
 
       <rule key="{conf-bloquant}" filter="&quot;severite&quot; = 'BLOQUANT'" label="BLOQUANT — gel actif" symbol="0"
-            description="Zone gelee active, travaux WYRE bloques">
+            description="Zone gelee active, travaux reseau bloques">
       </rule>
 
       <rule key="{conf-risque}" filter="&quot;severite&quot; = 'A_RISQUE'" label="A RISQUE — chevauchement temporel" symbol="1"
