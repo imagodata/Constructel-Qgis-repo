@@ -1,4 +1,4 @@
-"""Fumee Qt reel (2.0.1) : la fenetre d'accueil construite avec de VRAIS
+"""Fumee Qt reel (2.0.1, versions 2.0.2) : la fenetre d'accueil construite avec de VRAIS
 widgets PyQt5 (rendu hors ecran), sur les stubs qgis.core habituels.
 
 Les tests pytest tournent sur des doublures de widgets ; elles ne voient pas
@@ -89,7 +89,7 @@ def snapshot(connected=True, operators=(WYRE, ORANGE)):
         connected=connected, header="a.leroy · 10 MRO" if connected else "", operators=operators,
         counts=LoadedCounts({}, 0, 0), labels={"wyre": "Wyre", "orange": "Orange"},
         project_suffix=None, last_suffix=False, plugin_summary=PluginSummary(5, 6, 1),
-        plugin_version="2.0.1", project_operators=(), last_selection=None, user_presets=(),
+        plugin_version="2.0.2", project_operators=(), last_selection=None, user_presets=(),
         checkin=hm.CheckinState(PluginSummary(5, 6, 1), True, False),
         login="a.leroy" if connected else "", email="a.leroy@example.invalid" if connected else "",
     )
@@ -107,7 +107,7 @@ def actions():
                                {"name": "Gofiber", "schema": "projet", "description": "", "updated": ""}],
         open_project=lambda schema, name: LOG.append(("open", schema, name)) or True,
         diagnostic_inputs=lambda: ("connecte (essai)", [], {"host": "127.0.0.1", "port": 9, "cafile": "",
-                                                           "installed_version": "2.0.1"}),
+                                                           "installed_version": "2.0.2"}),
         diagnostic_action=lambda check: [],
         configure_sharing=lambda kind: LOG.append(("configure", kind)) or "ok",
         make_wizard=lambda parent: QtWidgets.QWizard(parent),

@@ -319,3 +319,22 @@ class QHBoxLayout(_Layout):
 
 class QVBoxLayout(_Layout):
     pass
+
+
+class QFrame(_Widget):
+    pass
+
+
+class QSizePolicy:
+    class Policy:
+        Fixed = 0
+        Preferred = 5
+        Expanding = 7
+
+
+class QStyle:
+    class StandardPixmap:
+        SP_ArrowDown = 0
+        SP_DirOpenIcon = 1
+        SP_DialogApplyButton = 2
+        SP_MessageBoxInformation = 3

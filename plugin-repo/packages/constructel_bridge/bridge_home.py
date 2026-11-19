@@ -27,23 +27,29 @@ from __future__ import annotations
 
 import dataclasses
 
+from qgis.core import QgsApplication
+from qgis.PyQt.QtCore import QSize
+from qgis.PyQt.QtGui import QBrush, QColor
 from qgis.PyQt.QtWidgets import (
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QPushButton,
     QStackedWidget,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
-from .bridge_diagnostic import LEVEL_OK, LEVEL_RUNNING
+from .bridge_diagnostic import LEVEL_OK, LEVEL_RUNNING, LEVEL_WARNING
 from .bridge_diagnostic_dialog import LEVEL_MARKS, DiagnosticPanel
 from .bridge_home_checkin import CheckinPage
 from .bridge_home_load import LoadPage
 from .bridge_home_model import HomeActions, home_state
 from .bridge_home_projects import ProjectsPage
+from .bridge_home_style import home_style_sheet, set_role
 from .bridge_presets import LAST_SELECTION_NAME, UserPreset
 from .i18n import SUPPORTED_LANGUAGES, get_language, tr
 
@@ -56,6 +62,14 @@ _DEFAULT_SIZE = (1100, 720)
 _MINIMUM_SIZE = (980, 640)
 _FRAME_MARGIN = (16, 48)
 _STATUS_DOT = "●"
+# Icone de chaque entree de la barre : icone du theme QGIS (suit le theme
+# clair ou sombre), sinon icone standard du style Qt.
+_NAV_ICONS = {
+    "load": ("/mActionAddLayer.svg", "SP_ArrowDown"),
+    "projects": ("/mActionFileOpen.svg", "SP_DirOpenIcon"),
+    "checkin": ("/mActionShowPluginManager.svg", "SP_DialogApplyButton"),
+    "diagnostic": ("/mIconInfo.svg", "SP_MessageBoxInformation"),
+}
 
 
 class HomeDialog(QDialog):
@@ -86,12 +100,22 @@ class HomeDialog(QDialog):
         size, minimum = self._fitted_sizes()
         self.setMinimumSize(*minimum)
         self.resize(*size)
+        # Mise en forme (2.0.2) : feuille de style limitee a cette fenetre,
+        # couleurs tirees de la palette de QGIS (bridge_home_style).
+        self.setObjectName("bridgeHome")
+        self.setStyleSheet(home_style_sheet(self.palette()))
 
         root = QHBoxLayout(self)
-        self._side = QWidget(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
+        self._side = QFrame(self)
+        self._side.setObjectName("bridgeSide")
         self._side.setFixedWidth(_SIDEBAR_WIDTH)
         self._side_layout = QVBoxLayout(self._side)
+        self._side_layout.setContentsMargins(6, 8, 6, 8)
         self._sidebar = QListWidget(self._side)
+        self._sidebar.setObjectName("bridgeNav")
+        self._sidebar.setIconSize(QSize(18, 18))
         self._sidebar.currentRowChanged.connect(self._on_row_changed)
         self._side_layout.addWidget(self._sidebar, 1)
         root.addWidget(self._side)
@@ -180,8 +204,9 @@ class HomeDialog(QDialog):
         blocked = self._sidebar.blockSignals(True)
         try:
             self._sidebar.clear()
-            for name in PAGES:
+            for row, name in enumerate(PAGES):
                 self._sidebar.addItem(labels[name])
+                self._decorate_nav_item(self._sidebar.item(row), name)
             self._sidebar.setCurrentRow(PAGES.index(self._current))
         finally:
             self._sidebar.blockSignals(blocked)
@@ -193,6 +218,31 @@ class HomeDialog(QDialog):
             self._footer.hide()
             self._footer.deleteLater()
         self._footer = footer
+
+    def _decorate_nav_item(self, item, name: str) -> None:
+        """Icone de l'entree ; pastille du Check-in en couleur d'alerte (texte
+        seulement, comme les marques du Diagnostic)."""
+        icon = self._nav_icon(name)
+        if icon is not None:
+            item.setIcon(icon)
+        if name == "checkin" and self._state.checkin_badge:
+            item.setToolTip(self._nav_labels()["checkin"])
+            item.setForeground(QBrush(QColor(LEVEL_MARKS[LEVEL_WARNING][1])))
+
+    def _nav_icon(self, name: str):
+        """Icone du theme QGIS de l'entree *name*, sinon icone standard du
+        style Qt ; None si aucune n'est lisible."""
+        theme, standard = _NAV_ICONS[name]
+        try:
+            icon = QgsApplication.getThemeIcon(theme)
+            if icon is not None and not icon.isNull():
+                return icon
+        except Exception:  # noqa: BLE001 -- hors QGIS (stubs) : icone du style Qt
+            pass
+        try:
+            return self.style().standardIcon(getattr(QStyle.StandardPixmap, standard))
+        except Exception:  # noqa: BLE001 -- doublures : pas d'icone
+            return None
 
     def _nav_labels(self) -> dict:
         checkin = tr("home.nav_checkin")
@@ -210,6 +260,7 @@ class HomeDialog(QDialog):
         snapshot = self._snapshot
         footer = QWidget(self._side)
         layout = QVBoxLayout(footer)
+        layout.setContentsMargins(4, 4, 4, 0)
 
         status = QHBoxLayout()
         _symbol, color = LEVEL_MARKS[LEVEL_OK if snapshot.connected else LEVEL_RUNNING]
@@ -236,7 +287,7 @@ class HomeDialog(QDialog):
             button = QPushButton(code.upper())
             button.setCheckable(True)
             button.setChecked(code == current)
-            button.setFlat(True)
+            set_role(button, "seg")
             button.setEnabled(not locked)
             button.clicked.connect(lambda _checked=False, code=code: self._on_language(code))
             languages.addWidget(button)
@@ -246,7 +297,7 @@ class HomeDialog(QDialog):
 
         if snapshot.plugin_version:
             version = QLabel(f"Constructel Bridge {snapshot.plugin_version}")
-            version.setEnabled(False)               # texte attenue, couleur de la palette
+            set_role(version, "muted")              # texte attenue, couleur tiree de la palette
             layout.addWidget(version)
         return footer
 

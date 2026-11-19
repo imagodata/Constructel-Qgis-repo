@@ -103,10 +103,42 @@ class _W:
         walk(self)
         return found
 
+    def palette(self):
+        """Palette non modelisee : la feuille de style de l'accueil retombe
+        alors sur les roles ``palette(...)`` de Qt."""
+        return None
+
+    def font(self):
+        return _Font()
+
+    def style(self):
+        return _Style()
+
     def __getattr__(self, name):
         if name.startswith("set"):
             return lambda *a, **k: None
         raise AttributeError(name)
+
+
+class _Font:
+    """QFont : setters sans effet (majuscules et gras des titres)."""
+
+    Capitalization = types.SimpleNamespace(AllUppercase=1)
+
+    def __getattr__(self, name):
+        if name.startswith("set"):
+            return lambda *a, **k: None
+        raise AttributeError(name)
+
+
+class _Style:
+    """QStyle : relecture du style (polish) sans effet."""
+
+    def polish(self, _widget):
+        pass
+
+    def unpolish(self, _widget):
+        pass
 
 
 class _Label(_W):
@@ -320,6 +352,10 @@ class _ListWidget(_W):
 
     def addItem(self, text):
         self.rows.append(text)
+
+    def item(self, _row):
+        """QListWidgetItem : icone, couleur et infobulle sans effet."""
+        return _W()
 
     def clear(self):
         self.rows = []

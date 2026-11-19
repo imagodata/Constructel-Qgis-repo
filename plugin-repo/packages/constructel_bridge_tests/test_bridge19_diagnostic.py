@@ -1081,6 +1081,9 @@ class _W:
     def setStyleSheet(self, style):
         self.style = style
 
+    def setProperty(self, *_a):
+        pass
+
     def hide(self):
         self.hidden = True
 
@@ -1135,6 +1138,12 @@ class _Layout:
     def setColumnStretch(self, *_a):
         pass
 
+    def setContentsMargins(self, *_a):
+        pass
+
+    def addStretch(self, *_a):
+        pass
+
 
 class _Task:
     @staticmethod
@@ -1156,8 +1165,8 @@ def dlg(bp18, monkeypatch):
     monkeypatch.setattr(core, "QgsTask", _Task, raising=False)
     monkeypatch.setattr(core.QgsApplication, "taskManager",
                         staticmethod(lambda: types.SimpleNamespace(addTask=tasks.append)), raising=False)
-    for name, fake in (("QLabel", _Label), ("QPushButton", _Button), ("QWidget", _W), ("QVBoxLayout", _Layout),
-                       ("QGridLayout", _Layout)):
+    for name, fake in (("QLabel", _Label), ("QPushButton", _Button), ("QWidget", _W), ("QFrame", _W),
+                       ("QVBoxLayout", _Layout), ("QGridLayout", _Layout)):
         monkeypatch.setattr(QtWidgets, name, fake, raising=False)
     monkeypatch.setattr(QtCore.Qt, "TextFormat", types.SimpleNamespace(PlainText=0), raising=False)
     monkeypatch.delitem(sys.modules, "constructel_bridge.bridge_diagnostic_dialog", raising=False)

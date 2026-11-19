@@ -33,6 +33,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from .bridge_home_model import HomeActions
+from .bridge_home_style import set_role
 from .bridge_operators import PROJET_SCHEMA
 from .i18n import tr
 
@@ -66,6 +67,7 @@ class ProjectsPage(QWidget):
         self._projects: list = []
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         title = QLabel(tr("home.projects_title"))
         title.setStyleSheet("font-weight: bold;")
         layout.addWidget(title)
@@ -86,7 +88,8 @@ class ProjectsPage(QWidget):
         layout.addWidget(self._tree)
 
         self._open_button = QPushButton(tr("home.projects_open"))
-        layout.addWidget(self._open_button)
+        set_role(self._open_button, "primary")      # bouton principal de la page (feuille de style)
+        layout.addWidget(self._open_button, 0, Qt.AlignmentFlag.AlignRight)
 
         self._search.textChanged.connect(lambda _text="": self._refresh())
         self._tree.currentItemChanged.connect(lambda *_args: self._update_open_state())

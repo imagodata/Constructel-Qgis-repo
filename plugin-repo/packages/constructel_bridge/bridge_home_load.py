@@ -30,6 +30,7 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -45,7 +46,8 @@ from .bridge_home_model import (
     suffix_state,
     toggle_operator,
 )
-from .bridge_layer_selection import LayerSelectionWidget, step_number_label, step_title_label
+from .bridge_home_style import set_role
+from .bridge_layer_selection import LayerSelectionWidget, layers_text, panel, step_header
 from .bridge_operators import SUFFIX_SETTINGS_KEY
 from .bridge_presets import (
     LAST_SELECTION_KEY,
@@ -74,12 +76,27 @@ _ARROW_OPEN = "▾"
 def summary_text(snapshot: HomeSnapshot, state: HomeState) -> str:
     """« ✓ Wyre · 14 couches · 3 fonds de plan » : chaque operateur charge,
     les couches communes, les fonds de plan ; jamais le modele (D11)."""
-    parts = [tr("home.loaded_operator", operator=label, count=count) for label, count in state.summary]
-    if snapshot.counts.common:
-        parts.append(tr("home.loaded_common", count=snapshot.counts.common))
+    parts = [tr("home.loaded_operator_one", operator=label) if count == 1
+             else tr("home.loaded_operator", operator=label, count=count) for label, count in state.summary]
+    common = snapshot.counts.common
+    if common:
+        parts.append(tr("home.loaded_common_one") if common == 1 else tr("home.loaded_common", count=common))
     if snapshot.counts.basemaps:
-        parts.append(tr("home.loaded_basemaps", count=snapshot.counts.basemaps))
+        parts.append(basemaps_text(snapshot.counts.basemaps))
     return SEPARATOR.join(parts)
+
+
+def basemaps_text(count: int) -> str:
+    """« 1 fond de plan » ou « N fonds de plan » (singulier pour 1 seulement)."""
+    return tr("home.loaded_basemaps_one") if count == 1 else tr("home.loaded_basemaps", count=count)
+
+
+def load_summary_text(layers: int, basemaps: int) -> str:
+    """Ce que « Charger » va ajouter : « 14 couches · 2 fonds de plan », au
+    singulier pour 1 (« 1 couche · 1 fond de plan »)."""
+    if layers != 1 and basemaps != 1:
+        return tr("home.load_summary", layers=layers, basemaps=basemaps)
+    return SEPARATOR.join((layers_text(layers), basemaps_text(basemaps)))
 
 
 class LoadPage(QWidget):
@@ -116,13 +133,17 @@ class LoadPage(QWidget):
     def _build_ui(self) -> None:
         state, snapshot = self._state, self._snapshot
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         # -- Deja dans le projet ---------------------------------------------------------
         self._summary_label = None
         summary = summary_text(snapshot, state)
         if summary:
             row = QHBoxLayout()
-            row.addWidget(QLabel(tr("home.loaded_title")))
+            title = QLabel(tr("home.loaded_title"))
+            set_role(title, "muted")
+            row.addWidget(title)
             self._summary_label = QLabel(summary)
             row.addWidget(self._summary_label)
             row.addStretch()
@@ -134,52 +155,63 @@ class LoadPage(QWidget):
             self._message_label.setWordWrap(True)
             layout.addWidget(self._message_label)
 
-        # -- Etape 1 : perimetre ------------------------------------------------------------
-        step_one = QHBoxLayout()
-        step_one.addWidget(step_number_label("1"))
-        step_one.addWidget(step_title_label(tr("home.step_perimeter")))
-        step_one.addStretch()
-        layout.addLayout(step_one)
+        # -- Etape 1 : perimetre (cadre) -----------------------------------------------------
+        step_one = panel(self)
+        one = QVBoxLayout(step_one)
+        one.addLayout(step_header("1", tr("home.step_perimeter")))
         perimeter = QHBoxLayout()
+        perimeter.setSpacing(6)
         for op in state.operators:
             caption = f"{op.label} ✓" if op.schema in state.loaded_marks else op.label
             button = QPushButton(caption)
             button.setCheckable(True)
+            set_role(button, "toggle")
             button.clicked.connect(lambda _checked=False, schema=op.schema: self._on_operator_clicked(schema))
             perimeter.addWidget(button)
             self._operator_buttons[op.schema] = button
         self._none_button = QPushButton(tr("home.none_operator"))
         self._none_button.setCheckable(True)
+        set_role(self._none_button, "neutral")
         self._none_button.clicked.connect(lambda _checked=False: self._on_none_clicked())
         perimeter.addWidget(self._none_button)
         perimeter.addStretch()
-        layout.addLayout(perimeter)
+        one.addLayout(perimeter)
+        layout.addWidget(step_one)
 
-        # -- Etape 2 : presets (menu) puis tuiles et arbre du widget ---------------------------
-        header = QHBoxLayout()
-        header.addWidget(step_number_label("2"))
-        header.addWidget(step_title_label(tr("home.step_presets")))
-        header.addStretch()
+        # -- Etape 2 : presets (menu a droite de l'en-tete) puis tuiles (cadre) ----------------
+        self._selection = LayerSelectionWidget(self)
+        step_two = panel(self)
+        two = QVBoxLayout(step_two)
+        header = step_header("2", tr("home.step_presets"))
         self._presets_button = QToolButton()
         self._presets_button.setText(f"{tr('home.my_presets')} ▾")
+        set_role(self._presets_button, "link")
         self._presets_menu = QMenu(self)
         self._presets_button.setMenu(self._presets_menu)
         self._presets_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         header.addWidget(self._presets_button)
-        layout.addLayout(header)
+        two.addLayout(header)
         self._fill_presets_menu()
+        two.addWidget(self._selection.tiles_panel())
+        layout.addWidget(step_two)
 
-        self._selection = LayerSelectionWidget(self)
-        layout.addWidget(self._selection)
+        # -- Etape 3 : couches (cadre ; en-tete et arbre portes par le widget) -----------------
+        step_three = panel(self)
+        three = QVBoxLayout(step_three)
+        three.addWidget(self._selection)
+        layout.addWidget(step_three, 1)
 
         # -- Options (repliees) : fonds de plan, styles, suffixe ---------------------------------
-        self._options_toggle = QToolButton()
+        self._options_toggle = QPushButton()
         self._options_toggle.setCheckable(True)
+        set_role(self._options_toggle, "disclosure")
+        self._options_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._options_toggle.setText(f"{_ARROW_FOLDED} {tr('home.options')}")
         self._options_toggle.toggled.connect(self._on_options_toggled)
         layout.addWidget(self._options_toggle)
         self._options_body = QWidget()
         body = QVBoxLayout(self._options_body)
+        body.setContentsMargins(0, 0, 0, 0)
         body.addWidget(self._selection.options_panel())
         self._suffix_box = QCheckBox(tr("home.suffix_checkbox"))
         self._suffix_box.clicked.connect(lambda _checked=False: self._on_suffix_clicked())
@@ -187,19 +219,22 @@ class LoadPage(QWidget):
         self._options_body.setVisible(False)
         layout.addWidget(self._options_body)
 
-        # -- Pied : resume et bouton ------------------------------------------------------------
+        # -- Pied : resume a gauche du bouton principal ------------------------------------------
         footer = QHBoxLayout()
-        self._count_label = QLabel("")
-        footer.addWidget(self._count_label)
         footer.addStretch()
+        self._count_label = QLabel("")
+        set_role(self._count_label, "muted")
+        footer.addWidget(self._count_label)
+        footer.addSpacing(10)
         self._load_button = QPushButton(tr("home.btn_load"))
+        set_role(self._load_button, "primary")
         self._load_button.clicked.connect(lambda _checked=False: self._on_load())
         footer.addWidget(self._load_button)
         layout.addLayout(footer)
 
         if not state.load_enabled:        # hors connexion : le message dit pourquoi
             for widget in (self._none_button, self._presets_button, self._options_toggle,
-                           self._selection, self._load_button):
+                           self._selection, self._selection.tiles_panel(), self._load_button):
                 widget.setEnabled(False)
 
     def _fill_presets_menu(self) -> None:
@@ -340,8 +375,8 @@ class LoadPage(QWidget):
 
     def _refresh_count(self) -> None:
         """Ce que « Charger » va ajouter : couches et fonds de plan choisis."""
-        self._count_label.setText(tr("home.load_summary", layers=self._selection.selection().layer_count(),
-                                     basemaps=len(self._selection.selected_basemaps())))
+        self._count_label.setText(load_summary_text(self._selection.selection().layer_count(),
+                                                    len(self._selection.selected_basemaps())))
 
     def _on_load(self) -> None:
         operators = self._chosen_operators()

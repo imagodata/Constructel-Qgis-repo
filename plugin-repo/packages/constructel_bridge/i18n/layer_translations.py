@@ -476,3 +476,54 @@ LAYER_DISPLAY_NAMES: dict[str, dict[str, str]] = {
     "zone_distribution":  {"fr": "Zones Distribution",   "en": "Distribution Zones",   "pt": "Zonas Distribuicao"},
     "zone_drop":          {"fr": "Zones Drop",           "en": "Drop Zones",           "pt": "Zonas Drop"},
 }
+
+# =====================================================================
+# LAYER_TREE_LABELS — libelles accentues de l'arbre des couches de l'accueil
+# =====================================================================
+# Indexe par la cle du catalogue (LAYER_CATALOG[i][0]) : toutes les couches,
+# communes et WFS comprises (dont la table n'est pas un nom stable). Sert a
+# l'affichage de l'arbre et des infobulles des tuiles seulement ; le
+# renommage des couches du projet garde LAYER_DISPLAY_NAMES (noms deja
+# enregistres dans les projets, reconnus par le sketcher).
+LAYER_TREE_LABELS: dict[str, dict[str, str]] = {
+    # -- Points de demande / infrastructure (par operateur) --
+    "demand_points":      {"fr": "Points de demande",       "en": "Demand points",           "pt": "Pontos de procura"},
+    "structures":         {"fr": "Structures",              "en": "Structures",              "pt": "Estruturas"},
+    "cables":             {"fr": "Câbles",                  "en": "Cables",                  "pt": "Cabos"},
+    "subducts":           {"fr": "Sous-fourreaux",          "en": "Subducts",                "pt": "Subductos"},
+    "ducts":              {"fr": "Conduites",               "en": "Ducts",                   "pt": "Ductos"},
+    "trench_segments":    {"fr": "Segments de tranchée",    "en": "Trench segments",         "pt": "Segmentos de vala"},
+    "duct_progress":      {"fr": "Avancement des fourreaux", "en": "Duct progress",          "pt": "Progresso dos ductos"},
+    # -- Zones (par operateur) --
+    "zone_drop":          {"fr": "Zones Drop",              "en": "Drop zones",              "pt": "Zonas Drop"},
+    "zone_distribution":  {"fr": "Zones de distribution",   "en": "Distribution zones",      "pt": "Zonas de distribuição"},
+    "zone_pop":           {"fr": "Zones POP",               "en": "POP zones",               "pt": "Zonas POP"},
+    "zone_mro":           {"fr": "Zones MRO",               "en": "MRO zones",               "pt": "Zonas MRO"},
+    # -- Chantier --
+    "interventions":      {"fr": "Interventions",           "en": "Interventions",           "pt": "Intervenções"},
+    "incidents":          {"fr": "Incidents",               "en": "Incidents",               "pt": "Incidentes"},
+    "permis_voirie":      {"fr": "Permis de voirie",        "en": "Road works permits",      "pt": "Licenças de via pública"},
+    "planning_facades":   {"fr": "Planning façades",        "en": "Facade planning",         "pt": "Planeamento de fachadas"},
+    "plaintes":           {"fr": "Plaintes",                "en": "Complaints",              "pt": "Reclamações"},
+    "interventions_chantier": {"fr": "Interventions chantier", "en": "Worksite interventions", "pt": "Intervenções de obra"},
+    "synergies":          {"fr": "Synergies",               "en": "Synergies",               "pt": "Sinergias"},
+    # -- OSIRIS --
+    "osiris_frozen":      {"fr": "Zones gelées",            "en": "Frozen zones",            "pt": "Zonas congeladas"},
+    "osiris_worksites":   {"fr": "Chantiers OSIRIS",        "en": "OSIRIS worksites",        "pt": "Obras OSIRIS"},
+    "osiris_autorises":   {"fr": "Chantiers autorisés",     "en": "Authorised worksites",    "pt": "Obras autorizadas"},
+    "osiris_phases":      {"fr": "Phases en cours",         "en": "Phases in progress",      "pt": "Fases em curso"},
+    "osiris_hypercoord":  {"fr": "Hypercoordination",       "en": "Hypercoordination",       "pt": "Hipercoordenação"},
+    "osiris_deviations":  {"fr": "Déviations",              "en": "Diversions",              "pt": "Desvios"},
+    "osiris_events":      {"fr": "Événements",              "en": "Events",                  "pt": "Eventos"},
+    # -- Cadastre UrbIS (WFS) --
+    "wfs_buildings":      {"fr": "Bâtiments",               "en": "Buildings",               "pt": "Edifícios"},
+    "wfs_parcels":        {"fr": "Parcelles cadastrales",   "en": "Cadastral parcels",       "pt": "Parcelas cadastrais"},
+    "wfs_blocks":         {"fr": "Îlots",                   "en": "Blocks",                  "pt": "Quarteirões"},
+    "wfs_municipalities": {"fr": "Municipalités",           "en": "Municipalities",          "pt": "Municípios"},
+    # -- Urbanisme Bruxelles (WFS) --
+    "wfs_protection":     {"fr": "Zones protégées",         "en": "Protected areas",         "pt": "Zonas protegidas"},
+    "wfs_heritage":       {"fr": "Patrimoine",              "en": "Heritage",                "pt": "Património"},
+    # -- Reference (chargees d'office, hors arbre) --
+    "docs_elements":      {"fr": "Documents des éléments",  "en": "Element documents",       "pt": "Documentos dos elementos"},
+    "v_form_lists":       {"fr": "Listes des formulaires",  "en": "Form lists",              "pt": "Listas de formulários"},
+}
