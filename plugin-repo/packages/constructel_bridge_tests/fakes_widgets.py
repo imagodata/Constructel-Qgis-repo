@@ -69,6 +69,9 @@ class _W:
     def hide(self):
         self.hidden = True
 
+    def show(self):
+        self.hidden = False
+
     def deleteLater(self):
         self.deleted = True
 
@@ -199,6 +202,9 @@ class _Layout:
 
     def replaceWidget(self, old, new, *_args):
         self.items[self.items.index(old)] = new
+
+    def removeWidget(self, widget):
+        self.items.remove(widget)
 
     def __getattr__(self, name):
         if name.startswith(("set", "add")):

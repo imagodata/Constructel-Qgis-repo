@@ -21,6 +21,7 @@ import os
 import platform
 import re
 import shutil
+from typing import Optional
 
 from qgis.PyQt.QtCore import Qt, QCoreApplication
 from qgis.PyQt.QtGui import QCursor, QFont
@@ -174,6 +175,354 @@ def install_or_activate_plugin(pid: str, upgrade: bool = False, session=None) ->
 
 def _remember_enabled(pid: str) -> None:
     QgsSettings().setValue(f"PythonPlugins/{pid}", True)
+
+
+# =========================================================================
+# Partages Constructel : Resource Sharing et FilterMate (assistant ET page
+# Check-in de l'accueil 2.0, spec 2026-11-18 § 6.4). Fonctions de module :
+# aucune dependance aux pages de l'assistant ni a ``_actions_done``.
+# =========================================================================
+def _log(message: str, level=Qgis.MessageLevel.Info) -> None:
+    QgsMessageLog.logMessage(message, TAG, level=level)
+
+
+def _plugin_present(pid: str) -> bool:
+    """Extension disponible ou active dans cette session QGIS."""
+    return pid in qu.available_plugins or pid in qu.active_plugins
+
+
+def _resource_sharing_groups(settings) -> list:
+    base = "ResourceSharing/repositories"
+    settings.beginGroup(base)
+    groups = settings.childGroups()
+    settings.endGroup()
+    return groups
+
+
+def resource_sharing_configured(settings=None) -> Optional[bool]:
+    """Depot Resource Sharing « Constructel » configure (nom ET URL attendus) ?
+    ``None`` si l'extension n'est ni disponible ni active. Lecture des seuls
+    reglages ``ResourceSharing/repositories`` : ni reseau, ni etat interne de
+    l'extension."""
+    if not _plugin_present("qgis_resource_sharing"):
+        return None
+    settings = settings if settings is not None else QgsSettings()
+    base = "ResourceSharing/repositories"
+    for group in _resource_sharing_groups(settings):
+        name = settings.value(f"{base}/{group}/name", "")
+        url = settings.value(f"{base}/{group}/url", "")
+        if name == RESOURCE_SHARING_REPO_NAME and url == RESOURCE_SHARING_REPO_URL:
+            return True
+    return False
+
+
+def configure_resource_sharing(settings=None) -> str:
+    """Ajoute (ou met a jour l'URL du) depot Resource Sharing « Constructel » ;
+    rend le message traduit de ce qui a ete fait."""
+    if not _plugin_present("qgis_resource_sharing"):
+        return tr("onboard.action.rs_not_installed")
+
+    settings = settings if settings is not None else QgsSettings()
+    base = "ResourceSharing/repositories"
+    max_index = -1
+
+    for group in _resource_sharing_groups(settings):
+        try:
+            idx = int(group)
+            if idx > max_index:
+                max_index = idx
+        except ValueError:
+            continue
+
+        name = settings.value(f"{base}/{group}/name", "")
+        url = settings.value(f"{base}/{group}/url", "")
+        if name == RESOURCE_SHARING_REPO_NAME or url == RESOURCE_SHARING_REPO_URL:
+            if name == RESOURCE_SHARING_REPO_NAME and url != RESOURCE_SHARING_REPO_URL:
+                settings.setValue(f"{base}/{group}/url", RESOURCE_SHARING_REPO_URL)
+                return tr("onboard.action.rs_updated",
+                          name=RESOURCE_SHARING_REPO_NAME, url=RESOURCE_SHARING_REPO_URL)
+            return tr("onboard.action.rs_exists", name=RESOURCE_SHARING_REPO_NAME)
+
+    new_index = max_index + 1
+    settings.setValue(f"{base}/{new_index}/name", RESOURCE_SHARING_REPO_NAME)
+    settings.setValue(f"{base}/{new_index}/url", RESOURCE_SHARING_REPO_URL)
+    settings.setValue(f"{base}/{new_index}/auth_cfg", "")
+    _log(f"Resource Sharing: repo added (index={new_index})")
+    return tr("onboard.action.rs_added", name=RESOURCE_SHARING_REPO_NAME, url=RESOURCE_SHARING_REPO_URL)
+
+
+def _filtermate_config_path() -> str:
+    return os.path.join(QgsApplication.qgisSettingsDirPath(), "FilterMate", "config.json")
+
+
+def _fm_unwrap(raw):
+    if isinstance(raw, dict) and "value" in raw:
+        return raw["value"]
+    return raw
+
+
+def _fm_wrap(existing, value):
+    # Preserve sibling metadata (description, choices, ...) if present.
+    if isinstance(existing, dict) and "value" in existing:
+        existing["value"] = value
+        return existing
+    return {"value": value}
+
+
+def _filtermate_repo_via_api() -> Optional[bool]:
+    """Depot « Constructel » connu de l'API FilterMate ; None si l'API est
+    indisponible (le JSON prend le relais, comme a la configuration)."""
+    try:
+        from filter_mate.extensions.registry import get_extension_registry
+        from filter_mate.extensions.favorites_sharing.remote_repo_manager import RemoteRepoManager
+
+        ext = get_extension_registry().get_extension("favorites_sharing")
+        if ext is None:
+            return None
+        return RemoteRepoManager(ext).get_by_name(FILTERMATE_REPO_NAME) is not None
+    except Exception:  # noqa: BLE001 -- API absente ou changee : repli sur le JSON
+        return None
+
+
+def _filtermate_repo_via_json() -> bool:
+    config_path = _filtermate_config_path()
+    if not os.path.exists(config_path):
+        return False
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f) or {}
+        repos = _fm_unwrap(config["EXTENSIONS"]["favorites_sharing"]["remote_repos"]) or []
+    except Exception:  # noqa: BLE001 -- illisible ou sans la cle : pas configure
+        return False
+    return isinstance(repos, list) and any(
+        isinstance(r, dict) and r.get("name") == FILTERMATE_REPO_NAME for r in repos
+    )
+
+
+def filtermate_configured() -> Optional[bool]:
+    """Depot de favoris FilterMate « Constructel » configure ? ``None`` si
+    FilterMate n'est ni disponible ni actif. API de FilterMate, a defaut le
+    JSON de sa configuration (memes chemins que la configuration) ; aucun
+    acces reseau."""
+    if not _plugin_present("filter_mate"):
+        return None
+    via_api = _filtermate_repo_via_api()
+    return via_api if via_api is not None else _filtermate_repo_via_json()
+
+
+def _ensure_filtermate_git_binary(actions: list, log, progress=None) -> str:
+    sys_git = shutil.which("git")
+    if sys_git:
+        actions.append(tr("onboard.action.fm_git_system", path=sys_git))
+        return sys_git
+
+    profile_tools = os.path.join(
+        QgsApplication.qgisSettingsDirPath(), "FilterMate", "tools"
+    )
+    portable_exe = os.path.join(profile_tools, "PortableGit", "cmd", "git.exe")
+    if os.path.isfile(portable_exe):
+        actions.append(tr("onboard.action.fm_git_portable_existing", path=portable_exe))
+        return portable_exe
+
+    if platform.system() != "Windows":
+        actions.append(tr("onboard.action.fm_git_missing_unix"))
+        return ""
+
+    try:
+        from filter_mate.extensions.favorites_sharing.portable_git_installer import (
+            download_and_install,
+            is_supported_platform,
+        )
+    except Exception as exc:
+        actions.append(tr("onboard.action.fm_git_installer_missing", error=exc))
+        log(f"FilterMate portable_git_installer import error: {exc}", Qgis.MessageLevel.Warning)
+        return ""
+
+    if not is_supported_platform():
+        actions.append(tr("onboard.action.fm_git_unsupported"))
+        return ""
+
+    def _show(text: str) -> None:
+        if progress is not None:
+            progress(text)
+
+    QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+    try:
+        os.makedirs(profile_tools, exist_ok=True)
+        _show(tr("onboard.action.fm_git_downloading"))
+        QCoreApplication.processEvents()
+
+        def _progress(downloaded: int, total):
+            if total:
+                pct = max(0, min(100, int(downloaded * 100 / total)))
+                _show(tr("onboard.action.fm_git_downloading_pct", pct=pct))
+            QCoreApplication.processEvents()
+
+        result = download_and_install(profile_tools, progress_callback=_progress)
+        actions.append(tr("onboard.action.fm_git_installed", path=result.git_executable))
+        log(f"Portable git installed: {result.git_executable}")
+        return result.git_executable
+    except Exception as exc:
+        actions.append(tr("onboard.action.fm_git_install_failed", error=exc))
+        log(f"Portable git install failed: {exc}", Qgis.MessageLevel.Warning)
+        return ""
+    finally:
+        QApplication.restoreOverrideCursor()
+
+
+def filtermate_sharing_actions(log=_log, progress=None) -> list:
+    """Configure le depot de favoris FilterMate « Constructel » (API de
+    FilterMate, a defaut son JSON) ; rend les messages traduits de ce qui a
+    ete fait, dans l'ordre. *log(message, niveau)* : journal ; *progress(texte)* :
+    avancement du telechargement de git portable (optionnel)."""
+    if not _plugin_present("filter_mate"):
+        return [tr("onboard.action.fm_not_installed")]
+
+    actions: list = []
+    git_binary = _ensure_filtermate_git_binary(actions, log, progress)
+
+    new_entry = {
+        "name": FILTERMATE_REPO_NAME,
+        "git_url": FILTERMATE_REPO_GIT_URL,
+        "branch": FILTERMATE_REPO_BRANCH,
+        "local_clone": "",
+        "target_collection": FILTERMATE_TARGET_COLLECTION,
+        "is_default": True,
+        "authcfg_id": "",
+        "auth_header": "",
+    }
+
+    if not _configure_filtermate_via_api(new_entry, git_binary, actions, log):
+        _configure_filtermate_via_json(new_entry, git_binary, actions, log)
+    return actions
+
+
+def configure_filtermate_sharing(log=_log) -> str:
+    """Comme ``filtermate_sharing_actions`` ; messages reunis, un par ligne."""
+    return "\n".join(filtermate_sharing_actions(log))
+
+
+def _configure_filtermate_via_api(entry: dict, git_binary: str, actions: list, log) -> bool:
+    try:
+        from filter_mate.extensions.registry import get_extension_registry
+        from filter_mate.extensions.favorites_sharing.remote_repo_manager import (
+            RemoteRepo,
+            RemoteRepoManager,
+        )
+    except Exception as exc:
+        log(f"FilterMate API import failed, falling back to JSON: {exc}", Qgis.MessageLevel.Info)
+        return False
+
+    try:
+        registry = get_extension_registry()
+        ext = registry.get_extension("favorites_sharing")
+        if ext is None:
+            log(
+                "FilterMate registry returned no 'favorites_sharing' extension; falling back to JSON",
+                Qgis.MessageLevel.Info,
+            )
+            return False
+
+        if git_binary:
+            ext.set_config("git_binary_path", git_binary)
+
+        manager = RemoteRepoManager(ext)
+        repos = list(manager.list_repos())
+        existing = manager.get_by_name(FILTERMATE_REPO_NAME)
+        if existing is not None:
+            repos = [r for r in repos if r.name != FILTERMATE_REPO_NAME]
+            action_msg = tr("onboard.action.fm_updated", url=FILTERMATE_REPO_GIT_URL)
+        else:
+            action_msg = tr("onboard.action.fm_added", url=FILTERMATE_REPO_GIT_URL)
+
+        for r in repos:
+            if getattr(r, "is_default", False):
+                r.is_default = False
+
+        new_repo = RemoteRepo.from_config_entry(entry)
+        if new_repo is None:
+            log("RemoteRepo.from_config_entry returned None; falling back to JSON", Qgis.MessageLevel.Warning)
+            return False
+        repos.append(new_repo)
+
+        if not manager.save_repos(repos):
+            log("RemoteRepoManager.save_repos returned False; falling back to JSON", Qgis.MessageLevel.Warning)
+            return False
+
+        actions.append(action_msg)
+        log(f"FilterMate sharing configured via API: {FILTERMATE_REPO_GIT_URL}")
+        return True
+    except Exception as exc:
+        log(f"FilterMate API configure failed, falling back to JSON: {exc}", Qgis.MessageLevel.Warning)
+        return False
+
+
+def _configure_filtermate_via_json(entry: dict, git_binary: str, actions: list, log) -> None:
+    config_path = _filtermate_config_path()
+
+    config: dict = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f) or {}
+        except Exception as exc:
+            actions.append(tr("onboard.action.fm_read_error", error=exc))
+            log(f"FilterMate config read error: {exc}", Qgis.MessageLevel.Warning)
+            return
+
+    extensions = config.setdefault("EXTENSIONS", {})
+    fs = extensions.setdefault("favorites_sharing", {})
+
+    # FilterMate stores each config value wrapped as {"value": <data>, ...metadata}.
+    # We must read from / write to that wrapper, not the raw key, otherwise
+    # FilterMate's get_config() returns the schema default and the repo
+    # appears unconfigured.
+    repos_wrapped = fs.get("remote_repos")
+    repos = _fm_unwrap(repos_wrapped) or []
+    if not isinstance(repos, list):
+        actions.append(
+            tr("onboard.action.fm_read_error",
+               error="EXTENSIONS.favorites_sharing.remote_repos n'est pas une liste")
+        )
+        return
+
+    if git_binary:
+        fs["git_binary_path"] = _fm_wrap(fs.get("git_binary_path"), git_binary)
+
+    existing = next(
+        (r for r in repos if isinstance(r, dict) and r.get("name") == FILTERMATE_REPO_NAME),
+        None,
+    )
+    if existing is None:
+        for r in repos:
+            if isinstance(r, dict) and r.get("is_default"):
+                r["is_default"] = False
+        repos.append(entry)
+        action_msg = tr("onboard.action.fm_added", url=FILTERMATE_REPO_GIT_URL)
+    else:
+        existing.update(entry)
+        for r in repos:
+            if isinstance(r, dict) and r is not existing and r.get("is_default"):
+                r["is_default"] = False
+        action_msg = tr("onboard.action.fm_updated", url=FILTERMATE_REPO_GIT_URL)
+
+    fs["remote_repos"] = _fm_wrap(repos_wrapped, repos)
+
+    try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        tmp_path = config_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, config_path)
+    except Exception as exc:
+        actions.append(tr("onboard.action.fm_write_error", error=exc))
+        log(f"FilterMate config write error: {exc}", Qgis.MessageLevel.Warning)
+        return
+
+    actions.append(action_msg)
+    actions.append(tr("onboard.action.fm_restart_needed"))
+    log(f"FilterMate sharing configured via JSON (restart needed): {FILTERMATE_REPO_GIT_URL}")
+
 
 
 # =========================================================================
@@ -689,274 +1038,12 @@ class OnboardingWizard(QWizard):
                     self._log(f"Plugin installed: {pid}")
 
     def _configure_resource_sharing(self):
-        rs_available = (
-            "qgis_resource_sharing" in qu.available_plugins
-            or "qgis_resource_sharing" in qu.active_plugins
-        )
-        if not rs_available:
-            self._actions_done.append(tr("onboard.action.rs_not_installed"))
-            return
-
-        settings = QgsSettings()
-        base = "ResourceSharing/repositories"
-        repo_exists = False
-        max_index = -1
-
-        settings.beginGroup(base)
-        groups = settings.childGroups()
-        settings.endGroup()
-
-        for group in groups:
-            try:
-                idx = int(group)
-                if idx > max_index:
-                    max_index = idx
-            except ValueError:
-                continue
-
-            name = settings.value(f"{base}/{group}/name", "")
-            url = settings.value(f"{base}/{group}/url", "")
-            if name == RESOURCE_SHARING_REPO_NAME or url == RESOURCE_SHARING_REPO_URL:
-                repo_exists = True
-                if name == RESOURCE_SHARING_REPO_NAME and url != RESOURCE_SHARING_REPO_URL:
-                    settings.setValue(f"{base}/{group}/url", RESOURCE_SHARING_REPO_URL)
-                    self._actions_done.append(
-                        tr("onboard.action.rs_updated",
-                           name=RESOURCE_SHARING_REPO_NAME, url=RESOURCE_SHARING_REPO_URL)
-                    )
-                else:
-                    self._actions_done.append(
-                        tr("onboard.action.rs_exists", name=RESOURCE_SHARING_REPO_NAME)
-                    )
-                break
-
-        if not repo_exists:
-            new_index = max_index + 1
-            settings.setValue(f"{base}/{new_index}/name", RESOURCE_SHARING_REPO_NAME)
-            settings.setValue(f"{base}/{new_index}/url", RESOURCE_SHARING_REPO_URL)
-            settings.setValue(f"{base}/{new_index}/auth_cfg", "")
-            self._actions_done.append(
-                tr("onboard.action.rs_added",
-                   name=RESOURCE_SHARING_REPO_NAME, url=RESOURCE_SHARING_REPO_URL)
-            )
-            self._log(f"Resource Sharing: repo added (index={new_index})")
-
-    def _ensure_filtermate_git_binary(self) -> str:
-        sys_git = shutil.which("git")
-        if sys_git:
-            self._actions_done.append(tr("onboard.action.fm_git_system", path=sys_git))
-            return sys_git
-
-        profile_tools = os.path.join(
-            QgsApplication.qgisSettingsDirPath(), "FilterMate", "tools"
-        )
-        portable_exe = os.path.join(profile_tools, "PortableGit", "cmd", "git.exe")
-        if os.path.isfile(portable_exe):
-            self._actions_done.append(tr("onboard.action.fm_git_portable_existing", path=portable_exe))
-            return portable_exe
-
-        if platform.system() != "Windows":
-            self._actions_done.append(tr("onboard.action.fm_git_missing_unix"))
-            return ""
-
-        try:
-            from filter_mate.extensions.favorites_sharing.portable_git_installer import (
-                download_and_install,
-                is_supported_platform,
-            )
-        except Exception as exc:
-            self._actions_done.append(tr("onboard.action.fm_git_installer_missing", error=exc))
-            self._log(f"FilterMate portable_git_installer import error: {exc}", Qgis.MessageLevel.Warning)
-            return ""
-
-        if not is_supported_platform():
-            self._actions_done.append(tr("onboard.action.fm_git_unsupported"))
-            return ""
-
-        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
-        try:
-            os.makedirs(profile_tools, exist_ok=True)
-            self._page_summary.set_summary(tr("onboard.action.fm_git_downloading"))
-            QCoreApplication.processEvents()
-
-            def _progress(downloaded: int, total):
-                if total:
-                    pct = max(0, min(100, int(downloaded * 100 / total)))
-                    self._page_summary.set_summary(
-                        tr("onboard.action.fm_git_downloading_pct", pct=pct)
-                    )
-                QCoreApplication.processEvents()
-
-            result = download_and_install(profile_tools, progress_callback=_progress)
-            self._actions_done.append(
-                tr("onboard.action.fm_git_installed", path=result.git_executable)
-            )
-            self._log(f"Portable git installed: {result.git_executable}")
-            return result.git_executable
-        except Exception as exc:
-            self._actions_done.append(tr("onboard.action.fm_git_install_failed", error=exc))
-            self._log(f"Portable git install failed: {exc}", Qgis.MessageLevel.Warning)
-            return ""
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._actions_done.append(configure_resource_sharing())
 
     def _configure_filtermate_sharing(self):
-        if "filter_mate" not in qu.available_plugins and "filter_mate" not in qu.active_plugins:
-            self._actions_done.append(tr("onboard.action.fm_not_installed"))
-            return
-
-        git_binary = self._ensure_filtermate_git_binary()
-
-        new_entry = {
-            "name": FILTERMATE_REPO_NAME,
-            "git_url": FILTERMATE_REPO_GIT_URL,
-            "branch": FILTERMATE_REPO_BRANCH,
-            "local_clone": "",
-            "target_collection": FILTERMATE_TARGET_COLLECTION,
-            "is_default": True,
-            "authcfg_id": "",
-            "auth_header": "",
-        }
-
-        if self._configure_filtermate_via_api(new_entry, git_binary):
-            return
-        self._configure_filtermate_via_json(new_entry, git_binary)
-
-    def _configure_filtermate_via_api(self, entry: dict, git_binary: str) -> bool:
-        try:
-            from filter_mate.extensions.registry import get_extension_registry
-            from filter_mate.extensions.favorites_sharing.remote_repo_manager import (
-                RemoteRepo,
-                RemoteRepoManager,
-            )
-        except Exception as exc:
-            self._log(f"FilterMate API import failed, falling back to JSON: {exc}", Qgis.MessageLevel.Info)
-            return False
-
-        try:
-            registry = get_extension_registry()
-            ext = registry.get_extension("favorites_sharing")
-            if ext is None:
-                self._log(
-                    "FilterMate registry returned no 'favorites_sharing' extension; falling back to JSON",
-                    Qgis.MessageLevel.Info,
-                )
-                return False
-
-            if git_binary:
-                ext.set_config("git_binary_path", git_binary)
-
-            manager = RemoteRepoManager(ext)
-            repos = list(manager.list_repos())
-            existing = manager.get_by_name(FILTERMATE_REPO_NAME)
-            if existing is not None:
-                repos = [r for r in repos if r.name != FILTERMATE_REPO_NAME]
-                action_msg = tr("onboard.action.fm_updated", url=FILTERMATE_REPO_GIT_URL)
-            else:
-                action_msg = tr("onboard.action.fm_added", url=FILTERMATE_REPO_GIT_URL)
-
-            for r in repos:
-                if getattr(r, "is_default", False):
-                    r.is_default = False
-
-            new_repo = RemoteRepo.from_config_entry(entry)
-            if new_repo is None:
-                self._log("RemoteRepo.from_config_entry returned None; falling back to JSON", Qgis.MessageLevel.Warning)
-                return False
-            repos.append(new_repo)
-
-            if not manager.save_repos(repos):
-                self._log("RemoteRepoManager.save_repos returned False; falling back to JSON", Qgis.MessageLevel.Warning)
-                return False
-
-            self._actions_done.append(action_msg)
-            self._log(f"FilterMate sharing configured via API: {FILTERMATE_REPO_GIT_URL}")
-            return True
-        except Exception as exc:
-            self._log(f"FilterMate API configure failed, falling back to JSON: {exc}", Qgis.MessageLevel.Warning)
-            return False
-
-    @staticmethod
-    def _fm_unwrap(raw):
-        if isinstance(raw, dict) and "value" in raw:
-            return raw["value"]
-        return raw
-
-    @staticmethod
-    def _fm_wrap(existing, value):
-        # Preserve sibling metadata (description, choices, ...) if present.
-        if isinstance(existing, dict) and "value" in existing:
-            existing["value"] = value
-            return existing
-        return {"value": value}
-
-    def _configure_filtermate_via_json(self, entry: dict, git_binary: str) -> None:
-        config_path = os.path.join(
-            QgsApplication.qgisSettingsDirPath(), "FilterMate", "config.json"
+        self._actions_done.extend(
+            filtermate_sharing_actions(self._log, progress=self._page_summary.set_summary)
         )
-
-        config: dict = {}
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config = json.load(f) or {}
-            except Exception as exc:
-                self._actions_done.append(tr("onboard.action.fm_read_error", error=exc))
-                self._log(f"FilterMate config read error: {exc}", Qgis.MessageLevel.Warning)
-                return
-
-        extensions = config.setdefault("EXTENSIONS", {})
-        fs = extensions.setdefault("favorites_sharing", {})
-
-        # FilterMate stores each config value wrapped as {"value": <data>, ...metadata}.
-        # We must read from / write to that wrapper, not the raw key, otherwise
-        # FilterMate's get_config() returns the schema default and the repo
-        # appears unconfigured.
-        repos_wrapped = fs.get("remote_repos")
-        repos = self._fm_unwrap(repos_wrapped) or []
-        if not isinstance(repos, list):
-            self._actions_done.append(
-                tr("onboard.action.fm_read_error",
-                   error="EXTENSIONS.favorites_sharing.remote_repos n'est pas une liste")
-            )
-            return
-
-        if git_binary:
-            fs["git_binary_path"] = self._fm_wrap(fs.get("git_binary_path"), git_binary)
-
-        existing = next(
-            (r for r in repos if isinstance(r, dict) and r.get("name") == FILTERMATE_REPO_NAME),
-            None,
-        )
-        if existing is None:
-            for r in repos:
-                if isinstance(r, dict) and r.get("is_default"):
-                    r["is_default"] = False
-            repos.append(entry)
-            action_msg = tr("onboard.action.fm_added", url=FILTERMATE_REPO_GIT_URL)
-        else:
-            existing.update(entry)
-            for r in repos:
-                if isinstance(r, dict) and r is not existing and r.get("is_default"):
-                    r["is_default"] = False
-            action_msg = tr("onboard.action.fm_updated", url=FILTERMATE_REPO_GIT_URL)
-
-        fs["remote_repos"] = self._fm_wrap(repos_wrapped, repos)
-
-        try:
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            tmp_path = config_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, config_path)
-        except Exception as exc:
-            self._actions_done.append(tr("onboard.action.fm_write_error", error=exc))
-            self._log(f"FilterMate config write error: {exc}", Qgis.MessageLevel.Warning)
-            return
-
-        self._actions_done.append(action_msg)
-        self._actions_done.append(tr("onboard.action.fm_restart_needed"))
-        self._log(f"FilterMate sharing configured via JSON (restart needed): {FILTERMATE_REPO_GIT_URL}")
 
     def _log(self, message: str, level=Qgis.MessageLevel.Info):
-        QgsMessageLog.logMessage(message, TAG, level=level)
+        _log(message, level)
