@@ -450,3 +450,69 @@ def test_steps_are_numbered_and_titled_and_the_expert_toggle_sits_on_the_layers_
     assert [w.text() for w in header.items if isinstance(w, _Label)] == ["3", load.tr("home.step_layers"),
                                                                        load.tr("home.show_expert")]
     assert selection_layout.items.index(header) < selection_layout.items.index(page._selection._tree)
+
+
+# --- revue finale -----------------------------------------------------------------------------
+
+
+def _click_box(box, checked):
+    """Geste de la personne : la case change, puis ``clicked`` (jamais emis
+    par setChecked)."""
+    box.setChecked(checked)
+    box.clicked.emit(checked)
+
+
+def test_manual_suffix_choice_survives_a_perimeter_change_while_editable(load):
+    # Ledger T5 : une case modifiable cochee ou decochee a la main n'est plus
+    # recalculee a chaque changement de perimetre.
+    page = _open(load, last_suffix=False)
+    assert page._suffix_box.checked is False and page._suffix_box.enabled is True
+    _click_box(page._suffix_box, True)
+    page._none_button.clicked.emit(False)                            # case masquee, choix garde
+    page._operator_buttons["orange"].clicked.emit(False)             # un seul operateur : modifiable
+    assert page._suffix_box.checked is True and page._suffix_box.enabled is True
+    page._load_button.clicked.emit(False)
+    assert _loads(page)[0][-1] is True
+    assert load.settings().value(load.SUFFIX_SETTINGS_KEY, None) is True      # change par la personne
+
+    unticked = _open(load, last_suffix=True)
+    assert unticked._suffix_box.checked is True
+    _click_box(unticked._suffix_box, False)
+    unticked._none_button.clicked.emit(False)
+    unticked._operator_buttons["wyre"].clicked.emit(False)
+    assert unticked._suffix_box.checked is False
+
+
+def test_imposed_suffix_drops_the_manual_choice(load):
+    page = _open(load, last_suffix=False)
+    _click_box(page._suffix_box, False)
+    page._operator_buttons["orange"].clicked.emit(False)            # deux operateurs : impose
+    assert page._suffix_box.checked is True and page._suffix_box.enabled is False
+    page._operator_buttons["orange"].clicked.emit(False)            # de nouveau modifiable : valeur proposee
+    assert page._suffix_box.checked is False and page._suffix_box.enabled is True
+    page = _open(load, last_suffix=False)
+    _click_box(page._suffix_box, True)
+    page._operator_buttons["orange"].clicked.emit(False)
+    page._operator_buttons["orange"].clicked.emit(False)
+    assert page._suffix_box.checked is False                         # le choix manuel ne survit pas a l'impose
+
+
+def test_load_button_is_the_page_default_button(load):
+    page = _open(load)
+    assert page.default_button() is page._load_button
+
+
+def test_page_options_round_trip(load):
+    page = _open(load, last_suffix=False)
+    page._selection.set_basemaps(set())
+    page._selection.set_want_styles(False)
+    _click_box(page._suffix_box, True)
+    options = page.current_options()
+    assert options == {"basemaps": set(), "styles": False, "suffix": True}
+    snapshot = snap(last_selection=_last(("wyre",)), last_suffix=False)
+    noop = {f.name: (lambda *a, **k: None) for f in dataclasses.fields(hm.HomeActions)}
+    again = load.LoadPage(snapshot, hm.home_state(snapshot), hm.HomeActions(**noop), lambda _loaded: None,
+                          options=options)
+    assert again.current_options() == options
+    assert again._suffix_box.checked is True and again._selection.want_styles() is False
+    assert again._selection.selected_basemaps() == set()

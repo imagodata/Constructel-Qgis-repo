@@ -87,7 +87,7 @@ class LoadPage(QWidget):
     module."""
 
     def __init__(self, snapshot: HomeSnapshot, state: HomeState, actions: HomeActions,
-                 on_done: Callable[[bool], None], parent=None):
+                 on_done: Callable[[bool], None], parent=None, options: Optional[dict] = None):
         super().__init__(parent)
         self._snapshot = snapshot
         self._state = state
@@ -98,9 +98,16 @@ class LoadPage(QWidget):
         self._chosen: tuple = tuple(state.preselected)
         self._user_presets = [p for p in snapshot.user_presets if p.name != LAST_SELECTION_NAME]
         self._suffix_proposed = False
+        # Case du suffixe cochee ou decochee a la main : gardee tant qu'elle
+        # reste modifiable (None : jamais touchee, la valeur proposee s'applique).
+        self._suffix_manual: Optional[bool] = None
         self._operator_buttons: dict = {}
         self._build_ui()
+        if options and state.load_enabled:
+            self._suffix_manual = options.get("suffix")
         self._apply_initial_choice()
+        if options and state.load_enabled:
+            self._apply_options(options)
         self._selection.on_change = self._refresh_count
         self._refresh_count()
 
@@ -175,6 +182,7 @@ class LoadPage(QWidget):
         body = QVBoxLayout(self._options_body)
         body.addWidget(self._selection.options_panel())
         self._suffix_box = QCheckBox(tr("home.suffix_checkbox"))
+        self._suffix_box.clicked.connect(lambda _checked=False: self._on_suffix_clicked())
         body.addWidget(self._suffix_box)
         self._options_body.setVisible(False)
         layout.addWidget(self._options_body)
@@ -253,8 +261,15 @@ class LoadPage(QWidget):
         checked, editable = suffix_state(loaded, self._chosen, self._snapshot.project_suffix,
                                          self._snapshot.last_suffix)
         self._suffix_proposed = checked
+        if not editable:
+            self._suffix_manual = None        # impose : le choix manuel ne survit pas
+        elif self._suffix_manual is not None:
+            checked = self._suffix_manual
         self._suffix_box.setChecked(checked)
         self._suffix_box.setEnabled(editable)
+
+    def _on_suffix_clicked(self) -> None:
+        self._suffix_manual = self._suffix_box.isChecked()
 
     # -- presets ------------------------------------------------------------------------
 
@@ -276,6 +291,27 @@ class LoadPage(QWidget):
     def current_choice(self) -> UserPreset:
         """Perimetre et selection affiches, sans nom."""
         return UserPreset("", self._chosen, self._selection.selection())
+
+    def current_options(self) -> dict:
+        """Options affichees, gardees par la fenetre d'un redessin a l'autre
+        comme ``current_choice`` : fonds de plan coches, styles, et la case du
+        suffixe si elle a ete changee a la main (None sinon)."""
+        return {
+            "basemaps": set(self._selection.selected_basemaps()),
+            "styles": self._selection.want_styles(),
+            "suffix": self._suffix_manual,
+        }
+
+    def _apply_options(self, options: dict) -> None:
+        if "basemaps" in options:
+            self._selection.set_basemaps(options["basemaps"])
+        if "styles" in options:
+            self._selection.set_want_styles(options["styles"])
+
+    def default_button(self) -> QPushButton:
+        """« Charger » : bouton par defaut de la fenetre quand la page est
+        affichee (Entree dans l'arbre charge)."""
+        return self._load_button
 
     def _save_preset(self) -> None:
         name, accepted = QInputDialog.getText(self, tr("home.my_presets"), tr("home.save_preset_prompt"))

@@ -76,6 +76,33 @@ class _W:
     def deleteLater(self):
         self.deleted = True
 
+    def parentWidget(self):
+        """Parente non modelisee : la doublure rend None (toutes les
+        doublures passent pour des enfants directs de la fenetre)."""
+        return None
+
+    def findChildren(self, cls):
+        """Descendants de classe *cls* : widgets des layouts (sous-layouts
+        compris) et pages d'un QStackedWidget, comme QObject.findChildren
+        (recursif)."""
+        found = []
+
+        def walk(node):
+            if isinstance(node, _Layout):
+                for item in node.items:
+                    walk(item)
+                return
+            if node is not self and isinstance(node, cls):
+                found.append(node)
+            if getattr(node, "layout", None) is not None:
+                walk(node.layout)
+            if isinstance(node, _Stack):
+                for page in node.pages:
+                    walk(page)
+
+        walk(self)
+        return found
+
     def __getattr__(self, name):
         if name.startswith("set"):
             return lambda *a, **k: None
@@ -101,6 +128,20 @@ class _Button(_Label):
         self.toggled = _Sig()
         self.checkable = False
         self.checked = False
+        self.auto_default = True    # QPushButton dans un QDialog : autoDefault par defaut
+        self.default = False
+
+    def setAutoDefault(self, value):
+        self.auto_default = bool(value)
+
+    def autoDefault(self):
+        return self.auto_default
+
+    def setDefault(self, value):
+        self.default = bool(value)
+
+    def isDefault(self):
+        return self.default
 
     def setCheckable(self, checkable):
         self.checkable = bool(checkable)

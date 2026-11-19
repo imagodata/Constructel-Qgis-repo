@@ -193,8 +193,33 @@ def test_resource_sharing_configured_reads_settings(ob):
 
 
 def test_resource_sharing_state_needs_no_network_nor_extension_state(ob):
-    # Un depot sans le bon nom mais avec la bonne URL ne suffit pas : nom ET URL.
-    assert ob.resource_sharing_configured(_FakeSettings(_repos(("Autre", RS_URL)))) is False
+    # Revue finale : l'URL Constructel suffit, quel que soit le nom du depot
+    # (meme regle que « Configurer », qui n'y touche pas).
+    assert ob.resource_sharing_configured(_FakeSettings(_repos(("Autre", RS_URL)))) is True
+
+
+def test_configure_resource_sharing_ends_in_a_state_the_check_accepts(ob):
+    # Revue finale : un seul predicat. L'URL Constructel sous un autre nom :
+    # deja configure, rien n'est change, la pastille s'eteint.
+    renamed = _FakeSettings(_repos(("Mon depot", RS_URL)))
+    before = dict(renamed.values)
+    assert ob.configure_resource_sharing(renamed) == ob.tr("onboard.action.rs_exists", name=RS_NAME)
+    assert renamed.values == before
+    assert ob.resource_sharing_configured(renamed) is True
+    # « Constructel » a une mauvaise URL : non configure, URL corrigee, puis accepte.
+    stale = _FakeSettings(_repos(("Autre", "http://x/"), (RS_NAME, "http://perime/")))
+    assert ob.resource_sharing_configured(stale) is False
+    assert ob.configure_resource_sharing(stale) == ob.tr("onboard.action.rs_updated", name=RS_NAME, url=RS_URL)
+    assert stale.values["ResourceSharing/repositories/1/url"] == RS_URL
+    assert ob.resource_sharing_configured(stale) is True
+    # Les deux a la fois : le depot a la bonne URL suffit, l'autre n'est pas touche.
+    both = _FakeSettings(_repos((RS_NAME, "http://perime/"), ("Mon depot", RS_URL)))
+    assert ob.configure_resource_sharing(both) == ob.tr("onboard.action.rs_exists", name=RS_NAME)
+    assert both.values["ResourceSharing/repositories/0/url"] == "http://perime/"
+    # Rien : ajoute, puis accepte.
+    empty = _FakeSettings()
+    ob.configure_resource_sharing(empty)
+    assert ob.resource_sharing_configured(empty) is True
 
 
 def _fm_config(tmp_path, monkeypatch, repos):

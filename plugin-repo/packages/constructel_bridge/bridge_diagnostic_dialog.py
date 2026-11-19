@@ -19,7 +19,7 @@ l'interface. Leur resultat est ignore si le panneau a ete ferme entre-temps
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 from qgis.core import QgsApplication, QgsTask
 from qgis.PyQt.QtCore import Qt
@@ -114,6 +114,9 @@ class DiagnosticPanel(QWidget):
                  on_action: Callable[[Check], list], parent=None):
         super().__init__(parent)
         self._on_action = on_action
+        # Appele apres chaque action (installation, mise a jour...) : la fenetre
+        # hote relit sa barre (pastille du Check-in).
+        self.on_change: Optional[Callable[[], None]] = None
         self._network_args = dict(network_args)
         self._local_checks = list(local_checks)
         self._network_checks = None  # None : verifications reseau en cours
@@ -181,6 +184,7 @@ class DiagnosticPanel(QWidget):
             label = action_label(check.action)
             if label:
                 button = QPushButton(label)
+                button.setAutoDefault(False)  # Entree ne declenche jamais une action (lignes redessinees a part)
                 button.clicked.connect(lambda _checked=False, c=check: self._run_action(c))
                 grid.addWidget(button, row, 2)
         return container
@@ -204,6 +208,8 @@ class DiagnosticPanel(QWidget):
             if local_checks is not None:
                 self._local_checks = list(local_checks)
             self._render()  # y compris un resultat reseau arrive pendant l'action
+        if self.on_change is not None:
+            self.on_change()
 
     def _on_network_done(self, exception, result=None, task=None) -> None:
         """Fil de l'interface. QgsTaskWrapper appelle on_finished(exception)

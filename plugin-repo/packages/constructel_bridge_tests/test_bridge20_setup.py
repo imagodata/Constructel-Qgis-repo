@@ -71,6 +71,7 @@ def test_fresh_install_still_gets_the_wizard(bp18, monkeypatch):
     plugin, iface, settings = _gui(bp18, monkeypatch)                 # aucune plugin_version
     assert settings.value(DONE, None) is None                         # pas de rattrapage
     assert settings.value(VERSION) == "2.0.0"
+    assert settings.value(bp18.ONBOARDING_CATCHUP_KEY, False) is True    # joue une fois, sans effet
     opened = []
     plugin._on_home = lambda *a, **k: opened.append((a, k))
 
@@ -80,6 +81,28 @@ def test_fresh_install_still_gets_the_wizard(bp18, monkeypatch):
     assert opened == [(("checkin",), {"start_wizard": True})]
     assert not hasattr(plugin, "_run_onboarding")
     plugin.unload()
+
+
+def test_catchup_survives_a_rollback_to_1_9(bp18, monkeypatch):
+    # Revue finale : 2.0 -> 1.9 (qui efface onboarding_done et reecrit
+    # plugin_version) -> 2.0.x : rattrapage rejoue malgre la cle deja posee.
+    plugin, iface, settings = _gui(bp18, monkeypatch, stored_version="1.9.0")
+    assert settings.value(DONE, False) is True
+    assert settings.value(bp18.ONBOARDING_CATCHUP_KEY, False) is True
+    plugin.unload()
+
+    settings.setValue(VERSION, "1.9.0")      # la 1.9 a tourne entre-temps
+    settings.remove(DONE)
+    plugin2 = bp18.ConstructelBridgePlugin(iface)
+    plugin2._get_qgis_username = lambda: "JDoe"
+    plugin2.initGui()
+    assert settings.value(DONE, False) is True
+    assert settings.value(VERSION) == "2.0.0"
+    opened = []
+    plugin2._on_home = lambda *a, **k: opened.append((a, k))
+    iface.initializationCompleted.emit()
+    assert opened == []                      # pas d'assistant
+    plugin2.unload()
 
 
 def test_unfinished_setup_on_a_2_0_install_still_gets_the_wizard(bp18, monkeypatch):

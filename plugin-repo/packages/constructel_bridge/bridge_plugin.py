@@ -73,6 +73,7 @@ from .bridge_mtls import (
 )
 from .bridge_operators import (
     FALLBACK_OPERATOR,
+    LAST_OPERATOR_KEY,
     LAST_OPERATORS_KEY,
     OPERATOR_KEYS,
     OPERATORS_QUERY,
@@ -1008,6 +1009,7 @@ class ConstructelBridgePlugin:
         # Bridge 1.9 : session de l'installeur QGIS partagee par les actions
         # d'une meme fenetre d'accueil (Diagnostic, Check-in ; un seul fetch, K12).
         self._diagnostic_session = None
+        self._diagnostic_last_checks = []  # dernieres verifications locales lues (repli d'une relecture en echec)
         self._wizard_new_user = False   # premier setup : assistant pour un nouvel utilisateur
         self._home_dialog = None        # fenetre d'accueil ouverte (une seule a la fois)
         self._identity_refresh_pending = False   # assistant avec profil pas encore relu
@@ -1644,8 +1646,13 @@ class ConstructelBridgePlugin:
         connecte. Un poste deja installe (plugin_version anterieure
         enregistree) est donc considere comme configure, une seule fois (cle
         dediee). Un poste vierge garde l'assistant ; un nouvel utilisateur le
-        voit de toute facon (is_new_user a la connexion)."""
-        if settings.value(ONBOARDING_CATCHUP_KEY, False, type=bool):
+        voit de toute facon (is_new_user a la connexion).
+
+        Revue finale : une version stockee en « 1. » rejoue le rattrapage meme
+        si la cle est posee (retour 2.0 -> 1.9 -> 2.0.x : la 1.9 a de nouveau
+        efface onboarding_done)."""
+        rollback = str(stored_version or "").startswith("1.")
+        if settings.value(ONBOARDING_CATCHUP_KEY, False, type=bool) and not rollback:
             return
         if stored_version:
             settings.setValue("constructel_bridge/onboarding_done", True)
@@ -3917,13 +3924,15 @@ class ConstructelBridgePlugin:
 
     def _home_last_selection(self, settings):
         """Derniere selection du poste : celle memorisee (LAST_SELECTION_KEY) ;
-        a defaut, les derniers operateurs charges (LAST_OPERATORS_KEY) avec une
-        selection vide, pour que la preselection continue de les suivre.
-        None a la premiere ouverture."""
+        a defaut, les derniers operateurs charges (LAST_OPERATORS_KEY, sinon
+        le dernier operateur de la 1.9, LAST_OPERATOR_KEY) avec une selection
+        vide, pour que la preselection continue de les suivre. None a la
+        premiere ouverture."""
         saved = presets_from_json(settings.value(LAST_SELECTION_KEY, ""))
         if saved:
             return saved[0]
-        schemas = parse_project_operators(settings.value(LAST_OPERATORS_KEY, ""))
+        schemas = (parse_project_operators(settings.value(LAST_OPERATORS_KEY, ""))
+                   or parse_project_operators(settings.value(LAST_OPERATOR_KEY, "")))
         if schemas:
             return UserPreset("", tuple(schemas), LayerSelection({}, frozenset()))
         return None
@@ -4033,9 +4042,10 @@ class ConstructelBridgePlugin:
             by_schema = {op.schema: op for op in operators}
             conn_params, password = self._init_conn_params()
             first = by_schema.get(plan[0][0]) if plan[0][0] is not None else None
-            if first is not None:
+            if first is not None or plan[0][0] is None:
+                # Communes seules aussi (spec § 8.2) : operator=None.
                 suffix = self._reorganize_legacy_project(first, suffix)
-            elif plan[0][0] is not None:
+            else:
                 # Revue tache 2 : jamais en silence (l'entree echouera plus bas).
                 self._log(f"Chargement : operateur {plan[0][0]!r} absent des operateurs proposes, "
                           f"reorganisation des projets 1.8 sautee", Qgis.MessageLevel.Warning)
@@ -4109,14 +4119,16 @@ class ConstructelBridgePlugin:
             self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
             return 0
 
-    def _reorganize_legacy_project(self, operator: OperatorInfo, suffix: bool | None) -> bool | None:
+    def _reorganize_legacy_project(self, operator: Optional[OperatorInfo], suffix: bool | None) -> bool | None:
         """Au clic « Ajouter » seulement (spec 6.5) : range un projet 1.8 par
         operateur (groupes de chaque operateur, « Commun »), inscrit ces
         operateurs dans l'identite du projet et previent la personne.
 
         Retourne le suffixe a transmettre au chargement : *suffix* tel quel,
         sauf quand l'operateur ajoute differe d'un operateur du projet (au
-        moins deux operateurs : suffixe obligatoire, § 6.4). Sans groupe
+        moins deux operateurs : suffixe obligatoire, § 6.4). *operator* None
+        (chargement des seules couches communes, § 8.2) : rien a comparer,
+        le suffixe n'est jamais force par cette comparaison. Sans groupe
         herite, ne fait rien. Jamais appelee a l'ouverture d'un projet
         (_on_project_read)."""
         from .bridge_project_init import (
@@ -4131,7 +4143,7 @@ class ConstructelBridgePlugin:
         if not needs_reorganization(project.layerTreeRoot(), known):
             return suffix
         touched = reorganize_legacy_tree(project, self._operator_registry)
-        if any(op.schema != operator.schema for op in touched):
+        if operator is not None and any(op.schema != operator.schema for op in touched):
             suffix = True
         for op in touched:
             stamp_project(op, suffix)
@@ -4536,6 +4548,7 @@ class ConstructelBridgePlugin:
         QGIS illisibles : aucune verification locale, la page s'ouvre quand meme."""
         try:
             local_checks = self._diagnostic_local_checks()
+            self._diagnostic_last_checks = list(local_checks)
         except Exception as exc:  # noqa: BLE001 -- jamais bloquant pour la fenetre
             self._log(f"Diagnostic : verifications locales illisibles ({exc})", Qgis.MessageLevel.Warning)
             local_checks = []
@@ -4580,7 +4593,15 @@ class ConstructelBridgePlugin:
                 self._log(f"Diagnostic : extension {check.target} en echec ({exc})", Qgis.MessageLevel.Warning)
                 QMessageBox.warning(self.iface.mainWindow(), tr("diag.title"),
                                     tr("onboard.action.plugin_error", pid=check.target, error=exc))
-        return self._diagnostic_local_checks()
+        # Slot Qt : rien ne doit en sortir (revue finale). Verifications
+        # illisibles apres l'action : les dernieres connues, sinon aucune.
+        try:
+            checks = self._diagnostic_local_checks()
+        except Exception as exc:  # noqa: BLE001 -- jamais de boite d'erreur Python
+            self._log(f"Diagnostic : verifications locales illisibles ({exc})", Qgis.MessageLevel.Warning)
+            return list(self._diagnostic_last_checks)
+        self._diagnostic_last_checks = list(checks)
+        return checks
 
     # =====================================================================
     # Logging

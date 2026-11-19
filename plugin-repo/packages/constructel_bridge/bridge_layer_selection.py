@@ -81,6 +81,9 @@ _TILE_ICONS = {
 }
 _PARTIAL_MARK = "◪"
 _LOADED_MARK = "✔"
+# Pastille d'operateur sur la rangee « Par operateur » (§ 6.2) : un cadre aux
+# couleurs de la palette, jamais de fond code en dur.
+_CHIP_STYLE = "border: 1px solid palette(mid); border-radius: 7px; padding: 0px 6px;"
 
 Key = Tuple[Optional[str], str]     # (schema operateur ou None si commune, cle du catalogue)
 
@@ -138,6 +141,10 @@ class LayerSelectionWidget(QWidget):
         self._row_buttons: Dict[str, Tuple[QPushButton, QPushButton]] = {}
         self._groups: list = []
         self._group_of: Dict[object, _Group] = {}
+        self._chips: list = []          # pastilles des operateurs coches (rangee « Par operateur »)
+        # « Aucun » : choix des tuiles operateur mis de cote, repris quand un
+        # operateur est de nouveau coche (§ 7) ; None sinon.
+        self._operator_memory: Optional[Tuple[list, set]] = None
         self._basemap_items: Dict[str, QTreeWidgetItem] = {}
         self._existing_basemaps = _detect_existing_basemaps()
         self._build_ui()
@@ -150,6 +157,9 @@ class LayerSelectionWidget(QWidget):
         for row in ("operator", "common"):
             header = QHBoxLayout()
             header.addWidget(QLabel(_ROW_TITLES[row]()))
+            if row == "operator":
+                self._chips_layout = QHBoxLayout()
+                header.addLayout(self._chips_layout)
             header.addStretch()
             btn_all = QPushButton(tr("home.row_all"))
             btn_none = QPushButton(tr("home.row_none"))
@@ -366,8 +376,20 @@ class LayerSelectionWidget(QWidget):
         s'etend aux operateurs ajoutes."""
         full = [tile for tile, state in self.tile_states().items() if state == STATE_ON]
         kept = self._checked_keys()
-        self._operators = tuple(operators)
+        operators = tuple(operators)
+        if self._operators and not operators:
+            # « Aucun » : la rangee est grisee et decochee, son choix mis de cote.
+            self._operator_memory = ([t for t in full if t in OPERATOR_TILES],
+                                     {k for k in kept if k[0] is not None})
+        elif operators and not self._operators and self._operator_memory is not None:
+            # Un operateur de nouveau coche : ses tuiles reprennent le dernier choix.
+            memory_full, memory_keys = self._operator_memory
+            self._operator_memory = None
+            full = full + [t for t in memory_full if t not in full]
+            kept = kept | memory_keys
+        self._operators = operators
         self._existing = existing_by_schema(self._schemas)
+        self._refresh_chips()
 
         def change():
             self._rebuild_tree(kept)
@@ -375,6 +397,24 @@ class LayerSelectionWidget(QWidget):
                 self._check_tile(tile, True)
 
         self._mutate(change)
+
+    def _refresh_chips(self) -> None:
+        """Une pastille par operateur coche, dans l'ordre, sur la rangee
+        « Par operateur »."""
+        for chip in self._chips:
+            self._chips_layout.removeWidget(chip)
+            chip.hide()
+            chip.deleteLater()
+        self._chips = []
+        for operator in self._operators:
+            chip = QLabel(operator.label)
+            chip.setStyleSheet(_CHIP_STYLE)
+            self._chips_layout.addWidget(chip)
+            self._chips.append(chip)
+
+    def operator_chips(self) -> list:
+        """Libelles des pastilles affichees."""
+        return [chip.text() for chip in self._chips]
 
     def _tile_items(self, tile: str, expert: bool = False) -> list:
         keys = tile_keys(tile, expert)
@@ -487,3 +527,20 @@ class LayerSelectionWidget(QWidget):
 
     def want_styles(self) -> bool:
         return self._chk_styles.isChecked()
+
+    def set_basemaps(self, keys: Iterable[str]) -> None:
+        """Coche exactement les fonds de plan *keys* (ceux deja charges restent
+        gris et decoches) ; un seul ``on_change``."""
+        keys = set(keys)
+        blocked = self._basemap_tree.blockSignals(True)
+        try:
+            for key, item in self._basemap_items.items():
+                if key in self._existing_basemaps:
+                    continue
+                item.setCheckState(0, Qt.CheckState.Checked if key in keys else Qt.CheckState.Unchecked)
+        finally:
+            self._basemap_tree.blockSignals(blocked)
+        self._notify()
+
+    def set_want_styles(self, wanted: bool) -> None:
+        self._chk_styles.setChecked(bool(wanted))

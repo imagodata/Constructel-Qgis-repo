@@ -943,3 +943,181 @@ def test_load_selection_warns_when_the_first_operator_is_unknown(bp18, pi, monke
 
     assert reorganized == []
     assert any("wyre" in m[0] and "1.8" in m[0] for m in QgsMessageLog._messages)
+
+
+# --- Revue finale ----------------------------------------------------------------------------
+
+
+def test_home_snapshot_falls_back_on_the_1_9_last_operator(bp18, pi, onb, monkeypatch, tmp_path):  # noqa: F811
+    # Revue finale : poste venu de la 1.9, ni LAST_SELECTION_KEY ni
+    # LAST_OPERATORS_KEY : la preselection suit LAST_OPERATOR_KEY.
+    from qgis.core import QgsSettings
+
+    plugin = _nominal_plugin(bp18, monkeypatch, tmp_path)
+    plugin._operators = [WYRE, ORANGE]
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: [])
+    QgsSettings().setValue(bo.LAST_OPERATOR_KEY, "orange")
+
+    snapshot = plugin.home_snapshot()
+
+    assert snapshot.last_selection == UserPreset("", ("orange",), LayerSelection({}, frozenset()))
+    assert hm.home_state(snapshot).preselected == ("orange",)
+    # La cle 2.0 prime sur celle de la 1.9.
+    QgsSettings().setValue(bo.LAST_OPERATORS_KEY, "wyre")
+    assert plugin.home_snapshot().last_selection.schemas == ("wyre",)
+
+
+def test_diagnostic_action_survives_unreadable_local_checks(bp18, monkeypatch):
+    # Revue finale : une exception des verifications locales apres l'action
+    # ne sort jamais du slot Qt (pas de boite d'erreur Python) : avertissement
+    # journalise, dernieres verifications connues rendues.
+    from qgis.core import QgsMessageLog
+
+    plugin = bp18.ConstructelBridgePlugin(_FakeIface())
+    plugin._connected = False
+    checks = [bd.Check("identity", "ok", "diag.identity_ok", {"login": "jdoe"})]
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", lambda: checks)
+    assert plugin._diagnostic_inputs()[1] == checks
+
+    def boom():
+        raise RuntimeError("qgis.utils indisponible")
+
+    monkeypatch.setattr(plugin, "_diagnostic_local_checks", boom)
+    QgsMessageLog._messages.clear()
+    manager = bd.Check("plugin", "ok", "diag.plugin_ok", {"name": "A"})     # sans action : relecture seule
+    assert plugin._run_diagnostic_action(manager) == checks
+    assert any("qgis.utils indisponible" in m[0] for m in QgsMessageLog._messages)
+    # Sans verifications connues : liste vide.
+    fresh = bp18.ConstructelBridgePlugin(_FakeIface())
+    monkeypatch.setattr(fresh, "_diagnostic_local_checks", boom)
+    assert fresh._run_diagnostic_action(manager) == []
+
+
+def _push_buttons(dialog):
+    return dialog.findChildren(_Button)
+
+
+def test_enter_presses_no_sidebar_nor_page_button(home):
+    # Revue finale (Important) : dans un QDialog tout QPushButton est
+    # autoDefault, Entree dans la recherche ou l'arbre cliquait « FR » ou
+    # « Se connecter ». Aucun bouton autoDefault, apres chaque redessin et
+    # chaque construction de page ; « Charger » par defaut sur sa page.
+    dialog = _open(home, snap(**OFFLINE))
+    footer = [dialog._connect_button, *dialog._lang_buttons.values()]
+    load = dialog._pages["load"]
+    assert all(b in _push_buttons(dialog) for b in footer + [load._load_button])
+    assert not any(b.autoDefault() for b in _push_buttons(dialog))
+    assert [b for b in _push_buttons(dialog) if b.isDefault()] == [load._load_button]
+
+    dialog.snapshots.append(snap())
+    dialog._connect_button.clicked.emit(False)                 # redessin
+    buttons = _push_buttons(dialog)
+    page = dialog._pages["load"]
+    assert page._operator_buttons and all(b in buttons for b in page._operator_buttons.values())
+    assert not any(b.autoDefault() for b in buttons)
+    assert [b for b in buttons if b.isDefault()] == [page._load_button]
+
+    for name in ("projects", "checkin", "diagnostic"):         # pages construites a leur affichage
+        dialog.show_page(name)
+        assert dialog._pages[name] in dialog._stack.pages
+        assert not any(b.autoDefault() for b in _push_buttons(dialog))
+        assert not any(b.isDefault() for b in _push_buttons(dialog))    # « Charger » cache : pas par defaut
+    assert dialog._pages["projects"]._open_button in _push_buttons(dialog)
+    dialog.show_page("load")
+    assert [b for b in _push_buttons(dialog) if b.isDefault()] == [page._load_button]
+
+
+def test_checkin_redraw_keeps_buttons_off_auto_default(home):
+    dialog = _open(home, snap(checkin=hm.CheckinState(bd.PluginSummary(5, 6, 0), False, True)), page="checkin")
+    page = dialog._pages["checkin"]
+    page.on_change()                                          # apres une action : barre relue
+    assert not any(b.autoDefault() for b in _push_buttons(dialog))
+
+
+class _Geometry:
+    def __init__(self, width, height):
+        self._size = (width, height)
+
+    def width(self):
+        return self._size[0]
+
+    def height(self):
+        return self._size[1]
+
+
+def _screen(monkeypatch, width, height):
+    from qgis.PyQt import QtGui
+
+    screen = types.SimpleNamespace(availableGeometry=lambda: _Geometry(width, height))
+    monkeypatch.setattr(QtGui, "QGuiApplication",
+                        types.SimpleNamespace(primaryScreen=staticmethod(lambda: screen)), raising=False)
+
+
+def test_window_fits_a_1366x768_laptop(home, monkeypatch):
+    # Anti-objectif § 4 : 1366x768, barre des taches de 40 px.
+    _screen(monkeypatch, 1366, 728)
+    dialog = _open(home)
+    width, height = dialog.size
+    assert width == 1100 and height <= 728 - 30                 # place pour la barre de titre
+    assert dialog.minimum_size == (980, 640)
+
+
+def test_window_keeps_its_sizes_on_a_large_screen(home, monkeypatch):
+    _screen(monkeypatch, 1920, 1040)
+    dialog = _open(home)
+    assert dialog.size == (1100, 720) and dialog.minimum_size == (980, 640)
+
+
+def test_window_and_minimum_shrink_on_a_small_screen(home, monkeypatch):
+    _screen(monkeypatch, 1024, 600)
+    dialog = _open(home)
+    width, height = dialog.size
+    assert width < 1024 and height < 600
+    assert dialog.minimum_size == (980, height)                # jamais plus grand que l'ecran
+    assert width >= 980
+
+
+def test_window_survives_an_unreadable_screen(home, monkeypatch):
+    from qgis.PyQt import QtGui
+
+    def boom():
+        raise RuntimeError("pas d'ecran")
+
+    monkeypatch.setattr(QtGui, "QGuiApplication",
+                        types.SimpleNamespace(primaryScreen=staticmethod(boom)), raising=False)
+    dialog = _open(home)
+    assert dialog.size == (1100, 720) and dialog.minimum_size == (980, 640)
+
+
+def test_diagnostic_action_refreshes_the_checkin_badge(home):
+    # Revue finale : une installation depuis le Diagnostic eteint la pastille
+    # du Check-in sans attendre un redessin.
+    dialog = _open(home, snap(checkin=hm.CheckinState(bd.PluginSummary(5, 6, 0), True, True)), page="diagnostic")
+    panel = dialog._pages["diagnostic"]
+    assert dialog._sidebar.rows[2].endswith("⚠ 1")
+    dialog.snapshots.append(snap(checkin=hm.CheckinState(bd.PluginSummary(6, 6, 0), True, True)))
+
+    panel._run_action(bd.Check("plugin", "warning", "diag.plugin_missing", {"name": "C"}, "install", "c"))
+
+    assert any(isinstance(e, tuple) and e[0] == "diagnostic_action" for e in dialog.log)
+    assert dialog._sidebar.rows[2] == home.tr("home.nav_checkin")
+    assert dialog._pages["diagnostic"] is panel and panel._closed is False and dialog._sidebar.currentRow() == 3
+
+
+def test_redraw_keeps_basemaps_styles_and_suffix(home):
+    # Ledger T9 : les options de la page Charger survivent a render(), comme
+    # current_choice().
+    dialog = _open(home, snap(operators=(WYRE,), last_suffix=False))
+    page = dialog._pages["load"]
+    page._selection.set_basemaps(set())
+    page._selection.set_want_styles(False)
+    page._suffix_box.setChecked(True)
+    page._suffix_box.clicked.emit(True)
+    options = page.current_options()
+
+    dialog._lang_buttons["en"].clicked.emit(False)
+
+    again = dialog._pages["load"]
+    assert again is not page and again.current_options() == options
+    assert again._suffix_box.checked is True and again._selection.want_styles() is False
+    assert again._selection.selected_basemaps() == set()
