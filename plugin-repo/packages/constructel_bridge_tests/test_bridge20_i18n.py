@@ -44,6 +44,8 @@ KEYS_20 = [
     "home.tile.cables", "home.tile.cadastre", "home.tile.chantier", "home.tile.demand_points",
     "home.tile.genie_civil", "home.tile.osiris", "home.tile.urbanisme", "home.tile.zones",
     "home.tile_done", "home.tile_layers",
+    # 2.0.2 : singuliers (« 1 couche », « 1 fond de plan »)
+    "home.tile_layer_one", "home.loaded_operator_one", "home.loaded_common_one", "home.loaded_basemaps_one",
 ]
 
 # Modules crees ou refaits par le chantier 2.0 : jamais de cle dynamique.
@@ -119,17 +121,24 @@ def test_portuguese_common_only_text_is_accented():
         "Nenhum operador disponível: só as camadas comuns podem ser carregadas.")
 
 
-def test_metadata_is_201():
+def test_metadata_is_202():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    assert "\nversion=2.0.1\n" in meta and "\nchangelog=v2.0.1 - " in meta
+    assert "\nversion=2.0.2\n" in meta and "\nchangelog=v2.0.2 - " in meta
     # Les entrees precedentes restent dans l'historique, en retrait comme les autres.
-    assert (meta.index("\nchangelog=v2.0.1 - ") < meta.index("\n    v2.0.0 - ")
+    assert (meta.index("\nchangelog=v2.0.2 - ") < meta.index("\n    v2.0.1 - ") < meta.index("\n    v2.0.0 - ")
             < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - "))
+
+
+def test_202_changelog_is_ascii_and_names_the_fix():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    entry = meta[meta.index("changelog=v2.0.2 - "):meta.index("\n    v2.0.1 - ")]
+    assert entry.isascii() and "\n" not in entry
+    assert entry.startswith("changelog=v2.0.2 - fix(plugin): mise en forme de l ecran d accueil")
 
 
 def test_201_changelog_is_ascii_and_names_the_fix():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    entry = meta[meta.index("changelog=v2.0.1 - "):meta.index("\n    v2.0.0 - ")]
+    entry = meta[meta.index("v2.0.1 - "):meta.index("\n    v2.0.0 - ")]
     assert entry.isascii() and "\n" not in entry
     assert "qtreewidgetitem" in entry.lower() and "vrais widgets qt" in entry.lower()
 

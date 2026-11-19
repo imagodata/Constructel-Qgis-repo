@@ -103,7 +103,7 @@ def page_mod(ob, monkeypatch):
     from qgis import core
     from qgis.PyQt import QtCore, QtWidgets
 
-    for name, fake in (("QWidget", _W), ("QDialog", _Dialog), ("QGroupBox", _GroupBox),
+    for name, fake in (("QWidget", _W), ("QFrame", _W), ("QDialog", _Dialog), ("QGroupBox", _GroupBox),
                        ("QLabel", _Label), ("QPushButton", _Button),
                        ("QVBoxLayout", _Layout), ("QHBoxLayout", _Layout), ("QGridLayout", _Layout),
                        ("QDialogButtonBox", type("QDialogButtonBox", (), {}))):

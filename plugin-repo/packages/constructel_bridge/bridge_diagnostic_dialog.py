@@ -24,6 +24,7 @@ from typing import Callable, Optional
 from qgis.core import QgsApplication, QgsTask
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
+    QFrame,
     QGridLayout,
     QLabel,
     QPushButton,
@@ -132,6 +133,7 @@ class DiagnosticPanel(QWidget):
         self.destroyed.connect(lambda *_args: state.update(destroyed=True))
 
         self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
         title = QLabel(tr("diag.section_connection"))
         title.setStyleSheet("font-weight: bold;")
         self._layout.addWidget(title)
@@ -144,7 +146,8 @@ class DiagnosticPanel(QWidget):
         self._restart_button = QPushButton(tr("diag.restart"))
         self._restart_button.clicked.connect(lambda _checked=False: self.restart())
         self._restart_button.setEnabled(False)  # reactive a la fin de la sonde reseau
-        self._layout.addWidget(self._restart_button)
+        self._layout.addWidget(self._restart_button, 0, Qt.AlignmentFlag.AlignRight)
+        self._layout.addStretch()               # lignes en haut de la page, pas etirees
 
         self._start_network_task()
 
@@ -169,7 +172,10 @@ class DiagnosticPanel(QWidget):
         QgsApplication.taskManager().addTask(task)
 
     def _build_rows(self) -> QWidget:
-        container = QWidget(self)
+        # Cadre aux couleurs de la palette (role « panel » de la feuille de
+        # style de l'accueil, bridge_home_style) ; sans effet hors accueil.
+        container = QFrame(self)
+        container.setProperty("bridgeRole", "panel")
         grid = QGridLayout(container)
         grid.setColumnStretch(1, 1)
         for row, check in enumerate(ordered_checks(self._local_checks, self._network_checks)):

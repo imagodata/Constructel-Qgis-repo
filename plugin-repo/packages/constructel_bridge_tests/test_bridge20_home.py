@@ -131,7 +131,7 @@ def home(pi, monkeypatch):  # noqa: F811
     monkeypatch.setattr(core, "QgsTask", _Task, raising=False)
     monkeypatch.setattr(core.QgsApplication, "taskManager",
                         staticmethod(lambda: types.SimpleNamespace(addTask=tasks.append)), raising=False)
-    for name, fake in (("QWidget", _W), ("QDialog", _Dialog), ("QGroupBox", _GroupBox), ("QLabel", _Label),
+    for name, fake in (("QWidget", _W), ("QFrame", _W), ("QDialog", _Dialog), ("QGroupBox", _GroupBox), ("QLabel", _Label),
                        ("QPushButton", _Button), ("QCheckBox", _CheckBox), ("QToolButton", _ToolButton),
                        ("QMenu", _Menu), ("QInputDialog", _InputDialog), ("QLineEdit", _LineEdit),
                        ("QTreeWidget", _ProjTree), ("QTreeWidgetItem", _Item), ("QListWidget", _ListWidget),
@@ -419,7 +419,7 @@ def test_load_nothing_rerenders(home):   # T9-c1b
     page = dialog._pages["load"]
     assert dialog.closed is False and old.deleted and page is not old and dialog._current == "load"
     assert page._summary_label.text() == " · ".join([
-        home.tr("home.loaded_operator", operator="Wyre", count=2), home.tr("home.loaded_basemaps", count=1)])
+        home.tr("home.loaded_operator", operator="Wyre", count=2), home.tr("home.loaded_basemaps_one")])
     assert page.current_choice() == choice
 
 

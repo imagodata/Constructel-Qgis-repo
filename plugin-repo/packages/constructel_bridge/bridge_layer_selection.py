@@ -23,10 +23,13 @@ from typing import Callable, Dict, Iterable, Optional, Sequence, Tuple
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -34,6 +37,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from .bridge_home_style import TILE_STATE, set_role, set_state, uppercase
 from .bridge_operators import OperatorInfo
 from .bridge_presets import (
     COMMON_TILES,
@@ -57,7 +61,7 @@ from .bridge_project_init import (
     existing_by_schema,
 )
 from .i18n import get_language, tr
-from .i18n.layer_translations import LAYER_DISPLAY_NAMES
+from .i18n.layer_translations import LAYER_DISPLAY_NAMES, LAYER_TREE_LABELS
 
 # K11 : un appel tr LITTERAL par cle (releve par les tests i18n).
 _TILE_NAMES = {
@@ -81,34 +85,61 @@ _TILE_ICONS = {
 }
 _PARTIAL_MARK = "◪"
 _LOADED_MARK = "✔"
-# Pastille d'operateur sur la rangee « Par operateur » (§ 6.2) : un cadre aux
-# couleurs de la palette, jamais de fond code en dur.
-_CHIP_STYLE = "border: 1px solid palette(mid); border-radius: 7px; padding: 0px 6px;"
 
 Key = Tuple[Optional[str], str]     # (schema operateur ou None si commune, cle du catalogue)
 
 
 def _layer_label(entry: tuple) -> str:
-    """Libelle court d'une couche : celui de layer_translations (meme source
-    que le renommage des couches du projet, indexe par la table), sinon le
-    libelle francais du catalogue."""
-    names = LAYER_DISPLAY_NAMES.get(entry[3])
-    if names:
-        return names.get(get_language()) or names.get("en") or entry[6]
+    """Libelle court et accentue d'une couche dans la langue courante :
+    LAYER_TREE_LABELS (indexe par la cle du catalogue, toutes les couches),
+    sinon celui du renommage des couches du projet (LAYER_DISPLAY_NAMES,
+    indexe par la table), sinon le libelle francais du catalogue."""
+    lang = get_language()
+    for names in (LAYER_TREE_LABELS.get(entry[0]), LAYER_DISPLAY_NAMES.get(entry[3])):
+        if names:
+            return names.get(lang) or names.get("en") or entry[6]
     return entry[6]
 
 
+def layers_text(count: int) -> str:
+    """« 1 couche » ou « N couches » (singulier pour 1 seulement)."""
+    return tr("home.tile_layer_one") if count == 1 else tr("home.tile_layers", count=count)
+
+
 def step_number_label(number: str) -> QLabel:
-    """Numero d'etape (1 / 2 / 3), hors traduction, devant le titre."""
+    """Numero d'etape (1 / 2 / 3), hors traduction, dans une pastille ronde
+    aux couleurs de surbrillance de la palette, devant le titre."""
     label = QLabel(number)
-    label.setStyleSheet("font-weight: bold;")
+    set_role(label, "badge")
     return label
 
 
 def step_title_label(title: str) -> QLabel:
+    """Titre d'etape, en majuscules grasses (par la police : le texte reste
+    la traduction)."""
     label = QLabel(title)
-    label.setStyleSheet("font-weight: bold;")
+    set_role(label, "stepTitle")
+    uppercase(label)
     return label
+
+
+def step_header(number: str, title: str) -> QHBoxLayout:
+    """Ligne d'en-tete d'une etape : pastille, titre, ressort ; l'appelant
+    ajoute a droite ce qui accompagne l'etape (menu, case)."""
+    header = QHBoxLayout()
+    header.setSpacing(8)
+    header.addWidget(step_number_label(number))
+    header.addWidget(step_title_label(title))
+    header.addStretch()
+    return header
+
+
+def panel(parent=None) -> QFrame:
+    """Cadre d'une etape : bordure discrete et fond de la palette (role
+    ``panel`` de la feuille de style de l'accueil)."""
+    frame = QFrame(parent)
+    set_role(frame, "panel")
+    return frame
 
 
 class _Group:
@@ -153,41 +184,64 @@ class LayerSelectionWidget(QWidget):
     # -- construction ------------------------------------------------------------------
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        for row in ("operator", "common"):
-            header = QHBoxLayout()
-            header.addWidget(QLabel(_ROW_TITLES[row]()))
+        # Tuiles : un bloc a part (tiles_panel), que la page place dans le cadre
+        # de son etape 2 ; le widget lui-meme porte l'etape 3 (en-tete et arbre).
+        # Grille : a gauche le titre de la rangee, ses pastilles et « tout · rien »,
+        # puis quatre tuiles de largeurs egales qui remplissent la rangee.
+        self._tiles_panel = QWidget()
+        grid = QGridLayout(self._tiles_panel)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for line, row in enumerate(("operator", "common")):
+            side = QVBoxLayout()
+            side.setSpacing(2)
+            title = QLabel(_ROW_TITLES[row]())
+            title.setStyleSheet("font-weight: bold;")
+            side.addWidget(title)
             if row == "operator":
                 self._chips_layout = QHBoxLayout()
-                header.addLayout(self._chips_layout)
-            header.addStretch()
+                self._chips_layout.setSpacing(3)
+                side.addLayout(self._chips_layout)
+            links = QHBoxLayout()
+            links.setSpacing(0)
             btn_all = QPushButton(tr("home.row_all"))
             btn_none = QPushButton(tr("home.row_none"))
+            dot = QLabel("·")
+            set_role(dot, "muted")
+            for button in (btn_all, btn_none):
+                set_role(button, "link")
             btn_all.clicked.connect(lambda _checked=False, r=row: self.set_row(r, True))
             btn_none.clicked.connect(lambda _checked=False, r=row: self.set_row(r, False))
-            header.addWidget(btn_all)
-            header.addWidget(btn_none)
+            links.addWidget(btn_all)
+            links.addWidget(dot)
+            links.addWidget(btn_none)
+            links.addStretch()
+            side.addLayout(links)
+            side.addStretch()
             self._row_buttons[row] = (btn_all, btn_none)
-            layout.addLayout(header)
+            grid.addLayout(side, line, 0)
 
-            tiles = QHBoxLayout()
-            for tile in _ROW_TILES[row]:
+            for column, tile in enumerate(_ROW_TILES[row], start=1):
                 button = QToolButton()
                 button.setCheckable(True)
+                set_role(button, "tile")
+                button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
                 button.clicked.connect(lambda _checked=False, t=tile: self.toggle_tile(t))
-                tiles.addWidget(button)
+                grid.addWidget(button, line, column)
                 self._tiles[tile] = button
-            layout.addLayout(tiles)
+        for column in range(1, 5):
+            grid.setColumnStretch(column, 1)
 
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         self._tree = QTreeWidget()
+        self._tree.setObjectName("bridgeLayers")
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
         self._tree.itemChanged.connect(self._on_item_changed)
         # Etape 3 « Couches » : l'entete porte aussi la case « Afficher toutes les couches ».
-        header = QHBoxLayout()
-        header.addWidget(step_number_label("3"))
-        header.addWidget(step_title_label(tr("home.step_layers")))
-        header.addStretch()
+        header = step_header("3", tr("home.step_layers"))
         self._chk_expert = QCheckBox(tr("home.show_expert"))
         self._chk_expert.toggled.connect(self.set_show_expert)
         header.addWidget(self._chk_expert)
@@ -322,7 +376,7 @@ class LayerSelectionWidget(QWidget):
         for tile, button in self._tiles.items():
             state = states[tile]
             second = (tr("home.tile_done") if state == STATE_DONE
-                      else tr("home.tile_layers", count=len(tile_keys(tile))))     # R10 : jamais d'expert
+                      else layers_text(len(tile_keys(tile))))     # R10 : jamais d'expert
             head = f"{_TILE_ICONS[tile]} {_TILE_NAMES[tile]()}"
             if state == STATE_PARTIAL:
                 head = f"{_PARTIAL_MARK} {head}"
@@ -330,6 +384,7 @@ class LayerSelectionWidget(QWidget):
             button.setToolTip(", ".join(self._tile_labels(tile)))
             button.setEnabled(state not in (STATE_DISABLED, STATE_DONE))
             button.setChecked(state == STATE_ON)
+            set_state(button, TILE_STATE, state)        # partielle : cadre tirete (feuille de style)
         for button in self._row_buttons["operator"]:
             button.setEnabled(bool(self._schemas))
 
@@ -409,8 +464,10 @@ class LayerSelectionWidget(QWidget):
             chip.deleteLater()
         self._chips = []
         for operator in self._operators:
+            # Pastille : cadre aux couleurs palette(...) de la feuille de style
+            # de l'accueil (role « chip »), jamais de fond code en dur.
             chip = QLabel(operator.label)
-            chip.setStyleSheet(_CHIP_STYLE)
+            set_role(chip, "chip")
             self._chips_layout.addWidget(chip)
             self._chips.append(chip)
 
@@ -511,6 +568,12 @@ class LayerSelectionWidget(QWidget):
             self._tree.blockSignals(blocked)
 
     # -- fonds de plan et styles (inchanges depuis 1.9) --------------------------------------
+
+    def tiles_panel(self) -> QWidget:
+        """Bloc des deux rangees de tuiles, a placer par l'appelant dans le
+        cadre de son etape 2 (comme ``options_panel``). A desactiver avec le
+        widget : il n'en est pas l'enfant."""
+        return self._tiles_panel
 
     def options_panel(self) -> QWidget:
         """Bloc « fonds de plan + appliquer les styles », a placer par

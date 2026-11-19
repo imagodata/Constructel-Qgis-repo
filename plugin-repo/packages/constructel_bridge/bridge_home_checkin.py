@@ -20,11 +20,12 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from qgis.PyQt.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .bridge_diagnostic_dialog import LEVEL_MARKS, action_label, check_message
 from .bridge_diagnostic import LEVEL_OK, LEVEL_RUNNING, LEVEL_WARNING, Check
 from .bridge_home_model import HomeActions, HomeSnapshot
+from .bridge_home_style import set_role, uppercase
 from .bridge_onboarding import filtermate_configured, resource_sharing_configured
 from .i18n import tr
 
@@ -40,9 +41,22 @@ _SHARING_MARKS = {
 
 
 def _section_title(text: str) -> QLabel:
+    """Titre de section, en majuscules grasses (par la police : le texte
+    reste la traduction)."""
     label = QLabel(text)
-    label.setStyleSheet("font-weight: bold;")
+    set_role(label, "stepTitle")
+    uppercase(label)
     return label
+
+
+def _section(parent, title: str) -> tuple:
+    """(cadre, mise en page) d'une section : cadre aux couleurs de la palette
+    (role « panel »), titre en tete."""
+    frame = QFrame(parent)
+    set_role(frame, "panel")
+    box = QVBoxLayout(frame)
+    box.addWidget(_section_title(title))
+    return frame, box
 
 
 def _mark_label(mark) -> QLabel:
@@ -78,14 +92,19 @@ class CheckinPage(QWidget):
         self.on_wizard_started: Optional[Callable[[], None]] = None
 
         self._layout = QVBoxLayout(self)
-        self._layout.addWidget(_section_title(tr("home.checkin_title")))
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+        title = QLabel(tr("home.checkin_title"))
+        title.setStyleSheet("font-weight: bold;")
+        self._layout.addWidget(title)
         self._profile_label = _text_label(self._profile_text())
+        set_role(self._profile_label, "muted")
         self._layout.addWidget(self._profile_label)
         self._rows = self._build_rows(self._read_plugin_checks())
         self._layout.addWidget(self._rows)
         self._wizard_button = QPushButton(tr("home.checkin_full"))
         self._wizard_button.clicked.connect(lambda _checked=False: self._start_wizard())
-        self._layout.addWidget(self._wizard_button)
+        self._layout.addWidget(self._wizard_button, 0, Qt.AlignmentFlag.AlignRight)
         self._layout.addStretch()
         if start_wizard:
             self._start_wizard()
@@ -110,11 +129,14 @@ class CheckinPage(QWidget):
     def _build_rows(self, checks: list) -> QWidget:
         """Extensions recommandees, puis partages Constructel."""
         container = QWidget(self)
-        box = QVBoxLayout(container)
-        box.addWidget(_section_title(tr("home.checkin_plugins")))
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        plugins, box = _section(container, tr("home.checkin_plugins"))
         for check in checks:
             box.addLayout(self._check_row(check))
-        box.addWidget(_section_title(tr("home.checkin_sharing")))
+        outer.addWidget(plugins)
+        sharing, box = _section(container, tr("home.checkin_sharing"))
         rs, fm = resource_sharing_configured(), filtermate_configured()
         box.addLayout(self._sharing_row(
             "resource_sharing", rs,
@@ -124,6 +146,7 @@ class CheckinPage(QWidget):
             tr("home.fm_configured") if fm else tr("home.fm_missing")))
         if self._message:
             box.addWidget(_text_label(self._message))
+        outer.addWidget(sharing)
         return container
 
     def _check_row(self, check: Check) -> QHBoxLayout:

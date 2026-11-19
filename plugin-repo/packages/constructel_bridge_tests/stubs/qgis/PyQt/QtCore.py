@@ -2,6 +2,7 @@ class Qt:
     class AlignmentFlag:
         AlignCenter = 0x84
         AlignLeft = 0x1
+        AlignRight = 0x2
 
     AlignCenter = AlignmentFlag.AlignCenter
 
@@ -23,3 +24,8 @@ class QTimer:
         pending, QTimer._pending = QTimer._pending, []
         for callback in pending:
             callback()
+
+
+class QSize:
+    def __init__(self, *_args):
+        pass

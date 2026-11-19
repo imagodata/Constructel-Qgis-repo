@@ -67,7 +67,8 @@ def load(pi, monkeypatch):  # noqa: F811
     from qgis.core import QgsSettings
     from qgis.PyQt import QtCore, QtWidgets
 
-    for name, fake in (("QWidget", _W), ("QDialog", _Dialog), ("QGroupBox", _GroupBox), ("QTreeWidget", _Tree),
+    for name, fake in (("QWidget", _W), ("QFrame", _W), ("QGridLayout", _Layout), ("QDialog", _Dialog),
+                       ("QGroupBox", _GroupBox), ("QTreeWidget", _Tree),
                        ("QTreeWidgetItem", _Item), ("QLabel", _Label), ("QPushButton", _Button),
                        ("QCheckBox", _CheckBox), ("QToolButton", _ToolButton), ("QMenu", _Menu),
                        ("QInputDialog", _InputDialog), ("QVBoxLayout", _Layout), ("QHBoxLayout", _Layout)):
@@ -244,6 +245,29 @@ def test_imposed_or_project_suffix_is_never_remembered(load):
     assert from_project._suffix_box.checked is True and from_project._suffix_box.enabled is True
     from_project._load_button.clicked.emit(False)
     assert load.settings().value(load.SUFFIX_SETTINGS_KEY, None) is None
+
+
+def test_counts_of_one_are_singular_in_summaries(load):
+    """2.0.2 : « 1 couche », « 1 fond de plan », « ✓ Wyre · 1 couche »,
+    « 1 couche commune » ; pluriel sinon (0 compris)."""
+    from constructel_bridge.i18n.translations import TRANSLATIONS
+
+    fr = TRANSLATIONS["fr"]
+    assert (fr["home.loaded_operator_one"].format(operator="Wyre"), fr["home.loaded_common_one"],
+            fr["home.loaded_basemaps_one"]) == ("✓ Wyre · 1 couche", "1 couche commune", "1 fond de plan")
+    assert load.load_summary_text(1, 1) == f"{load.tr('home.tile_layer_one')} · {load.tr('home.loaded_basemaps_one')}"
+    assert load.load_summary_text(1, 3) == f"{load.tr('home.tile_layer_one')} · {load.tr('home.loaded_basemaps', count=3)}"
+    assert load.load_summary_text(4, 1) == f"{load.tr('home.tile_layers', count=4)} · {load.tr('home.loaded_basemaps_one')}"
+    assert load.load_summary_text(0, 2) == load.tr("home.load_summary", layers=0, basemaps=2)
+    page = _open(load, counts=Counts({"wyre": 1}, 1, 1))
+    assert page._summary_label.text() == (f"{load.tr('home.loaded_operator_one', operator='Wyre')} · "
+                                          f"{load.tr('home.loaded_common_one')} · "
+                                          f"{load.tr('home.loaded_basemaps_one')}")
+    page._selection.apply_selection(LayerSelection({}, frozenset()))
+    page._selection._items[(None, "interventions")].setCheckState(0, _CHECK.Checked)   # une seule couche
+    basemaps = len(page._selection.selected_basemaps())
+    assert page._count_label.text() == load.load_summary_text(1, basemaps)
+    assert page._count_label.text().startswith(load.tr("home.tile_layer_one") + " · ")
 
 
 def test_loaded_operators_force_the_suffix_for_a_second_one(load):

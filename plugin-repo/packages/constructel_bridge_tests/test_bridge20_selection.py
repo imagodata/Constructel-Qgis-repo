@@ -38,7 +38,8 @@ def sel(pi, monkeypatch):  # noqa: F811
     branche dans bridge_project_init (``sel.project``)."""
     from qgis.PyQt import QtCore, QtWidgets
 
-    for name, fake in (("QWidget", _W), ("QGroupBox", _GroupBox), ("QTreeWidget", _Tree),
+    for name, fake in (("QWidget", _W), ("QFrame", _W), ("QGridLayout", _Layout), ("QGroupBox", _GroupBox),
+                       ("QTreeWidget", _Tree),
                        ("QTreeWidgetItem", _Item), ("QLabel", _Label), ("QPushButton", _Button),
                        ("QCheckBox", _CheckBox), ("QToolButton", _ToolButton), ("QVBoxLayout", _Layout),
                        ("QHBoxLayout", _Layout)):
@@ -87,24 +88,40 @@ def test_tree_has_one_group_per_tile_and_operator(sel):
 
 
 def test_short_labels_and_table_in_tooltip(sel):
-    from constructel_bridge.i18n.layer_translations import LAYER_DISPLAY_NAMES
+    from constructel_bridge.i18n.layer_translations import LAYER_TREE_LABELS
 
     widget = _two(sel)
     item = widget._items[("wyre", "cables")]
     assert "wyre.cables" not in item.text(0) and "(" not in item.text(0)
-    assert item.text(0) == LAYER_DISPLAY_NAMES["cables"][sel.get_language()]     # libelle court, jamais schema.table
+    assert item.text(0) == LAYER_TREE_LABELS["cables"][sel.get_language()]       # libelle court, jamais schema.table
     assert item.tip == "wyre.cables"
     assert widget._items[("orange", "cables")].tip == "orange.cables"
 
 
 def test_item_label_follows_the_layer_translations_then_the_catalog(sel):
-    from constructel_bridge.i18n.layer_translations import LAYER_DISPLAY_NAMES
+    from constructel_bridge.i18n.layer_translations import LAYER_DISPLAY_NAMES, LAYER_TREE_LABELS
 
     widget = _two(sel)
     lang = sel.get_language()
     assert widget._items[("wyre", "duct_progress")].text(0) == LAYER_DISPLAY_NAMES["v_duct_progress"][lang]
-    assert widget._items[(None, "interventions")].text(0) == "Interventions"      # sans traduction : label_fr du catalogue
+    assert widget._items[(None, "interventions")].text(0) == LAYER_TREE_LABELS["interventions"][lang]
     assert widget._items[(None, "wfs_buildings")].tip == "wfs.urbisvector:Buildings"
+
+
+def test_every_catalog_layer_has_an_accented_label_in_each_language(sel, monkeypatch):
+    """2.0.2 : l'arbre affiche « Zones protégées », jamais le label_fr ASCII
+    du catalogue (« Zones protegees ») ; FR, EN et PT pour chaque couche."""
+    from constructel_bridge.bridge_project_init import LAYER_CATALOG
+    from constructel_bridge.i18n.layer_translations import LAYER_TREE_LABELS
+
+    assert {entry[0] for entry in LAYER_CATALOG} <= set(LAYER_TREE_LABELS)
+    assert all(set(names) == {"fr", "en", "pt"} and all(names.values()) for names in LAYER_TREE_LABELS.values())
+    assert LAYER_TREE_LABELS["wfs_protection"]["fr"] == "Zones protégées"
+    monkeypatch.setattr(sel, "get_language", lambda: "fr")
+    entry = next(e for e in LAYER_CATALOG if e[0] == "wfs_protection")
+    assert sel._layer_label(entry) == "Zones protégées"
+    monkeypatch.setattr(sel, "get_language", lambda: "pt")
+    assert sel._layer_label(entry) == "Zonas protegidas"
 
 
 def test_common_layers_have_a_single_item_under_none(sel):
@@ -170,7 +187,7 @@ def test_tile_buttons_follow_the_state(sel):
 def test_tile_text_and_tooltip(sel):
     widget = _two(sel)
     head, count = widget._tiles["cables"].text().split("\n")
-    assert sel.tr("home.tile.cables") in head and count == sel.tr("home.tile_layers", count=1)
+    assert sel.tr("home.tile.cables") in head and count == sel.tr("home.tile_layer_one")      # singulier (2.0.2)
     assert widget._tiles["genie_civil"].text().split("\n")[1] == sel.tr("home.tile_layers", count=4)   # sans subducts
     tip = widget._tiles["zones"].tooltip
     labels = [widget._items[("wyre", key)].text(0) for key in TILE_LAYERS["zones"]]
@@ -420,6 +437,20 @@ def test_selection_texts_in_three_languages():
     assert TRANSLATIONS["pt"]["home.tile_done"] == "já carregado"
 
 
+def test_one_layer_is_singular_on_tiles_in_three_languages(sel):
+    """2.0.2 : « 1 couche », jamais « 1 couches » (Câbles, Points de demande)."""
+    from constructel_bridge.i18n.translations import TRANSLATIONS
+
+    assert [TRANSLATIONS[lang]["home.tile_layer_one"] for lang in ("fr", "en", "pt")] == [
+        "1 couche", "1 layer", "1 camada"]
+    widget = _two(sel)
+    for tile in ("cables", "demand_points"):
+        assert widget._tiles[tile].text().split("\n")[1] == sel.tr("home.tile_layer_one")
+    assert sel.layers_text(1) == sel.tr("home.tile_layer_one")
+    assert sel.layers_text(0) == sel.tr("home.tile_layers", count=0)
+    assert sel.layers_text(4) == sel.tr("home.tile_layers", count=4)
+
+
 def test_group_counter_excludes_expert_layers(sel):
     widget = _two(sel)
     widget.set_show_expert(True)
@@ -490,10 +521,11 @@ def test_operator_row_shows_a_chip_per_ticked_operator(sel):
     widget.set_operators((WYRE, ORANGE))
     assert widget.operator_chips() == ["Wyre", "Orange"]
     chips = list(widget._chips)
-    assert all(chip in _widgets(widget) for chip in chips)               # sur la rangee « Par operateur »
+    # sur la rangee « Par operateur », dans le bloc des tuiles (cadre de l'etape 2 de la page, 2.0.2)
+    assert all(chip in _widgets(widget.tiles_panel()) for chip in chips)
     widget.set_operators((ORANGE,))
     assert widget.operator_chips() == ["Orange"]
-    assert all(chip.deleted and chip not in _widgets(widget) for chip in chips)
+    assert all(chip.deleted and chip not in _widgets(widget.tiles_panel()) for chip in chips)
     widget.set_operators(())
     assert widget.operator_chips() == []
 
