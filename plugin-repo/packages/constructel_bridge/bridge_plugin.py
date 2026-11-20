@@ -4076,11 +4076,17 @@ class ConstructelBridgePlugin:
         plan ajoutes (un fond seul donne 1, decision T9-c1b) ; 0 si rien de
         nouveau (avertissement init.nothing_added). Ni couche choisie
         (v_form_lists, docs_elements : jamais un choix) ni fond demandes : ne
-        fait rien et rend 0 (K2)."""
+        fait rien et rend 0 (K2).
+
+        2.1 : puis les couches des projets metier de ``selection.projet``,
+        dans l'ordre du registre (``_projets``) ; un projet metier inconnu ou
+        en echec n'annule rien et est cite dans home.load_partial ; ses
+        couches comptent dans le total. Un projet metier seul suffit a lancer
+        le chargement (entree ``None`` pour les listes de formulaires)."""
         if not selection.layer_count() and not basemaps:
             return 0
         try:
-            from .bridge_project_init import _detect_existing_basemaps, init_project
+            from .bridge_project_init import _detect_existing_basemaps, init_project, load_projet_layers
 
             plan = selection.load_plan() or [(None, frozenset(ALWAYS_KEYS))]  # fonds de plan seuls
             by_schema = {op.schema: op for op in operators}
@@ -4099,6 +4105,7 @@ class ConstructelBridgePlugin:
             basemaps_before = _detect_existing_basemaps()
             pending_basemaps = set(basemaps)  # premier appel reussi seulement
             count, failures, loaded, failed, first_error = 0, 0, [], [], None
+            successes = 0
             carried = frozenset()  # couches communes d'une entree en echec : reprises par la suivante
             for schema, keys in plan:
                 keys = keys | carried
@@ -4116,6 +4123,7 @@ class ConstructelBridgePlugin:
                     )
                     pending_basemaps = set()
                     carried = frozenset()
+                    successes += 1
                     if operator is not None:
                         loaded.append(operator.schema)
                 except Exception as exc:  # noqa: BLE001 -- un operateur en echec n'annule pas les autres
@@ -4126,10 +4134,27 @@ class ConstructelBridgePlugin:
                     first_error = first_error or exc
                     import traceback
                     self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
+            # 2.1 : projets metier coches, apres la chaine operateur.
+            known_projets = {p.code: p for p in self._projets}
+            projet_codes = ([code for code in known_projets if code in selection.projet]
+                            + sorted(code for code in selection.projet if code not in known_projets))
+            for code in projet_codes:
+                projet = known_projets.get(code)
+                try:
+                    if projet is None:
+                        raise ValueError(f"Projet metier inconnu : {code!r}")
+                    count += load_projet_layers(conn_params, password, projet,
+                                                set(selection.projet[code]), apply_styles)
+                    successes += 1
+                except Exception as exc:  # noqa: BLE001 -- un projet metier en echec n'annule rien
+                    failed.append(projet.label if projet is not None else code)
+                    first_error = first_error or exc
+                    import traceback
+                    self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
             added_basemaps = len(_detect_existing_basemaps() - basemaps_before)
             if loaded:
                 QgsSettings().setValue(LAST_OPERATORS_KEY, format_project_operators(loaded))
-            if failures == len(plan) and not count and not added_basemaps:
+            if not successes and not count and not added_basemaps:
                 raise first_error
 
             # Appliquer les traductions i18n
