@@ -2,7 +2,7 @@
 
 Tout passe par la connexion psycopg2 de la session (`self._conn`, autocommit,
 login de la personne) : lectures sous RLS, ecritures par les fonctions
-SECURITY DEFINER du lot (b). `p_as_user` n'est JAMAIS passe. Chaque fonction
+SECURITY DEFINER du lot (b). Le parametre de delegation (as_user) n est JAMAIS passe. Chaque fonction
 ouvre et ferme son curseur ; une lecture en echec rend une valeur neutre
 (capacites absentes, liste vide ou None), jamais une exception.
 """
@@ -165,7 +165,7 @@ STATUS_ERROR = "error"
 
 # HINT codes et stables du contrat (lot b, Q4) : le plugin teste le HINT,
 # jamais le texte du message. Un HINT inconnu = erreur generique (message).
-# QGISP_DELEGATION_DENIED (p_as_user renseigne) ne doit jamais arriver : le
+# QGISP_DELEGATION_DENIED (delegation as_user renseignee) ne doit jamais arriver : le
 # Bridge ne le passe pas ; il est traite comme une erreur generique.
 HINT_STATUS = {
     "QGISP_VERSION_CONFLICT": STATUS_CONFLICT,

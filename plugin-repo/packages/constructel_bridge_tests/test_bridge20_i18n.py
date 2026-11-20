@@ -122,19 +122,33 @@ def test_portuguese_common_only_text_is_accented():
         "Nenhum operador disponível: só as camadas comuns podem ser carregadas.")
 
 
-def test_metadata_is_204():
+def test_metadata_is_210():
+    # 2.1 : la version courante est 2.1.0 ; les entrees 2.0.x restent en retrait.
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    assert "\nversion=2.0.4\n" in meta and "\nchangelog=v2.0.4 - " in meta
+    assert "\nversion=2.1.0\n" in meta and "\nchangelog=v2.1.0 - " in meta
     # Les entrees precedentes restent dans l'historique, en retrait comme les autres.
-    assert (meta.index("\nchangelog=v2.0.4 - ") < meta.index("\n    v2.0.3 - ") < meta.index("\n    v2.0.2 - ") < meta.index("\n    v2.0.1 - ")
+    assert (meta.index("\nchangelog=v2.1.0 - ") < meta.index("\n    v2.0.4 - ") < meta.index("\n    v2.0.3 - ")
+            < meta.index("\n    v2.0.2 - ") < meta.index("\n    v2.0.1 - ")
             < meta.index("\n    v2.0.0 - ") < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - "))
+
+
+def test_210_changelog_is_ascii_and_names_the_features():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    entry = meta[meta.index("changelog=v2.1.0 - "):meta.index("\n    v2.0.4 - ")]
+    assert entry.isascii() and "\n" not in entry
+    assert entry.startswith("changelog=v2.1.0 - feat(plugin): projets metier et projets QGIS")
+    lowered = entry.lower()
+    for word in ("projets metier", "mes projets", "partages avec moi", "publies", "autocompletion", "nominatif",
+                 "conflit de version", "neutralise", "le sien compris", "sans schema projet", "macros",
+                 "demander", "583"):
+        assert word in lowered, word
 
 
 def test_204_changelog_is_ascii_and_names_the_fix():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    entry = meta[meta.index("changelog=v2.0.4 - "):meta.index("\n    v2.0.3 - ")]
+    entry = meta[meta.index("v2.0.4 - "):meta.index("\n    v2.0.3 - ")]
     assert entry.isascii() and "\n" not in entry
-    assert entry.startswith("changelog=v2.0.4 - fix(plugin): fonds de carte UrbIS")
+    assert entry.startswith("v2.0.4 - fix(plugin): fonds de carte UrbIS")
     assert "urbisFRGray" in entry and "geoservices-basemap.irisnet.be" in entry and "UrbIS NL" in entry
 
 
