@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import zlib
 from typing import Optional, Sequence
 from xml.sax.saxutils import escape as xml_escape, unescape as xml_unescape
 
@@ -57,6 +58,11 @@ from .bridge_presets import (
     presets_to_json,
 )
 from .bridge_expressions import register_expressions, unregister_expressions
+from . import bridge_qgis_store as qgis_store
+from .bridge_projets import NO_CAPABILITIES
+from .bridge_project_archive import write_project_archive
+from .bridge_project_safety import MAX_CONTENT_BYTES, MAX_QGS_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
+from .bridge_qgis_projects import OpenedQgisProject, SharePlan, build_metadata, save_target
 from .bridge_identity import (
     build_pgoptions,
     decode_password,
@@ -855,6 +861,10 @@ def _get_plugin_version() -> str:
 
 PLUGIN_VERSION = _get_plugin_version()
 
+# 2.1 : reglage QGIS d'execution des macros et cle de rattrapage (une fois).
+MACROS_SETTING = "qgis/enableMacros"
+MACROS_RESET_KEY = "constructel_bridge/macros_reset_21"
+
 # 2.0 (spec § 8.4) : rattrapage ponctuel du setup, pose une fois par poste.
 ONBOARDING_CATCHUP_KEY = "constructel_bridge/onboarding_catchup_2_0"
 
@@ -985,6 +995,14 @@ class ConstructelBridgePlugin:
         # Wyre, comme 1.8.4) ; False si elle est lue, meme sans operateur
         # utilisable (decision T2-c4).
         self._operators_unavailable = False
+        # Bridge 2.1 : capacites du schema Farois `projet` et projets metier
+        # visibles, lus a la connexion (jamais a l'ouverture de la fenetre) ;
+        # projet QGIS ouvert depuis `projet.qgis_projects` (mise a jour).
+        self._projet_caps = NO_CAPABILITIES
+        self._projets: tuple = ()
+        self._opened_qgis_project = None
+        self._last_open_row = None
+        self._open_refused = False
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -1025,9 +1043,11 @@ class ConstructelBridgePlugin:
         _apply_cached_audit_identity(self._log)
         init_language()
         register_expressions()
-        # Activer les macros projet pour que openProject/saveProject/closeProject
-        # s'executent automatiquement (evite le bandeau "macros desactivees")
-        QgsSettings().setValue("qgis/enableMacros", "Always")
+        # 2.1 (decision de Simon du 20/11) : le Bridge n'impose plus
+        # l'execution automatique des macros ; une valeur « Always » posee par
+        # les versions precedentes est ramenee UNE fois a « Ask » (QGIS demande
+        # avant d'executer les macros d'un projet).
+        self._reset_macros_setting()
 
         icon_path = os.path.join(os.path.dirname(__file__), "constructel_bridge_icon.png")
         plugin_icon = QIcon(icon_path)
@@ -1166,6 +1186,11 @@ class ConstructelBridgePlugin:
         # Ecouter le signal readProject pour reagir quand un projet est
         # charge par n'importe quel moyen (explorateur PG, fichier, etc.)
         QgsProject.instance().readProject.connect(self._on_project_read)
+        # 2.1 : le projet QGIS ouvert depuis `projet.qgis_projects` est oublie
+        # des que QGIS vide le projet (Nouveau, ouverture d'un autre projet).
+        cleared = getattr(QgsProject.instance(), "cleared", None)
+        if cleared is not None:
+            cleared.connect(self._on_project_cleared)
 
         # Nettoyer les authcfg des datasources AVANT la sauvegarde du projet
         # pour que le projet ecrit soit portable (pas d'authcfg user-specific).
@@ -1208,6 +1233,10 @@ class ConstructelBridgePlugin:
         except TypeError:
             pass
         try:
+            QgsProject.instance().cleared.disconnect(self._on_project_cleared)
+        except (TypeError, AttributeError):
+            pass
+        try:
             QgsProject.instance().layersAdded.disconnect(self._on_layers_added_scope)
         except TypeError:
             pass
@@ -1222,6 +1251,7 @@ class ConstructelBridgePlugin:
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
+        self._reset_projet_registry()
         # Retirer le bouton toolbar dropdown
         if hasattr(self, "_toolbar_action") and self._toolbar_action:
             self.iface.removeToolBarIcon(self._toolbar_action)
@@ -2215,6 +2245,7 @@ class ConstructelBridgePlugin:
                 pass
 
         self._connected = True
+        self._reset_projet_registry()
         self._auth_mode = AUTH_MODE_NOMINAL if nominal else AUTH_MODE_SHARED
         self._pg_login = login or ""
         self._ad_password = password if nominal else None
@@ -2241,6 +2272,7 @@ class ConstructelBridgePlugin:
         # Bridge 1.9 : operateurs utilisables, dans les deux modes ; jamais
         # bloquant (_load_operators ne leve pas).
         self._load_operators()
+        self._load_projet_registry()
         self._refresh_browser_schemas()
 
         if nominal:
@@ -2489,6 +2521,26 @@ class ConstructelBridgePlugin:
         self._operator_registry = {op.schema: op for op in registry}
         self._operators = usable_operators(registry, scope_codes)
         self._log("Operateurs utilisables : " + (", ".join(op.code for op in self._operators) or "aucun"))
+
+    def _reset_projet_registry(self) -> None:
+        """Oublie capacites et projets metier (deconnexion, avant connexion)."""
+        self._projet_caps = NO_CAPABILITIES
+        self._projets = ()
+
+    def _load_projet_registry(self) -> None:
+        """Bridge 2.1 (spec § 7.1, § 7.2) : capacites du schema `projet`
+        (une requete sur pg_catalog), puis, si le registre est lisible, les
+        projets metier visibles (RLS). Jamais bloquant ni de boite : une base
+        sans schema `projet` ou sans fonction du lot (b) masque seulement les
+        fonctionnalites ; le detail va au journal."""
+        self._reset_projet_registry()
+        if not self._conn or getattr(self._conn, "closed", False):
+            return
+        caps = qgis_store.read_capabilities(self._conn, log=self._log)
+        self._projet_caps = caps
+        if caps.registry:
+            self._projets = tuple(qgis_store.read_projets(self._conn, log=self._log))
+        self._log("Projets metier visibles : " + (", ".join(p.code for p in self._projets) or "aucun"))
 
     def _scope_name_schemas(self) -> tuple[str, ...]:
         """Schemas ou resoudre les noms MRO/POP du perimetre : operateurs
@@ -3905,8 +3957,22 @@ class ConstructelBridgePlugin:
         self._on_home("checkin", start_wizard=True)
 
     def _home_actions(self):
-        from .bridge_home_model import HomeActions
+        from .bridge_home_model import HomeActions, QgisProjectActions
 
+        qgis = None
+        if self._connected:
+            qgis = QgisProjectActions(
+                list_visible=self._list_qgis_projects,
+                open=self._open_qgis_project,
+                save=self._save_qgis_project,
+                overwrite=self._overwrite_qgis_project,
+                delete=self._delete_qgis_project,
+                shares_list=self._qgis_shares_list,
+                apply_shares=self._apply_qgis_shares,
+                eligible_users=self._eligible_users,
+                current_state=self._current_project_state,
+                opened=lambda: self._opened_qgis_project,
+            )
         return HomeActions(
             snapshot=self.home_snapshot,
             connect=self._on_connect,
@@ -3919,7 +3985,51 @@ class ConstructelBridgePlugin:
             make_wizard=self._make_onboarding_wizard,
             set_language=self._set_language,
             save_presets=self._save_user_presets,
+            qgis=qgis,
         )
+
+    # -- projets QGIS (2.1) : actions de la page Projets QGIS -----------------------------
+
+    def _qgis_conn(self):
+        """Connexion utilisable pour les fonctions projet.* (connectee ET
+        nominative : jamais en login partage), sinon None."""
+        conn = self._conn
+        if not self._connected or conn is None or getattr(conn, "closed", False):
+            return None
+        if not self._is_nominative_session():
+            return None
+        return conn
+
+    def _list_qgis_projects(self):
+        """``fn_qgis_projects_visible`` : jamais en login partage ni hors connexion."""
+        conn = self._qgis_conn()
+        if conn is None or not self._is_nominative_session() or not self._projet_caps.qgis_projects:
+            return None
+        return qgis_store.list_visible(conn, log=self._log)
+
+    def _delete_qgis_project(self, name: str):
+        conn = self._qgis_conn()
+        if conn is None:
+            return qgis_store.StoreOutcome(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        outcome = qgis_store.delete(conn, name, log=self._log)
+        opened = self._opened_qgis_project
+        if outcome.status == qgis_store.STATUS_OK and opened is not None and opened.name == name:
+            self._opened_qgis_project = None   # les couches restent a l'ecran
+        return outcome
+
+    def _qgis_shares_list(self, name: str):
+        conn = self._qgis_conn()
+        return None if conn is None else qgis_store.shares_list(conn, name, log=self._log)
+
+    def _apply_qgis_shares(self, name: str, plan):
+        conn = self._qgis_conn()
+        if conn is None or plan is None:
+            return qgis_store.StoreOutcome(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        return qgis_store.apply_share_plan(conn, name, plan, log=self._log)
+
+    def _eligible_users(self, projet_code, prefix: str, exclude):
+        conn = self._qgis_conn()
+        return None if conn is None else qgis_store.eligible_users(conn, projet_code, prefix, exclude, log=self._log)
 
     def _save_user_presets(self, presets) -> None:
         """Presets utilisateur du poste (QgsSettings, JSON)."""
@@ -3982,7 +4092,16 @@ class ConstructelBridgePlugin:
             checkin=self._home_checkin_state(summary),
             login=self._home_login() if connected else "",
             email=(self._bridge_user_email or "") if connected else "",
+            projets=tuple(self._projets) if connected else (),
+            capabilities=self._projet_caps if connected else NO_CAPABILITIES,
+            nominative=self._is_nominative_session(),
+            opened_qgis_project=self._opened_qgis_project,
+            operator_code_labels=tuple((op.code, op.label) for op in self._operator_registry.values()),
         )
+
+    def _is_nominative_session(self) -> bool:
+        """Session connectee au login nominatif (enregistrement des projets QGIS)."""
+        return bool(self._connected) and self._auth_mode == AUTH_MODE_NOMINAL and bool(self._pg_login)
 
     def _home_login(self) -> str:
         """Login de la session : nominatif, sinon l'utilisateur Bridge."""
@@ -4035,11 +4154,17 @@ class ConstructelBridgePlugin:
         plan ajoutes (un fond seul donne 1, decision T9-c1b) ; 0 si rien de
         nouveau (avertissement init.nothing_added). Ni couche choisie
         (v_form_lists, docs_elements : jamais un choix) ni fond demandes : ne
-        fait rien et rend 0 (K2)."""
+        fait rien et rend 0 (K2).
+
+        2.1 : puis les couches des projets metier de ``selection.projet``,
+        dans l'ordre du registre (``_projets``) ; un projet metier inconnu ou
+        en echec n'annule rien et est cite dans home.load_partial ; ses
+        couches comptent dans le total. Un projet metier seul suffit a lancer
+        le chargement (entree ``None`` pour les listes de formulaires)."""
         if not selection.layer_count() and not basemaps:
             return 0
         try:
-            from .bridge_project_init import _detect_existing_basemaps, init_project
+            from .bridge_project_init import _detect_existing_basemaps, init_project, load_projet_layers
 
             plan = selection.load_plan() or [(None, frozenset(ALWAYS_KEYS))]  # fonds de plan seuls
             by_schema = {op.schema: op for op in operators}
@@ -4058,6 +4183,7 @@ class ConstructelBridgePlugin:
             basemaps_before = _detect_existing_basemaps()
             pending_basemaps = set(basemaps)  # premier appel reussi seulement
             count, failures, loaded, failed, first_error = 0, 0, [], [], None
+            successes = 0
             carried = frozenset()  # couches communes d'une entree en echec : reprises par la suivante
             for schema, keys in plan:
                 keys = keys | carried
@@ -4075,6 +4201,7 @@ class ConstructelBridgePlugin:
                     )
                     pending_basemaps = set()
                     carried = frozenset()
+                    successes += 1
                     if operator is not None:
                         loaded.append(operator.schema)
                 except Exception as exc:  # noqa: BLE001 -- un operateur en echec n'annule pas les autres
@@ -4085,10 +4212,27 @@ class ConstructelBridgePlugin:
                     first_error = first_error or exc
                     import traceback
                     self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
+            # 2.1 : projets metier coches, apres la chaine operateur.
+            known_projets = {p.code: p for p in self._projets}
+            projet_codes = ([code for code in known_projets if code in selection.projet]
+                            + sorted(code for code in selection.projet if code not in known_projets))
+            for code in projet_codes:
+                projet = known_projets.get(code)
+                try:
+                    if projet is None:
+                        raise ValueError(f"Projet metier inconnu : {code!r}")
+                    count += load_projet_layers(conn_params, password, projet,
+                                                set(selection.projet[code]), apply_styles)
+                    successes += 1
+                except Exception as exc:  # noqa: BLE001 -- un projet metier en echec n'annule rien
+                    failed.append(projet.label if projet is not None else code)
+                    first_error = first_error or exc
+                    import traceback
+                    self._log(traceback.format_exc(), Qgis.MessageLevel.Critical)
             added_basemaps = len(_detect_existing_basemaps() - basemaps_before)
             if loaded:
                 QgsSettings().setValue(LAST_OPERATORS_KEY, format_project_operators(loaded))
-            if failures == len(plan) and not count and not added_basemaps:
+            if not successes and not count and not added_basemaps:
                 raise first_error
 
             # Appliquer les traductions i18n
@@ -4162,6 +4306,145 @@ class ConstructelBridgePlugin:
     # Charger un projet depuis PostgreSQL
     # =====================================================================
 
+    @staticmethod
+    def _reset_macros_setting() -> None:
+        """Rattrapage unique (MACROS_RESET_KEY) : ``qgis/enableMacros`` passe
+        de ``Always`` a ``Ask`` ; tout autre choix (Never, Ask, SessionOnly…)
+        n'est jamais touche, et rien n'est ecrit s'il n'y a pas de valeur."""
+        settings = QgsSettings()
+        if settings.value(MACROS_RESET_KEY, False) in (True, "true", "True", 1, "1"):
+            return
+        if settings.value(MACROS_SETTING, None) == "Always":
+            settings.setValue(MACROS_SETTING, "Ask")
+        settings.setValue(MACROS_RESET_KEY, True)
+
+    def _on_project_cleared(self) -> None:
+        """QgsProject.cleared : le projet QGIS ouvert n'est plus celui-ci."""
+        self._opened_qgis_project = None
+
+    def _open_qgis_project(self, row) -> bool:
+        """Ouvre un projet QGIS de `projet.qgis_projects` (``QgisProjectActions.open``)
+        puis le retient (version, rattachement, droits, metadata) : c'est lui
+        qui fait d'un enregistrement une mise a jour. Le record est pose APRES
+        ``project.read`` (qui emet ``cleared``)."""
+        self._last_open_row = None
+        if not self._open_db_project(PROJET_SCHEMA, row.name):
+            return False
+        open_row = self._last_open_row
+        if open_row is None:
+            return True
+        self._opened_qgis_project = OpenedQgisProject(
+            row.name, open_row.version, open_row.projet_id, row.projet_code,
+            bool(row.is_owner), bool(row.can_edit), dict(open_row.metadata),
+        )
+        return True
+
+    # =====================================================================
+    # Projets QGIS (2.1) : enregistrer le projet courant
+    # =====================================================================
+
+    def _current_project_state(self):
+        """Titre, nombre de couches et login du projet courant
+        (``QgisProjectActions.current_state``)."""
+        from .bridge_home_model import CurrentProjectState
+
+        project = QgsProject.instance()
+        title = project.title() or ""
+        if not title and project.fileName():
+            title = os.path.splitext(os.path.basename(project.fileName()))[0]
+        login = self._pg_login if self._is_nominative_session() else ""
+        return CurrentProjectState(title, len(project.mapLayers()), login)
+
+    def _save_qgis_project(self, request):
+        """Enregistre le projet courant (``QgisProjectActions.save``) :
+        creation, ou mise a jour du projet QGIS ouvert s'il porte ce nom et
+        qu'on peut le modifier ; a la creation, la visibilite est appliquee."""
+        return self._store_qgis_project(request, forced_version=None)
+
+    def _overwrite_qgis_project(self, request):
+        """« Ecraser » apres un conflit (``QgisProjectActions.overwrite``) :
+        relit la version courante puis enregistre avec elle ; projet devenu
+        invisible -> ``gone`` ; jamais de visibilite appliquee."""
+        if not self._is_nominative_session() or not self._conn or getattr(self._conn, "closed", False):
+            return qgis_store.StoreOutcome(qgis_store.STATUS_NOMINATIVE)
+        version = qgis_store.current_version(self._conn, request.name, log=self._log)
+        if version is None:
+            return qgis_store.StoreOutcome(qgis_store.STATUS_GONE)
+        return self._store_qgis_project(request, forced_version=version)
+
+    def _store_qgis_project(self, request, forced_version):
+        from .bridge_home_model import VISIBILITY_PEOPLE, VISIBILITY_PROJET
+
+        outcome_cls = qgis_store.StoreOutcome
+        if not self._is_nominative_session():
+            return outcome_cls(qgis_store.STATUS_NOMINATIVE)
+        if not self._conn or getattr(self._conn, "closed", False):
+            return outcome_cls(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        project = QgsProject.instance()
+        if not project.mapLayers():
+            return outcome_cls("empty")
+        source_file = project.fileName() or ""
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory(prefix="bridge_qgis_") as directory:
+                content = write_project_archive(project, directory)
+        except OSError as exc:
+            self._log(f"Archive du projet courant impossible : {exc}", Qgis.MessageLevel.Warning)
+            return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc))
+        if len(content) > MAX_CONTENT_BYTES:
+            return outcome_cls("too_large")
+        try:
+            report = inspect_qgz(content)
+        except ProjectFileError as exc:
+            self._log(f"Archive du projet courant illisible : {exc}", Qgis.MessageLevel.Warning)
+            return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc))
+        if report.findings:
+            return outcome_cls("unsafe", value=report.findings)
+
+        opened = self._opened_qgis_project
+        same = opened is not None and opened.name == request.name
+        if forced_version is None:
+            expected, _locked = save_target(request.name, opened)
+        else:
+            expected = forced_version
+        # Mise a jour ou « Ecraser » : le rattachement est fixe en base et n'est
+        # jamais renvoye (NULL admis ; une valeur differente, ex. projet metier
+        # supprime entre-temps, donnerait 22023). Creation : celui du dialogue.
+        projet_id = request.projet_id if expected is None else None
+        metadata = build_metadata(request.description, report.saved_by, report.saved_at, source_file,
+                                  opened.metadata if same else None)
+        outcome = qgis_store.save(self._conn, request.name, content, metadata, expected, projet_id, log=self._log)
+        if outcome.status != qgis_store.STATUS_OK:
+            return outcome
+        version = int(outcome.value or 0)
+        creating = expected is None
+        if creating:
+            self._opened_qgis_project = OpenedQgisProject(
+                request.name, version, projet_id, request.projet_code if projet_id else None, True, True, metadata)
+        elif same:
+            self._opened_qgis_project = OpenedQgisProject(
+                request.name, version, opened.projet_id, opened.projet_code, opened.is_owner, opened.can_edit, metadata)
+        else:
+            self._opened_qgis_project = OpenedQgisProject(request.name, version, None, None, False, True, metadata)
+        project.setTitle(request.name)
+        project.setDirty(False)
+        self._log(tr("save.done", name=request.name, version=version))
+
+        if creating and version == 1:
+            plan = None
+            if request.visibility == VISIBILITY_PROJET and projet_id:
+                plan = SharePlan(True, (), (), ())
+            elif request.visibility == VISIBILITY_PEOPLE and request.people:
+                edit = tuple(sorted(login for login, can_edit in request.people if can_edit))
+                open_ = tuple(sorted(login for login, can_edit in request.people if not can_edit))
+                plan = SharePlan(None, (), edit, open_)
+            if plan is not None and not plan.is_empty():
+                shared = qgis_store.apply_share_plan(self._conn, request.name, plan, log=self._log)
+                if shared.status != qgis_store.STATUS_OK:
+                    return outcome_cls(qgis_store.STATUS_OK, value=version, message=shared.status,
+                                       detail=shared.message, count=shared.count)
+        return outcome_cls(qgis_store.STATUS_OK, value=version)
+
     def _open_db_project(self, schema: str, name: str) -> bool:
         """Charge le projet *name* du schema *schema* (2.0, plan tache 8).
 
@@ -4176,6 +4459,7 @@ class ConstructelBridgePlugin:
         # depuis un fichier temporaire.  Cela evite le dialogue
         # "Saisir les identifiants" quand le projet contient des
         # authcfg d'un autre utilisateur.
+        self._open_refused = False
         if self._read_and_clean_project(project, schema, name):
             self._log(tr("project.loaded", name=name))
             self.iface.messageBar().pushSuccess(
@@ -4183,6 +4467,8 @@ class ConstructelBridgePlugin:
                 tr("project.loaded", name=name),
             )
             return True
+        if getattr(self, "_open_refused", False):
+            return False  # message deja affiche (contenu dangereux, introuvable)
         raw_error = project.error()
         if hasattr(raw_error, "summary"):
             error = raw_error.summary()
@@ -4196,6 +4482,12 @@ class ConstructelBridgePlugin:
         )
         return False
 
+    def _refuse_open(self, message: str) -> None:
+        """Ouverture refusee (contenu dangereux ou illisible, projet
+        introuvable) : un seul message, pas celui d'erreur generique."""
+        self._open_refused = True
+        QMessageBox.warning(self.iface.mainWindow(), tr("project.title"), message)
+
     def _base_project_schemas(self) -> tuple[str, ...]:
         """Operateurs utilisables puis ``public`` (spec 6.7), sans lecture
         de la base. Liste vide ou illisible : ``("wyre", "public")`` (1.8).
@@ -4206,24 +4498,9 @@ class ConstructelBridgePlugin:
         return project_schemas(operators)
 
     def _projet_schema_exists(self) -> bool:
-        """True si le schema transverse ``projet`` existe en base (2.0 R7).
-        Un echec de lecture ou l'absence de connexion = absent."""
-        conn = getattr(self, "_conn", None)
-        if conn is None:
-            return False
-        try:
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-                    (PROJET_SCHEMA,),
-                )
-                return bool(cur.fetchone())
-            finally:
-                cur.close()
-        except Exception as exc:  # noqa: BLE001 -- schema optionnel : jamais bloquant
-            self._log(f"schema {PROJET_SCHEMA} : lecture impossible ({exc})", Qgis.MessageLevel.Warning)
-            return False
+        """True si ``projet.qgis_projects`` est lisible par la session (2.1 :
+        capacites lues a la connexion, plus aucune requete ici)."""
+        return bool(self._projet_caps.qgis_table) and getattr(self, "_conn", None) is not None
 
     def _project_schemas(self) -> tuple[str, ...]:
         """Schemas des ``qgis_projects`` : operateurs utilisables, ``public``,
@@ -4257,19 +4534,34 @@ class ConstructelBridgePlugin:
                 schema == PROJET_SCHEMA and self._projet_schema_exists()):
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
-        cur = self._conn.cursor()
-        try:
-            cur.execute(
-                f'SELECT content FROM "{schema}".qgis_projects WHERE name = %s',
-                (name,),
-            )
-            row = cur.fetchone()
-        except Exception as exc:
-            self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
-            return False
-        if not row:
-            self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
-            return False
+        if schema == PROJET_SCHEMA and PROJET_SCHEMA not in self._base_project_schemas():
+            # 2.1 : lecture sous RLS (content, metadata, version, projet_id) ;
+            # la ligne est rendue a _open_qgis_project par _last_open_row.
+            try:
+                open_row = qgis_store.read_for_open(self._conn, name)
+            except Exception as exc:  # noqa: BLE001 -- dit par _open_db_project
+                self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
+                return False
+            if open_row is None:
+                self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
+                self._refuse_open(tr("project.qgis_not_found", name=name))
+                return False
+            self._last_open_row = open_row
+            row = (open_row.content,)
+        else:
+            cur = self._conn.cursor()
+            try:
+                cur.execute(
+                    f'SELECT content FROM "{schema}".qgis_projects WHERE name = %s',
+                    (name,),
+                )
+                row = cur.fetchone()
+            except Exception as exc:
+                self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
+                return False
+            if not row:
+                self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
+                return False
 
         raw = row[0]
         if isinstance(raw, memoryview):
@@ -4284,11 +4576,20 @@ class ConstructelBridgePlugin:
             import zipfile
             # QGIS stocke le projet comme .qgz (archive ZIP) dans PG
             if raw[:2] == b"PK":
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    # Le .qgs est le premier (et souvent unique) fichier
-                    qgs_names = [n for n in zf.namelist() if n.endswith(".qgs")]
-                    entry = qgs_names[0] if qgs_names else zf.namelist()[0]
-                    xml = zf.read(entry).decode("utf-8")
+                try:
+                    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                        # Le .qgs est le premier (et souvent unique) fichier
+                        qgs_names = [n for n in zf.namelist() if n.lower().endswith(".qgs")]
+                        entry = qgs_names[0] if qgs_names else zf.namelist()[0]
+                        if zf.getinfo(entry).file_size > MAX_QGS_BYTES:
+                            # Revue 2.1 (M4) : bombe ZIP, jamais decompressee.
+                            raise ValueError(f"{entry} trop volumineux une fois decompresse")
+                        xml = zf.read(entry).decode("utf-8")
+                except (zipfile.BadZipFile, IndexError, UnicodeDecodeError, RuntimeError, OSError,
+                        ValueError, EOFError, zlib.error) as exc:
+                    self._log(f"Project '{name}' : archive illisible ({exc})", Qgis.MessageLevel.Warning)
+                    self._refuse_open(tr("project.unsafe_refused", name=name))
+                    return False
             else:
                 # Tenter decode direct (texte brut ou autre encodage)
                 for enc in ("utf-8", "latin-1"):
@@ -4300,6 +4601,27 @@ class ConstructelBridgePlugin:
                 else:
                     self._log("Cannot decode project content from PG", Qgis.MessageLevel.Warning)
                     return False
+
+        # 2.1 (spec § 7.5) : neutraliser le code embarque de TOUT projet ouvert
+        # depuis la base par le Bridge, le sien compris, AVANT le nettoyage des
+        # authcfg : macros, fonctions d'expression, actions non URL, code de
+        # formulaire, mots de passe en clair. Entite XML ou XML illisible :
+        # ouverture refusee.
+        try:
+            neutralized = neutralize_qgs_xml(xml)
+        except ProjectFileError as exc:
+            self._log(f"Project '{name}' refused: {exc}", Qgis.MessageLevel.Warning)
+            self._refuse_open(tr("project.unsafe_refused", name=name))
+            return False
+        if neutralized.removed:
+            xml = neutralized.xml
+            for finding in neutralized.removed:
+                self._log(f"Project '{name}' : neutralise {finding.kind}"
+                          + (f" (couche {finding.layer})" if finding.layer else "")
+                          + (f" : {finding.detail}" if finding.detail else ""))
+            self.iface.messageBar().pushMessage(
+                "Constructel Bridge", tr("project.neutralized", count=len(neutralized.removed)),
+                level=Qgis.MessageLevel.Info, duration=10)
 
         # Nettoyer les authcfg des datasources et injecter user/password.
         # Meme logique known_identities que _fix_layer_credentials /
@@ -4402,6 +4724,8 @@ class ConstructelBridgePlugin:
             results: list[dict] = []
             errors: list[Exception] = []
             for schema in self._project_schemas():
+                if schema == PROJET_SCHEMA and self._projet_caps.qgis_projects:
+                    continue  # 2.1 : projets QGIS du schema projet lus par fn_qgis_projects_visible
                 try:
                     cur.execute(
                         """

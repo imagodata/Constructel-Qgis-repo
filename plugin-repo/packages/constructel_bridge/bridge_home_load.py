@@ -81,6 +81,9 @@ def summary_text(snapshot: HomeSnapshot, state: HomeState) -> str:
     common = snapshot.counts.common
     if common:
         parts.append(tr("home.loaded_common_one") if common == 1 else tr("home.loaded_common", count=common))
+    projet = getattr(snapshot.counts, "projet", 0)
+    if projet:
+        parts.append(tr("home.loaded_projets_one") if projet == 1 else tr("home.loaded_projets", count=projet))
     if snapshot.counts.basemaps:
         parts.append(basemaps_text(snapshot.counts.basemaps))
     return SEPARATOR.join(parts)
@@ -119,6 +122,12 @@ class LoadPage(QWidget):
         # reste modifiable (None : jamais touchee, la valeur proposee s'applique).
         self._suffix_manual: Optional[bool] = None
         self._operator_buttons: dict = {}
+        # 2.1 : rangee « Projets metier » (code -> bouton bascule), projets
+        # coches dans l'ordre d'affichage.
+        self._projet_buttons: dict = {}
+        self._projet_order = [p.code for _op, projets in state.projet_groups for p in projets]
+        self._projet_by_code = {p.code: p for _op, projets in state.projet_groups for p in projets}
+        self._chosen_projets: tuple = tuple(state.preselected_projets)
         self._build_ui()
         if options and state.load_enabled:
             self._suffix_manual = options.get("suffix")
@@ -155,6 +164,10 @@ class LoadPage(QWidget):
             self._message_label.setWordWrap(True)
             layout.addWidget(self._message_label)
 
+        # Widget de selection cree d'abord : la rangee « Projets metier » lit
+        # ce qui est deja charge (✓).
+        self._selection = LayerSelectionWidget(self)
+
         # -- Etape 1 : perimetre (cadre) -----------------------------------------------------
         step_one = panel(self)
         one = QVBoxLayout(step_one)
@@ -176,10 +189,12 @@ class LoadPage(QWidget):
         perimeter.addWidget(self._none_button)
         perimeter.addStretch()
         one.addLayout(perimeter)
+        self._projets_row = self._build_projets_row() if state.projet_groups else None
+        if self._projets_row is not None:
+            one.addWidget(self._projets_row)
         layout.addWidget(step_one)
 
         # -- Etape 2 : presets (menu a droite de l'en-tete) puis tuiles (cadre) ----------------
-        self._selection = LayerSelectionWidget(self)
         step_two = panel(self)
         two = QVBoxLayout(step_two)
         header = step_header("2", tr("home.step_presets"))
@@ -234,8 +249,43 @@ class LoadPage(QWidget):
 
         if not state.load_enabled:        # hors connexion : le message dit pourquoi
             for widget in (self._none_button, self._presets_button, self._options_toggle,
-                           self._selection, self._selection.tiles_panel(), self._load_button):
+                           self._selection, self._selection.tiles_panel(), self._load_button,
+                           *self._projet_buttons.values()):
                 widget.setEnabled(False)
+
+    def _build_projets_row(self) -> QWidget:
+        """Rangee « Projets metier » sous les operateurs (spec § 7.3) : par
+        operateur informatif, un libelle attenue puis un bouton bascule par
+        projet metier ; « ✓ » quand toutes ses couches sont deja chargees."""
+        labels = dict(self._snapshot.operator_code_labels)
+        loaded = self._selection.loaded_projet_tables()
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(6)
+        title = QLabel(tr("home.projets_row"))
+        title.setStyleSheet("font-weight: bold;")
+        line.addWidget(title)
+        for code, projets in self._state.projet_groups:
+            operator = labels.get(code, code) if code else tr("home.projets_no_operator")
+            caption = QLabel(operator)
+            set_role(caption, "muted")
+            line.addWidget(caption)
+            for projet in projets:
+                done = all(entry.table in loaded for entry in projet.layers)
+                button = QPushButton(f"{projet.label} ✓" if done else projet.label)
+                button.setCheckable(True)
+                set_role(button, "toggle")
+                count = len(projet.layers)
+                if code:
+                    button.setToolTip(tr("home.projet_tooltip", operator=operator, count=count))
+                else:
+                    button.setToolTip(tr("home.projet_tooltip_none", count=count))
+                button.clicked.connect(lambda _checked=False, c=projet.code: self._on_projet_clicked(c))
+                line.addWidget(button)
+                self._projet_buttons[projet.code] = button
+        line.addStretch()
+        return row
 
     def _fill_presets_menu(self) -> None:
         menu = self._presets_menu
@@ -249,11 +299,13 @@ class LoadPage(QWidget):
         save.triggered.connect(lambda _checked=False: self._save_preset())
 
     def _apply_initial_choice(self) -> None:
-        """Perimetre de ``state.preselected`` ; selection du dernier choix, ou
+        """Perimetre de ``state.preselected`` (et projets metier de
+        ``state.preselected_projets``) ; selection du dernier choix, ou
         (premiere utilisation, R11) les tuiles par operateur usuelles."""
         self._sync_perimeter()
         if not self._state.load_enabled:
             return
+        self._sync_projets()
         last = self._snapshot.last_selection
         if last is None or (not last.name and last.selection.is_empty()):
             if self._chosen:
@@ -285,6 +337,28 @@ class LoadPage(QWidget):
     def _on_none_clicked(self) -> None:
         self._set_chosen(select_none())
 
+    # -- projets metier (2.1) ---------------------------------------------------------------
+
+    def _sync_projets(self) -> None:
+        """Boutons et groupes de l'arbre alignes sur ``self._chosen_projets``."""
+        for code, button in self._projet_buttons.items():
+            button.setChecked(code in self._chosen_projets)
+        self._selection.set_projets(tuple(self._projet_by_code[c] for c in self._chosen_projets
+                                          if c in self._projet_by_code))
+
+    def _set_chosen_projets(self, codes) -> None:
+        wanted = set(codes)
+        self._chosen_projets = tuple(c for c in self._projet_order if c in wanted)
+        self._sync_projets()
+
+    def _on_projet_clicked(self, code: str) -> None:
+        chosen = set(self._chosen_projets)
+        chosen.symmetric_difference_update({code})
+        self._set_chosen_projets(chosen)
+
+    def chosen_projets(self) -> tuple:
+        return self._chosen_projets
+
     def _refresh_suffix(self) -> None:
         """Case du suffixe (§ 6.4) : seule masquee sans operateur ; les fonds
         de plan et les styles restent offerts."""
@@ -312,15 +386,16 @@ class LoadPage(QWidget):
         """(operateurs, selection) de *preset* limites aux operateurs
         utilisables ET a ceux qu'il nomme : jamais les couches d'un operateur
         qu'il ne cite pas."""
-        restricted = restrict_preset(preset, self._order)
+        restricted = restrict_preset(preset, self._order, visible_projets=self._projet_order)
         named = set(restricted.schemas)
         selection = LayerSelection({s: keys for s, keys in restricted.selection.per_operator.items() if s in named},
-                                   restricted.selection.common)
+                                   restricted.selection.common, restricted.selection.projet)
         return tuple(s for s in self._order if s in named), selection
 
     def _choose_preset(self, preset: UserPreset) -> None:
         schemas, selection = self._restricted(preset)
         self._set_chosen(schemas)
+        self._set_chosen_projets(selection.projet)
         self._selection.apply_selection(selection)
 
     def current_choice(self) -> UserPreset:

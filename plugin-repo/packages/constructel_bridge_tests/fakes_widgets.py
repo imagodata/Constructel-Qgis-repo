@@ -414,6 +414,7 @@ class _Item:
 
     def __init__(self, parent, texts):
         self._text = texts[0]
+        self._texts = list(texts)     # 2.1 : colonnes suivantes (page Projets QGIS)
         self.children = []
         self.parent = parent
         self.tree = parent if isinstance(parent, _Tree) else parent.tree
@@ -464,11 +465,23 @@ class _Item:
     def isExpanded(self):
         return self.expanded
 
-    def setText(self, _column, text):
-        self._text = text
+    def setText(self, column, text):
+        if column == 0:
+            self._text = text
+        else:
+            self._texts += [""] * (column + 1 - len(self._texts))
+            self._texts[column] = text
 
-    def text(self, _column):
-        return self._text
+    def text(self, column):
+        if column == 0:
+            return self._text
+        return self._texts[column] if column < len(self._texts) else ""
+
+    def font(self, _column=0):
+        return _Font()
+
+    def setFont(self, _column, _font):
+        pass
 
     def childCount(self):
         return len(self.children)
@@ -501,3 +514,108 @@ class _Combo(_W):
 _ITEM_FLAG = types.SimpleNamespace(ItemIsUserCheckable=0x10, ItemIsAutoTristate=0x40)
 _CHECK = types.SimpleNamespace(Unchecked=0, PartiallyChecked=1, Checked=2)
 _ROLE = types.SimpleNamespace(UserRole=0x100)
+
+
+# --- Bridge 2.1 : selecteur de personnes (autocompletion) -------------------------------------
+
+
+class _Timer:
+    """QTimer d'instance : ``start`` arme, le test emet ``timeout`` a la main ;
+    ``singleShot`` (statique) appelle tout de suite."""
+
+    def __init__(self, *_args):
+        self.timeout = _Sig()
+        self.active = False
+        self.interval = 0
+        self.starts = 0
+
+    def setSingleShot(self, _single):
+        pass
+
+    def setInterval(self, msec):
+        self.interval = msec
+
+    def start(self, *_args):
+        self.active = True
+        self.starts += 1
+
+    def stop(self):
+        self.active = False
+
+    def isActive(self):
+        return self.active
+
+    @staticmethod
+    def singleShot(_msec, callback):
+        callback()
+
+
+class _StringModel:
+    def __init__(self, *_args):
+        self.strings = []
+
+    def setStringList(self, strings):
+        self.strings = list(strings)
+
+    def stringList(self):
+        return list(self.strings)
+
+
+class _Completer:
+    class CompletionMode:
+        UnfilteredPopupCompletion = 2
+
+    def __init__(self, model=None, *_args):
+        self.model = model
+        self.activated = _Sig()
+        self.popups = 0
+        self.mode = None
+
+    def setCompletionMode(self, mode):
+        self.mode = mode
+
+    def complete(self, *_args):
+        self.popups += 1
+
+    def __getattr__(self, name):
+        if name.startswith("set"):
+            return lambda *a, **k: None
+        raise AttributeError(name)
+
+
+class _Edit(_LineEdit):
+    """QLineEdit avec ``textEdited`` (frappe) et ``clear``."""
+
+    def __init__(self, text="", *args):
+        super().__init__(text, *args)
+        self.textEdited = _Sig()
+        self.placeholder = ""
+
+    def clear(self):
+        self.setText("")
+
+    def setPlaceholderText(self, text):
+        self.placeholder = text
+
+    def type(self, text):
+        """Frappe de l'utilisateur : texte puis textEdited."""
+        self.setText(text)
+        self.textEdited.emit(text)
+
+
+class _ItemTree(_Tree):
+    """QTreeWidget avec widgets de cellule (setItemWidget / itemWidget)."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.cell_widgets = {}
+
+    def clear(self):
+        super().clear()
+        self.cell_widgets = {}
+
+    def setItemWidget(self, item, column, widget):
+        self.cell_widgets[(id(item), column)] = widget
+
+    def itemWidget(self, item, column):
+        return self.cell_widgets.get((id(item), column))

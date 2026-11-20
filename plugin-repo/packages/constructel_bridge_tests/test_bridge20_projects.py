@@ -75,7 +75,7 @@ def mod(bp18, monkeypatch):
 
     for name, fake in (("QWidget", _W), ("QLabel", _Label), ("QPushButton", _Button),
                        ("QLineEdit", _LineEdit), ("QTreeWidget", _ProjTree),
-                       ("QVBoxLayout", _Layout)):
+                       ("QVBoxLayout", _Layout), ("QHBoxLayout", _Layout)):   # 2.1 : rangees de boutons
         monkeypatch.setattr(QtWidgets, name, fake, raising=False)
     # QTreeWidgetItem de la doublure : (parent, textes), comme _Item.
     from constructel_bridge_tests.fakes_widgets import _Item
@@ -106,9 +106,15 @@ class _Actions:
 
 
 def _page(mod, actions=None, connected=True, log=None):
+    """2.1 : ProjectsPage(actions, instantane, etat, on_open). Sans capacites
+    du lot (b) (et sans ``actions.qgis``), la page est celle de la 2.0."""
+    from constructel_bridge import bridge_home_model as hm
+    from constructel_bridge_tests.test_bridge20_home_model import snap
+
     log = [] if log is None else log
     actions = actions or _Actions(log=log)
-    page = mod.ProjectsPage(actions, connected, LABELS, lambda: log.append("on_open"))
+    snapshot = snap(connected=connected, labels=LABELS)
+    page = mod.ProjectsPage(actions, snapshot, hm.home_state(snapshot), lambda: log.append("on_open"))
     page.log = log
     return page
 
@@ -152,12 +158,13 @@ def test_search_without_match_shows_message_and_hides_tree(mod):
 
 
 def test_projet_schema_group_is_labelled_projets(mod):
+    # 2.1 : libelle sans ambiguite (« Projets » nu retire, spec § 5 bis).
     from constructel_bridge.i18n import tr
 
     projects = PROJECTS + [{"name": "Partagé", "schema": "projet", "description": "", "updated": ""}]
     page = _page(mod, _Actions(projects))
-    assert _groups(page)[tr("home.projects_projets")] == ["Partagé"]
-    assert tr("home.projects_projets") != tr("home.projects_common")
+    assert _groups(page)[tr("qgis.legacy_projet_group")] == ["Partagé"]
+    assert tr("qgis.legacy_projet_group") != tr("home.projects_common")
 
 
 def test_group_label_falls_back_to_the_schema(mod):
@@ -169,12 +176,10 @@ def test_projects_labels_exist_in_every_language(bp18):
     from constructel_bridge.i18n.translations import TRANSLATIONS
 
     for key in ("home.projects_title", "home.projects_search", "home.projects_open",
-                "home.projects_common", "home.projects_projets", "home.projects_offline"):
+                "home.projects_common", "qgis.legacy_projet_group", "home.projects_offline"):
         values = {lang: TRANSLATIONS[lang][key] for lang in ("fr", "en", "pt")}
         assert all(values.values()), key
-    assert TRANSLATIONS["fr"]["home.projects_projets"] == "Projets"
-    assert TRANSLATIONS["en"]["home.projects_projets"] == "Projects"
-    assert TRANSLATIONS["pt"]["home.projects_projets"] == "Projetos"
+    assert TRANSLATIONS["fr"]["qgis.legacy_projet_group"] == "Projets QGIS (schéma projet)"
 
 
 # --- ouverture ------------------------------------------------------------------------
@@ -301,6 +306,10 @@ def test_load_project_menu_now_opens_the_projects_page(bp18, plugin):
 
 
 def test_projet_schema_listed_only_when_it_exists(plugin, fake_cursor, monkeypatch):
+    # 2.1 (tache 9) : l'existence de `projet.qgis_projects` vient des capacites
+    # lues a la connexion (`_projet_caps`), plus d'une requete a chaque appel.
+    from constructel_bridge.bridge_projets import NO_CAPABILITIES, ProjetCapabilities
+
     plugin._operators = [WYRE]
     probes = []
     real_execute = fake_cursor.execute
@@ -309,17 +318,16 @@ def test_projet_schema_listed_only_when_it_exists(plugin, fake_cursor, monkeypat
         real_execute(sql, params)
         if "information_schema.schemata" in sql:
             probes.append(params[0])
-            fake_cursor._one = (1,) if "projet" in existing else None
 
     monkeypatch.setattr(fake_cursor, "execute", execute)
-    existing = {"projet"}
+    plugin._projet_caps = ProjetCapabilities(qgis_table=True)
     assert plugin._project_schemas() == ("wyre", "public", "projet")
     assert [p["schema"] for p in plugin._list_db_projects()] == ["wyre", "public", "projet"]
 
-    existing.clear()
+    plugin._projet_caps = NO_CAPABILITIES
     assert plugin._project_schemas() == ("wyre", "public")
     assert [p["schema"] for p in plugin._list_db_projects()] == ["wyre", "public"]
-    assert set(probes) == {"projet"}
+    assert probes == []
 
 
 def test_projet_schema_absent_when_database_unreadable_or_offline(plugin):
@@ -335,7 +343,9 @@ def test_projet_schema_absent_when_database_unreadable_or_offline(plugin):
 
 
 def test_read_and_clean_accepts_projet_only_when_it_exists(plugin, fake_cursor, monkeypatch):
+    # 2.1 (tache 9) : liste blanche du schema `projet` = capacites de la connexion.
     from qgis.core import QgsProject
+    from constructel_bridge.bridge_projets import NO_CAPABILITIES, ProjetCapabilities
     from constructel_bridge_tests.test_bridge18_layers import _XmlCursor
 
     plugin._operators = [WYRE]
@@ -345,12 +355,11 @@ def test_read_and_clean_accepts_projet_only_when_it_exists(plugin, fake_cursor, 
     queries = []
     base_execute = cursor.execute
     cursor.execute = lambda sql, *a, **k: queries.append(sql) or base_execute(sql, *a, **k)
-    cursor.fetchone = lambda: (1,) if cursor_state["exists"] else None
-    cursor_state = {"exists": False}
     plugin._conn.cursor = lambda: cursor
 
+    plugin._projet_caps = NO_CAPABILITIES
     assert plugin._read_and_clean_project(QgsProject.instance(), "projet", "x") is False
-    assert not any("qgis_projects" in q for q in queries)
-    cursor_state["exists"] = True
+    assert queries == []
+    plugin._projet_caps = ProjetCapabilities(qgis_table=True)
     # Schéma présent : accepté par la liste blanche (la lecture du XML relève de _XmlCursor).
     assert "projet" in plugin._project_schemas()

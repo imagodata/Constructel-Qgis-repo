@@ -457,6 +457,7 @@ class QgsProject:
         self.readProject = _StubSignal()
         self.writeProject = _StubSignal()
         self.layerLoaded = _StubSignal()
+        self.cleared = _StubSignal()   # 2.1 : projet QGIS ouvert oublie
 
     @classmethod
     def instance(cls):
@@ -500,7 +501,10 @@ class QgsProject:
         return True
 
     def setTitle(self, title):
-        self.title = title
+        self._title = title
+
+    def title(self):
+        return getattr(self, "_title", "")
 
     def setFileName(self, name):
         self.file_name = name

@@ -78,6 +78,8 @@ from constructel_bridge import bridge_presets as bp  # noqa: E402
 from constructel_bridge.bridge_diagnostic import PluginSummary  # noqa: E402
 from constructel_bridge.bridge_operators import OperatorInfo  # noqa: E402
 from constructel_bridge.bridge_project_init import LoadedCounts  # noqa: E402
+from constructel_bridge import bridge_projets as pj  # noqa: E402
+from constructel_bridge.bridge_qgis_projects import EligibleUser  # noqa: E402
 
 WYRE = OperatorInfo("WYRE", "Wyre", "wyre")
 ORANGE = OperatorInfo("ORANGE", "Orange", "orange")
@@ -96,6 +98,219 @@ def snapshot(connected=True, operators=(WYRE, ORANGE)):
 
 
 STATE = {"snap": snapshot()}
+
+# --- Bridge 2.1 -------------------------------------------------------------------------------
+FULL_CAPS = pj.ProjetCapabilities(True, True, True, True, True, True, True)
+GOFIBER = pj.ProjetInfo("b3f1", "GOFIBER", "GoFiber", "WYRE", (
+    pj.ProjetLayer("geofiber_asbuilt_depth_connectors", "Connecteurs", "Profondeur As-Built", "default", "geom", 10),
+    pj.ProjetLayer("geofiber_asbuilt_depth_points", "Points", "Profondeur As-Built", "default", "geom", 20),
+    pj.ProjetLayer("geofiber_meta", "Métadonnées", None, "default", None, 30),
+))
+MINE = None  # pose plus bas (QgisProjectRow)
+LIBRE = pj.ProjetInfo("c4", "LIBRE", "Libre", None, (pj.ProjetLayer("t", "T", None, "default", None, 0),))
+PEOPLE = [EligibleUser("a.leroy", "Alice Leroy", "BE"), EligibleUser("a.lemaire", None, "ADMIN"),
+          EligibleUser("b.alex", "Bernard Alex", None)]
+
+
+def snapshot21(nominative=True, capabilities=FULL_CAPS):
+    import dataclasses
+
+    return dataclasses.replace(snapshot(), projets=(GOFIBER, LIBRE), capabilities=capabilities,
+                               nominative=nominative, operator_code_labels=(("WYRE", "Wyre"), ("ORANGE", "Orange")),
+                               counts=LoadedCounts({}, 0, 0, 2))
+
+
+def _mine_row():
+    from constructel_bridge.bridge_qgis_projects import QgisProjectRow
+
+    return QgisProjectRow("Vue Ixelles", "a.leroy", "b3f1", "GOFIBER", "GoFiber", False, False, "BE", 3,
+                          "2026-11-19T10:00:00", "a.leroy", True, True, 2, "ma vue")
+
+
+def qgis_actions(rows=None):
+    from constructel_bridge.bridge_qgis_projects import QgisProjectRow, ShareRow
+    from constructel_bridge import bridge_qgis_store as qs
+
+    shared = QgisProjectRow("Vue de Bob", "b.martin", None, None, None, False, False, "ADMIN", 1,
+                            None, "b.martin", False, True, None, "")
+    published = QgisProjectRow("Référence GoFiber", "admin", "b3f1", "GOFIBER", "GoFiber", True, True, "ADMIN", 9,
+                               None, "admin", False, False, None, "publiée")
+    rows = [MINE, shared, published] if rows is None else rows
+    ok = qs.StoreOutcome(qs.STATUS_OK, value=1)
+    return hm.QgisProjectActions(
+        list_visible=lambda: LOG.append("list_visible") or list(rows),
+        open=lambda row: LOG.append(("open_qgis", row.name)) or True,
+        save=lambda request: ok,
+        overwrite=lambda request: ok,
+        delete=lambda name: LOG.append(("delete", name)) or ok,
+        shares_list=lambda name: [ShareRow("b.martin", "Bob Martin", "ADMIN", True, True),
+                                  ShareRow("c.vieux", None, None, False, False)],
+        apply_shares=lambda name, plan: LOG.append(("apply_shares", name)) or ok,
+        eligible_users=lambda code, prefix, exclude: search_people(prefix, exclude),
+        current_state=lambda: hm.CurrentProjectState("Ixelles", 4, "a.leroy"),
+    )
+
+
+def search_people(prefix, exclude):
+    LOG.append(("search", prefix, tuple(exclude)))
+    return [p for p in PEOPLE if p.username not in exclude]
+
+
+def smoke_21(dialog) -> None:
+    """Scenario de la Task 21 du plan 2.1 : chaque nouvel ecran construit,
+    affiche hors ecran, pilote puis ferme, sans exec() ; les boites
+    QMessageBox repondent tout de suite (Yes / Ok)."""
+    global MINE
+    MINE = _mine_row()
+    box = QtWidgets.QMessageBox
+    for name in ("question", "information", "warning", "critical"):
+        answer = box.StandardButton.Yes if name == "question" else box.StandardButton.Ok
+        setattr(box, name, staticmethod(lambda *a, _answer=answer, **k: _answer))
+    """Ecrans 2.1 (Task 21) : rangee Projets metier, selecteur de personnes."""
+    from constructel_bridge.bridge_people_picker import PeoplePicker
+
+    # 1. Page Charger : GoFiber avec « Aucun », puis avec Wyre et Orange.
+    STATE["snap"] = snapshot21()
+    dialog.render()
+    dialog.show_page("load")
+    app.processEvents()
+    load = dialog._pages["load"]
+    load._none_button.click()
+    load._projet_buttons["GOFIBER"].click()
+    app.processEvents()
+    tree = load._selection._tree
+    captions = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
+    assert any(c.startswith("GoFiber") for c in captions), captions
+    load._operator_buttons["wyre"].click()
+    load._operator_buttons["orange"].click()
+    load._projet_buttons["LIBRE"].click()
+    app.processEvents()
+    assert set(load._selection.selection().projet) == {"GOFIBER", "LIBRE"}
+    load._load_button.click()            # load factice rend 0
+    app.processEvents()
+
+    # Selecteur de personnes (enregistrer / partager).
+    picker = PeoplePicker(search_people, None, excluded=("x.deja",))
+    picker.show()
+    picker.input.setText("ale")
+    picker.timer.timeout.emit()
+    app.processEvents()
+    assert picker._model.stringList(), "modele du completer vide"
+    picker.choose(PEOPLE[0])
+    picker.choose(PEOPLE[1])
+    app.processEvents()
+    combo = picker.list.itemWidget(picker.list.topLevelItem(0), 1)
+    combo.setCurrentIndex(1)
+    assert picker.chosen() == (("a.leroy", True), ("a.lemaire", False)), picker.chosen()
+    picker.list.itemWidget(picker.list.topLevelItem(1), 2).click()
+    app.processEvents()
+    assert picker.chosen() == (("a.leroy", True),)
+    picker.close()
+
+    # 3. Dialogue « Enregistrer le projet courant… ».
+    from constructel_bridge import bridge_qgis_dialogs as qd
+    from constructel_bridge import bridge_qgis_store as qs
+    from constructel_bridge.bridge_project_safety import Finding
+
+    state = hm.CurrentProjectState("Ixelles", 4, "a.leroy")
+    save = qd.SaveDialog((GOFIBER, LIBRE), None, state, FULL_CAPS,
+                         lambda code, prefix, exclude: search_people(prefix, exclude), None)
+    save.show()
+    app.processEvents()
+    assert save.objectName() == "bridgeHome"
+    width, height = save.width(), save.height()
+    assert width <= 640 and height <= 560, (width, height)
+    save.name_edit.setText("Vue Ixelles / GoFiber")
+    save.projet_combo.setCurrentIndex(1)
+    save.people_radio.setChecked(True)
+    app.processEvents()
+    save.picker.input.setText("ale")
+    save.picker.timer.timeout.emit()
+    save.picker.choose(PEOPLE[0])
+    save.picker.choose(PEOPLE[2])
+    save.picker.list.itemWidget(save.picker.list.topLevelItem(1), 1).setCurrentIndex(1)
+    request = save.request()
+    assert request.visibility == hm.VISIBILITY_PEOPLE and request.projet_code == "GOFIBER", request
+    assert request.people == (("a.leroy", False), ("b.alex", True)), request.people
+    save.show_outcome(qs.StoreOutcome(qs.STATUS_NAME_TAKEN), "a.leroy")
+    save.show_outcome(qs.StoreOutcome("unsafe", value=(Finding("macros"), Finding("action", "Points", "Py (type=1)"))),
+                      "a.leroy")
+    app.processEvents()
+    save.reject()
+
+    # 4. Dialogue de conflit (creation puis mise a jour) : chacun des trois boutons.
+    for creating in (True, False):
+        for button in ("rename_button", "overwrite_button", "cancel_button"):
+            conflict = qd.ConflictDialog("Vue", creating, "version courante 5, modifiee le 2026-11-19 par bob")
+            conflict.show()
+            app.processEvents()
+            assert conflict.cancel_button.isDefault()
+            getattr(conflict, button).click()
+            app.processEvents()
+            LOG.append(("conflict", creating, conflict.choice()))
+
+    # 5. Dialogue « Partager… » sur un de mes projets, avec une ligne inoperante.
+    from constructel_bridge.bridge_qgis_projects import ShareRow
+
+    share_actions = qgis_actions()
+    share = qd.ShareDialog(MINE, share_actions, FULL_CAPS, None)
+    share.show()
+    app.processEvents()
+    assert share.objectName() == "bridgeHome" and share.who.topLevelItemCount() == 2
+    assert share.width() <= 640 and share.height() <= 560, (share.width(), share.height())
+    assert share.who.topLevelItem(1).font(0).italic()          # ligne inoperante
+    share.who.itemWidget(share.who.topLevelItem(0), 1).setCurrentIndex(0)
+    share.who.itemWidget(share.who.topLevelItem(1), 2).click()
+    share.projet_box.setChecked(True)
+    share.picker.choose(PEOPLE[0])
+    plan = share.plan()
+    assert plan.share_project is True and plan.unshare == ("c.vieux",), plan
+    share.apply()
+    app.processEvents()
+
+    # 6. Confirmation de suppression (reponse factice, puis QMessageBox.question remplacee).
+    assert qd.confirm_delete(None, "Vue", ask=lambda title, text: LOG.append(("ask", title)) or True)
+    assert qd.confirm_delete(None, "Vue")
+
+    # 2. Page Projets QGIS 2.1 : trois sections, selection de « mien », recherche.
+    from constructel_bridge.bridge_home import HomeDialog
+    import dataclasses
+
+    STATE["snap"] = snapshot21()
+    home = HomeDialog(dataclasses.replace(actions(), qgis=qgis_actions()), None)
+    home.show()
+    home.show_page("projects")
+    app.processEvents()
+    page = home._pages["projects"]
+    assert page._mode == "qgis", page._mode
+    assert page._tree.topLevelItemCount() == 3
+    mine_section = page._tree.topLevelItem(0)
+    page._tree.setCurrentItem(mine_section.child(0))
+    app.processEvents()
+    assert page._share_button.isEnabled() and page._delete_button.isEnabled()
+    page._search.setText("gofib")
+    app.processEvents()
+    page._search.setText("")
+    page._delete_selected(ask=lambda title, text: True) if page._selected_own_row() else None
+    app.processEvents()
+
+    # 7. Login partage puis base sans capacites : rendu et page Projets.
+    for snap21 in (snapshot21(nominative=False), snapshot21(capabilities=pj.NO_CAPABILITIES)):
+        STATE["snap"] = snap21
+        home.render()
+        home.show_page("projects")
+        app.processEvents()
+        LOG.append(("mode", home._pages["projects"]._mode))
+
+    # 8. Changement de langue EN puis PT, page Projets affichee.
+    STATE["snap"] = snapshot21()
+    home.render()
+    home.show_page("projects")
+    for code in ("en", "pt"):
+        home._lang_buttons[code].click()
+        app.processEvents()
+    home.reject()
+    app.processEvents()
 
 
 def actions():
@@ -150,13 +365,16 @@ def main() -> int:
     dialog._lang_buttons["en"].click()   # changement de langue : redessin complet
     app.processEvents()
 
+    smoke_21(dialog)
+
     STATE["snap"] = snapshot(connected=False, operators=())
     dialog.render()
     app.processEvents()
 
     dialog.reject()
     app.processEvents()
-    print("SMOKE OK", [entry for entry in LOG if isinstance(entry, tuple)][:6])
+    print("SMOKE OK", [entry for entry in LOG if isinstance(entry, tuple)][:6],
+          [entry for entry in LOG if isinstance(entry, tuple) and entry[0] == "mode"])
     return 0
 
 

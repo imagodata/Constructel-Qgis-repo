@@ -309,7 +309,7 @@ class HomeDialog(QDialog):
             options = self._load_options if self._load_choice is not None else None
             return LoadPage(snapshot, state, actions, self._on_load_done, self._stack, options=options)
         if name == "projects":
-            return ProjectsPage(actions, snapshot.connected, snapshot.labels, self.accept, self._stack)
+            return ProjectsPage(actions, snapshot, self._state, self.accept, self._stack)
         if name == "checkin":
             start, self._start_wizard = self._start_wizard, False   # premier setup : une fois
             page = CheckinPage(snapshot, actions, self._stack, start_wizard=start, email=snapshot.email)

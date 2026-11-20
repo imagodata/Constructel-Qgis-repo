@@ -14,6 +14,11 @@ porte sur « deja chargee », pas sur la case). Idem pour les fonds de plan.
 
 selection() ne contient jamais v_form_lists ni docs_elements : le plan de
 chargement (LayerSelection.load_plan) les ajoute.
+
+2.1 : un groupe par projet metier coche (set_projets), entre les groupes
+d'operateur et les groupes communs ; cles ``("projet:<CODE>", table)``,
+jamais en collision avec un schema d'operateur ni ``None``. Les projets
+metier n'entrent ni dans les tuiles ni dans leur etat.
 """
 
 from __future__ import annotations
@@ -53,12 +58,14 @@ from .bridge_presets import (
     tile_keys,
     tile_state,
 )
+from . import bridge_project_init as _project_init
 from .bridge_project_init import (
     BASEMAPS,
     LAYER_CATALOG,
     _detect_existing_basemaps,
     catalog_for,
     existing_by_schema,
+    existing_projet_tables,
 )
 from .i18n import get_language, tr
 from .i18n.layer_translations import LAYER_DISPLAY_NAMES, LAYER_TREE_LABELS
@@ -87,6 +94,17 @@ _PARTIAL_MARK = "◪"
 _LOADED_MARK = "✔"
 
 Key = Tuple[Optional[str], str]     # (schema operateur ou None si commune, cle du catalogue)
+PROJET_KEY_PREFIX = "projet:"       # 2.1 : ("projet:<CODE>", table)
+
+
+def projet_tree_key(code: str) -> str:
+    return PROJET_KEY_PREFIX + code
+
+
+def _projet_code(schema) -> Optional[str]:
+    if isinstance(schema, str) and schema.startswith(PROJET_KEY_PREFIX):
+        return schema[len(PROJET_KEY_PREFIX):]
+    return None
 
 
 def _layer_label(entry: tuple) -> str:
@@ -146,12 +164,14 @@ class _Group:
     """Groupe de l'arbre : tuile, operateur (None si commune) et ses couches
     encore a charger (les couches deja chargees ne comptent pas)."""
 
-    def __init__(self, item, tile: str, label: Optional[str], loadable: list, core: list):
+    def __init__(self, item, tile: Optional[str], label: Optional[str], loadable: list, core: list,
+                 projet=None):
         self.item = item
-        self.tile = tile
+        self.tile = tile              # None pour un groupe de projet metier
         self.label = label
         self.loadable = loadable      # [QTreeWidgetItem] cochables, expert compris
         self.core = core              # idem hors couches expert : le denominateur du compteur
+        self.projet = projet          # 2.1 : ProjetInfo d'un groupe de projet metier
 
 
 class LayerSelectionWidget(QWidget):
@@ -178,6 +198,9 @@ class LayerSelectionWidget(QWidget):
         self._operator_memory: Optional[Tuple[list, set]] = None
         self._basemap_items: Dict[str, QTreeWidgetItem] = {}
         self._existing_basemaps = _detect_existing_basemaps()
+        # 2.1 : projets metier coches et tables du schema `projet` deja chargees.
+        self._projets: tuple = ()
+        self._projet_existing: set = set()
         self._build_ui()
         self.set_operators(())
 
@@ -298,7 +321,12 @@ class LayerSelectionWidget(QWidget):
         return [operator.schema for operator in self._operators]
 
     def _is_loaded(self, schema: Optional[str], key: str) -> bool:
+        if _projet_code(schema) is not None:
+            return key in self._projet_existing
         return key in self._existing.get(schema, ())
+
+    def _read_projet_existing(self) -> None:
+        self._projet_existing = existing_projet_tables(_project_init.QgsProject.instance())
 
     def _checked_keys(self) -> set:
         return {k for k, item in self._items.items()
@@ -314,9 +342,44 @@ class LayerSelectionWidget(QWidget):
             catalog = {entry[0]: entry for entry in catalog_for(operator.schema)}
             for tile in OPERATOR_TILES:
                 self._add_group(tile, operator.schema, operator.label, catalog, checked)
+        for projet in self._projets:
+            self._add_projet_group(projet, checked)
         common = {entry[0]: entry for entry in LAYER_CATALOG}
         for tile in COMMON_TILES:
             self._add_group(tile, None, None, common, checked)
+
+    def _add_projet_group(self, projet, checked: set):
+        """Groupe d'un projet metier : ses couches declarees, dans l'ordre du
+        registre, libelle du registre (jamais traduit), infobulle projet.<table>."""
+        schema = projet_tree_key(projet.code)
+        group_item = QTreeWidgetItem(self._tree, [""])
+        group_item.setCheckState(0, Qt.CheckState.Unchecked)
+        loadable = []
+        for entry in projet.layers:
+            loaded = self._is_loaded(schema, entry.table)
+            item = QTreeWidgetItem(group_item, [entry.label + (f"  {_LOADED_MARK}" if loaded else "")])
+            item.setData(0, Qt.ItemDataRole.UserRole, entry.table)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
+            if loaded:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                item.setToolTip(0, f"projet.{entry.table} — {tr('init.already_loaded')}")
+                item.setDisabled(True)
+            else:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setToolTip(0, f"projet.{entry.table}")
+                if (schema, entry.table) in checked:
+                    item.setCheckState(0, Qt.CheckState.Checked)
+                loadable.append(item)
+            self._items[(schema, entry.table)] = item
+        group = _Group(group_item, None, projet.label, loadable, list(loadable), projet=projet)
+        if loadable:
+            group_item.setFlags(group_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        else:
+            group_item.setFlags(group_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+            group_item.setDisabled(True)
+        group_item.setExpanded(bool(loadable))
+        self._groups.append(group)
+        self._group_of[id(group_item)] = group
 
     def _add_group(self, tile: str, schema: Optional[str], label: Optional[str], catalog: dict, checked: set):
         group_item = QTreeWidgetItem(self._tree, [""])
@@ -358,8 +421,11 @@ class LayerSelectionWidget(QWidget):
         """Legendes et cases des groupes, texte et etat des tuiles. Appelant :
         signaux de l'arbre bloques."""
         for group in self._groups:
-            name = _TILE_NAMES[group.tile]()
-            caption = f"{name}  [{group.label}]" if group.label else name
+            if group.projet is not None:
+                caption = group.projet.label
+            else:
+                name = _TILE_NAMES[group.tile]()
+                caption = f"{name}  [{group.label}]" if group.label else name
             if group.core:
                 # R10 : une couche expert n'est comptee ni au numerateur ni au denominateur
                 # (« 5/4 » serait illisible) ; la case du groupe suit les memes couches.
@@ -446,6 +512,7 @@ class LayerSelectionWidget(QWidget):
             kept = kept | memory_keys
         self._operators = operators
         self._existing = existing_by_schema(self._schemas)
+        self._read_projet_existing()
         self._refresh_chips()
 
         def change():
@@ -470,6 +537,36 @@ class LayerSelectionWidget(QWidget):
             set_role(chip, "chip")
             self._chips_layout.addWidget(chip)
             self._chips.append(chip)
+
+    def set_projets(self, projets) -> None:
+        """Groupes des projets metier coches (2.1) : un projet ajoute a toutes
+        ses couches non chargees cochees, un projet retire perd son groupe et
+        ses cases, les autres cases restent ; un seul ``on_change``."""
+        projets = tuple(projets)
+        before = {p.code for p in self._projets}
+        kept = {k for k in self._checked_keys()
+                if _projet_code(k[0]) is None or _projet_code(k[0]) in {p.code for p in projets}}
+        for projet in projets:
+            if projet.code not in before:
+                kept |= {(projet_tree_key(projet.code), entry.table) for entry in projet.layers}
+        self._projets = projets
+        self._read_projet_existing()
+        self._mutate(lambda: self._rebuild_tree(kept))
+
+    def projets(self) -> tuple:
+        return self._projets
+
+    def loaded_projet_tables(self) -> frozenset:
+        """Tables du schema `projet` deja chargees (relues du projet)."""
+        self._read_projet_existing()
+        return frozenset(self._projet_existing)
+
+    def projet_done(self, code: str) -> bool:
+        """True si toutes les couches du projet metier sont deja chargees."""
+        for projet in self._projets:
+            if projet.code == code:
+                return all(entry.table in self._projet_existing for entry in projet.layers)
+        return False
 
     def operator_chips(self) -> list:
         """Libelles des pastilles affichees."""
@@ -510,7 +607,10 @@ class LayerSelectionWidget(QWidget):
         self.apply_selection(self._selection_of(tiles))
 
     def _selection_of(self, tiles: Iterable[str]) -> LayerSelection:
-        return selection_from_tiles(tiles, self._schemas, self._existing)
+        """Selection des tuiles ; les projets metier coches sont gardes (ils
+        ne dependent pas des tuiles)."""
+        tiled = selection_from_tiles(tiles, self._schemas, self._existing)
+        return LayerSelection(tiled.per_operator, tiled.common, self.selection().projet)
 
     def apply_selection(self, selection: LayerSelection) -> None:
         """Remplace la selection : seules les couches de *selection* sont
@@ -525,7 +625,13 @@ class LayerSelectionWidget(QWidget):
             for (schema, key), item in self._items.items():
                 if self._is_loaded(schema, key):
                     continue
-                keys = selection.common if schema is None else selection.per_operator.get(schema, ())
+                code = _projet_code(schema)
+                if code is not None:
+                    keys = selection.projet.get(code, ())
+                elif schema is None:
+                    keys = selection.common
+                else:
+                    keys = selection.per_operator.get(schema, ())
                 item.setCheckState(0, Qt.CheckState.Checked if key in keys else Qt.CheckState.Unchecked)
 
         self._mutate(change)
@@ -535,9 +641,15 @@ class LayerSelectionWidget(QWidget):
         porte sur « deja chargee », pas sur la case), jamais v_form_lists ni
         docs_elements (ajoutes par le plan de chargement)."""
         checked = self._checked_keys()
+        projet: Dict[str, set] = {}
+        for s, key in checked:
+            code = _projet_code(s)
+            if code is not None:
+                projet.setdefault(code, set()).add(key)
         return LayerSelection(
             {schema: frozenset(key for s, key in checked if s == schema) for schema in self._schemas},
             frozenset(key for s, key in checked if s is None),
+            {code: frozenset(tables) for code, tables in projet.items()},
         )
 
     def tile_states(self) -> Dict[str, str]:
