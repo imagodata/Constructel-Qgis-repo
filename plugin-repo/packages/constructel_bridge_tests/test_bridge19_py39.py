@@ -54,6 +54,7 @@ def test_planned_modules_carry_the_future_import():
                  "bridge_home_model.py", "bridge_home.py", "bridge_presets.py", "bridge_layer_selection.py",
                  "bridge_home_load.py", "bridge_home_checkin.py", "bridge_home_projects.py",
                  "bridge_project_safety.py", "bridge_projets.py",
-                 "bridge_qgis_projects.py", "bridge_qgis_store.py"):
+                 "bridge_qgis_projects.py", "bridge_qgis_store.py",
+                 "bridge_project_archive.py"):
         tree = ast.parse((PKG / name).read_text(encoding="utf-8"))
         assert _has_future_annotations(tree), name

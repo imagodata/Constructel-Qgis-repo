@@ -59,8 +59,9 @@ from .bridge_presets import (
 from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
 from .bridge_projets import NO_CAPABILITIES
-from .bridge_project_safety import ProjectFileError, neutralize_qgs_xml
-from .bridge_qgis_projects import OpenedQgisProject
+from .bridge_project_archive import write_project_archive
+from .bridge_project_safety import MAX_CONTENT_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
+from .bridge_qgis_projects import OpenedQgisProject, SharePlan, build_metadata, save_target
 from .bridge_identity import (
     build_pgoptions,
     decode_password,
@@ -4260,6 +4261,111 @@ class ConstructelBridgePlugin:
             bool(row.is_owner), bool(row.can_edit), dict(open_row.metadata),
         )
         return True
+
+    # =====================================================================
+    # Projets QGIS (2.1) : enregistrer le projet courant
+    # =====================================================================
+
+    def _current_project_state(self):
+        """Titre, nombre de couches et login du projet courant
+        (``QgisProjectActions.current_state``)."""
+        from .bridge_home_model import CurrentProjectState
+
+        project = QgsProject.instance()
+        title = project.title() or ""
+        if not title and project.fileName():
+            title = os.path.splitext(os.path.basename(project.fileName()))[0]
+        login = self._pg_login if self._is_nominative_session() else ""
+        return CurrentProjectState(title, len(project.mapLayers()), login)
+
+    def _save_qgis_project(self, request):
+        """Enregistre le projet courant (``QgisProjectActions.save``) :
+        creation, ou mise a jour du projet QGIS ouvert s'il porte ce nom et
+        qu'on peut le modifier ; a la creation, la visibilite est appliquee."""
+        return self._store_qgis_project(request, forced_version=None)
+
+    def _overwrite_qgis_project(self, request):
+        """« Ecraser » apres un conflit (``QgisProjectActions.overwrite``) :
+        relit la version courante puis enregistre avec elle ; projet devenu
+        invisible -> ``gone`` ; jamais de visibilite appliquee."""
+        if not self._is_nominative_session() or not self._conn or getattr(self._conn, "closed", False):
+            return qgis_store.StoreOutcome(qgis_store.STATUS_NOMINATIVE)
+        version = qgis_store.current_version(self._conn, request.name, log=self._log)
+        if version is None:
+            return qgis_store.StoreOutcome(qgis_store.STATUS_GONE)
+        return self._store_qgis_project(request, forced_version=version)
+
+    def _store_qgis_project(self, request, forced_version):
+        from .bridge_home_model import VISIBILITY_PEOPLE, VISIBILITY_PROJET
+
+        outcome_cls = qgis_store.StoreOutcome
+        if not self._is_nominative_session():
+            return outcome_cls(qgis_store.STATUS_NOMINATIVE)
+        if not self._conn or getattr(self._conn, "closed", False):
+            return outcome_cls(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        project = QgsProject.instance()
+        if not project.mapLayers():
+            return outcome_cls("empty")
+        source_file = project.fileName() or ""
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory(prefix="bridge_qgis_") as directory:
+                content = write_project_archive(project, directory)
+        except OSError as exc:
+            self._log(f"Archive du projet courant impossible : {exc}", Qgis.MessageLevel.Warning)
+            return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc))
+        if len(content) > MAX_CONTENT_BYTES:
+            return outcome_cls("too_large")
+        try:
+            report = inspect_qgz(content)
+        except ProjectFileError as exc:
+            self._log(f"Archive du projet courant illisible : {exc}", Qgis.MessageLevel.Warning)
+            return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc))
+        if report.findings:
+            return outcome_cls("unsafe", value=report.findings)
+
+        opened = self._opened_qgis_project
+        same = opened is not None and opened.name == request.name
+        if forced_version is None:
+            expected, locked = save_target(request.name, opened)
+            projet_id = locked if expected is not None else request.projet_id
+        else:
+            # Ecraser : le rattachement est deja fixe en base, jamais renvoye
+            # (22023 s'il differait), sauf celui du projet ouvert de ce nom.
+            expected, projet_id = forced_version, (opened.projet_id if same else None)
+        metadata = build_metadata(request.description, report.saved_by, report.saved_at, source_file,
+                                  opened.metadata if same else None)
+        outcome = qgis_store.save(self._conn, request.name, content, metadata, expected, projet_id, log=self._log)
+        if outcome.status != qgis_store.STATUS_OK:
+            return outcome
+        version = int(outcome.value or 0)
+        creating = expected is None
+        if creating:
+            self._opened_qgis_project = OpenedQgisProject(
+                request.name, version, projet_id, request.projet_code if projet_id else None, True, True, metadata)
+        elif same:
+            self._opened_qgis_project = OpenedQgisProject(
+                request.name, version, opened.projet_id, opened.projet_code, opened.is_owner, opened.can_edit, metadata)
+        else:
+            self._opened_qgis_project = OpenedQgisProject(request.name, version, None, None, False, True, metadata)
+        project.setTitle(request.name)
+        project.setDirty(False)
+        self._log(tr("save.done", name=request.name, version=version))
+
+        if creating and version == 1:
+            plan = None
+            if request.visibility == VISIBILITY_PROJET and projet_id:
+                plan = SharePlan(True, (), (), ())
+            elif request.visibility == VISIBILITY_PEOPLE and request.people:
+                edit = tuple(sorted(login for login, can_edit in request.people if can_edit))
+                open_ = tuple(sorted(login for login, can_edit in request.people if not can_edit))
+                plan = SharePlan(None, (), edit, open_)
+            if plan is not None and not plan.is_empty():
+                shared = qgis_store.apply_share_plan(self._conn, request.name, plan, log=self._log)
+                if shared.status != qgis_store.STATUS_OK:
+                    return outcome_cls(qgis_store.STATUS_OK, value=version, message=shared.status,
+                                       detail=shared.message, count=shared.count)
+        return outcome_cls(qgis_store.STATUS_OK, value=version)
 
     def _open_db_project(self, schema: str, name: str) -> bool:
         """Charge le projet *name* du schema *schema* (2.0, plan tache 8).

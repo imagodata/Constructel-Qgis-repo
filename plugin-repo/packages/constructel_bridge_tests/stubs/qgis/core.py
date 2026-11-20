@@ -501,7 +501,10 @@ class QgsProject:
         return True
 
     def setTitle(self, title):
-        self.title = title
+        self._title = title
+
+    def title(self):
+        return getattr(self, "_title", "")
 
     def setFileName(self, name):
         self.file_name = name
