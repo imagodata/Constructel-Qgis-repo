@@ -12,18 +12,33 @@ pastille du Check-in. Aucun import qgis / Qt a l'execution : teste sans QGIS
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Iterable, Optional, Sequence
+
+from .bridge_projets import NO_CAPABILITIES, ProjetCapabilities, group_projets
 
 if TYPE_CHECKING:  # annotations seulement : modules Qt / reseau
     from .bridge_diagnostic import PluginSummary
     from .bridge_operators import OperatorInfo
     from .bridge_presets import LayerSelection, UserPreset
     from .bridge_project_init import LoadedCounts
+    from .bridge_qgis_projects import OpenedQgisProject, QgisProjectRow, SharePlan
+    from .bridge_qgis_store import StoreOutcome
 
 # Cles de message (tr litteral dans bridge_home_load, K11).
 MESSAGE_CONNECT = "home.connect_to_see"
 MESSAGE_COMMON_ONLY = "home.common_only"
+
+# Disponibilite des projets QGIS (2.1, spec § 7.6) : "" = page 2.1 complete.
+QGIS_OFFLINE = "offline"
+QGIS_NOMINATIVE = "nominative"
+QGIS_UNAVAILABLE = "unavailable"
+
+# Visibilite choisie a la creation d'un projet QGIS (spec § 7.7).
+VISIBILITY_PRIVATE = "private"
+VISIBILITY_PROJET = "projet"
+VISIBILITY_PEOPLE = "people"
 
 
 @dataclass(frozen=True)
@@ -53,6 +68,12 @@ class HomeSnapshot:
     checkin: Optional[CheckinState] = None   # pastille du Check-in, None tant que non calcule
     login: str = ""              # profil du Check-in ; "" hors connexion
     email: str = ""              # adresse d'audit de la session, "" si inconnue
+    # 2.1 : projets metier et projets QGIS
+    projets: tuple = ()          # ProjetInfo visibles (registre lu a la connexion)
+    capabilities: ProjetCapabilities = NO_CAPABILITIES
+    nominative: bool = False     # session au login nominatif (enregistrement possible)
+    opened_qgis_project: Optional[OpenedQgisProject] = None
+    operator_code_labels: tuple = ()   # ((code, libelle), ...) de tous les operateurs du registre
 
 
 @dataclass(frozen=True)
@@ -65,6 +86,42 @@ class HomeState:
     summary: tuple               # ((libelle, nb couches), ...) pour tout schema charge
     saved_project_enabled: bool
     checkin_badge: int
+    # 2.1
+    projet_groups: tuple = ()    # ((operateur_code ou None, (ProjetInfo, ...)), ...)
+    preselected_projets: tuple = ()   # codes recoches a l'ouverture, ordre d'affichage
+    qgis_reason: str = ""        # "" | QGIS_OFFLINE | QGIS_NOMINATIVE | QGIS_UNAVAILABLE
+
+
+@dataclass(frozen=True)
+class SaveRequest:
+    """Demande d'enregistrement du projet courant en projet QGIS."""
+    name: str
+    description: str
+    projet_id: Optional[str]
+    projet_code: Optional[str]
+    visibility: str              # VISIBILITY_*
+    people: tuple                # ((login, can_edit), ...)
+
+
+@dataclass(frozen=True)
+class CurrentProjectState:
+    title: str
+    layer_count: int
+    login: str
+
+
+@dataclass(frozen=True)
+class QgisProjectActions:
+    """Actions de la page Projets QGIS, fournies par le plugin (connecte)."""
+    list_visible: Callable[[], Optional[list]]
+    open: Callable[[QgisProjectRow], bool]
+    save: Callable[[SaveRequest], StoreOutcome]
+    overwrite: Callable[[SaveRequest], StoreOutcome]
+    delete: Callable[[str], StoreOutcome]
+    shares_list: Callable[[str], Optional[list]]
+    apply_shares: Callable[[str, SharePlan], StoreOutcome]
+    eligible_users: Callable[[Optional[str], str, Sequence[str]], Optional[list]]
+    current_state: Callable[[], CurrentProjectState]
 
 
 @dataclass(frozen=True)
@@ -81,6 +138,7 @@ class HomeActions:
     make_wizard: Callable[[object], object]          # parent -> QWizard
     set_language: Callable[[str], None]
     save_presets: Callable[[list], None]             # list[UserPreset]
+    qgis: Optional[QgisProjectActions] = None        # 2.1 ; None hors connexion ou doublures 2.0
 
 
 def checkin_badge(state: Optional[CheckinState]) -> int:
@@ -97,6 +155,32 @@ def checkin_badge(state: Optional[CheckinState]) -> int:
 
 
 def home_state(snapshot: HomeSnapshot) -> HomeState:
+    """Etat 2.0 (_home_state_20) complete des champs 2.1 : groupes de projets
+    metier (masques hors connexion ou sans registre), projets metier du
+    dernier choix encore visibles, disponibilite des projets QGIS."""
+    state = _home_state_20(snapshot)
+    groups: tuple = ()
+    if snapshot.connected and snapshot.capabilities.registry and snapshot.projets:
+        usable_codes = [op.code for op in (snapshot.operators or ())]
+        groups = tuple(group_projets(snapshot.projets, usable_codes, dict(snapshot.operator_code_labels)))
+    preselected_projets: tuple = ()
+    last = snapshot.last_selection
+    if groups and last is not None:
+        wanted = set(last.selection.projet)
+        preselected_projets = tuple(p.code for _op, projets in groups for p in projets if p.code in wanted)
+    if not snapshot.connected:
+        reason = QGIS_OFFLINE
+    elif not snapshot.capabilities.qgis_projects:
+        reason = QGIS_UNAVAILABLE
+    elif not snapshot.nominative:
+        reason = QGIS_NOMINATIVE
+    else:
+        reason = ""
+    return dataclasses.replace(state, projet_groups=groups, preselected_projets=preselected_projets,
+                               qgis_reason=reason)
+
+
+def _home_state_20(snapshot: HomeSnapshot) -> HomeState:
     """Regles de l'ecran (spec § 6.2, § 6.6) :
 
     - hors connexion : ni choix ni chargement (MESSAGE_CONNECT), « Projet

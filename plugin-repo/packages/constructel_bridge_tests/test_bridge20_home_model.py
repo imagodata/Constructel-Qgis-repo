@@ -190,7 +190,9 @@ def test_snapshot_fields():
     assert names[:12] == ["connected", "header", "operators", "counts", "labels", "last_selection",
                           "project_suffix", "last_suffix", "plugin_summary", "plugin_version",
                           "project_operators", "user_presets"]
-    assert names[-3:] == ["checkin", "login", "email"]   # tache 9 : profil du Check-in
+    assert names[12:15] == ["checkin", "login", "email"]   # tache 9 : profil du Check-in
+    # 2.1 : champs ajoutes en fin, avec defauts (constructeur 2.0 inchange)
+    assert names[15:] == ["projets", "capabilities", "nominative", "opened_qgis_project", "operator_code_labels"]
 
 
 def test_snapshot_login_and_email_default_to_empty():
@@ -202,13 +204,15 @@ def test_snapshot_login_and_email_default_to_empty():
 def test_home_actions_fields():
     assert [f.name for f in fields(hm.HomeActions)] == [
         "snapshot", "connect", "load", "list_projects", "open_project", "diagnostic_inputs",
-        "diagnostic_action", "configure_sharing", "make_wizard", "set_language", "save_presets"]
+        "diagnostic_action", "configure_sharing", "make_wizard", "set_language", "save_presets",
+        "qgis"]   # 2.1 : facultatif, defaut None
 
 
 def test_home_state_fields():
     assert [f.name for f in fields(hm.HomeState)] == [
         "load_enabled", "message_key", "operators", "preselected", "loaded_marks", "summary",
-        "saved_project_enabled", "checkin_badge"]
+        "saved_project_enabled", "checkin_badge",
+        "projet_groups", "preselected_projets", "qgis_reason"]   # 2.1 : defauts en fin
 
 
 def test_home_model_has_no_qt_import():
@@ -218,7 +222,8 @@ def test_home_model_has_no_qt_import():
     modules = {(n.module or "") if isinstance(n, ast.ImportFrom) else a.name
                for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) and id(n) not in guarded
                for a in n.names}
-    assert modules == {"__future__", "dataclasses", "typing"}
+    # 2.1 : bridge_projets est lui-meme sans Qt (test_bridge21_projets).
+    assert modules == {"__future__", "dataclasses", "typing", "bridge_projets"}
 
 
 @pytest.mark.parametrize("key", ["home.common_only"])
