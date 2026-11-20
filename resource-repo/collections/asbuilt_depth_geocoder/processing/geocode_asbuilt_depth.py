@@ -1441,8 +1441,9 @@ def detect_asbuilt_schema(execute, warn=None) -> AsbuiltSchema:
     """Détecte le schéma As-Built sur la connexion 'be' — UNE fois par exécution.
 
     ``execute`` : ``sql -> lignes`` (``executeSql`` de la connexion 'be').
-    ``to_regclass('projet.geofiber_asbuilt_depth_points')`` non NULL -> mode
-    ``projet``, sinon ``public`` (comportement 1.3.0). En mode ``projet`` :
+    :data:`SCHEMA_PROBE_SQL` (``to_regclass`` de la table des points dans
+    ``projet``) non NULL -> mode ``projet``, sinon ``public`` (comportement
+    1.3.0). En mode ``projet`` :
     fonctions exigées présentes (:data:`PROJET_REQUIRED_FUNCTIONS`, sinon
     :func:`half_migrated_message`), puis pré-contrôle du droit d'écriture de
     la session (refus -> :func:`write_denied_message`, AVANT tout géocodage).
