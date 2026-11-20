@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import zlib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import List, Optional
@@ -26,6 +27,7 @@ FINDING_ACTION = "action"
 FINDING_FORM_INIT = "form_init"
 FINDING_PASSWORD = "password"
 FINDING_PYTHON_FILE = "python_file"
+FINDING_EMBEDDED_PROJECT = "embedded_project"   # couche ou groupe embarque d'un autre fichier projet
 
 # Qgis::AttributeActionType : 0 Generic, 1 GenericPython, 2 Mac, 3 Windows,
 # 4 Unix, 5 OpenUrl, 6 SubmitUrlEncoded, 7 SubmitUrlMultipart. Seules les
@@ -37,6 +39,11 @@ MAX_CONTENT_BYTES = 256 * 1024 * 1024
 # 3 Environment.
 _FORM_INIT_NO_SOURCE = {"", "0"}
 _MAX_QGS_BYTES = 512 * 1024 * 1024
+MAX_QGS_BYTES = _MAX_QGS_BYTES        # .qgs decompresse : borne a l'ouverture aussi (bombe ZIP)
+_FORM_TAGS = ("editforminit", "editforminitcodesource", "editforminitcode", "editforminitfilepath")
+# Sous-ensemble DTD interne (<!DOCTYPE qgis [ ... ]>) : expat et QDom ne
+# l'interpretent pas de la meme facon (valeurs par defaut d'attributs).
+_INTERNAL_SUBSET_RE = re.compile(rb"<!DOCTYPE[^>\[]*\[")
 _PASSWORD_RE = re.compile(r"\bpassword\s*=\s*('(?:[^'\\]|\\.)+'|[^\s'][^\s]*)", re.IGNORECASE)
 
 
@@ -65,17 +72,51 @@ def _parse_qgs(data, entry: str = "projet") -> ET.Element:
     # (expansion d'entites) ; le DOCTYPE externe standard de QGIS est admis.
     if b"<!ENTITY" in raw:
         raise ProjectFileError(f"{entry} : declaration d'entite XML refusee")
+    # Revue 2.1 : tout ce qu'ElementTree (expat) et QDom (QGIS) lisent
+    # differemment est refuse, pour que le texte controle soit celui que QGIS
+    # lit : sous-ensemble DTD interne, declarations d'attributs ou d'elements.
+    if _INTERNAL_SUBSET_RE.search(raw) or b"<!ATTLIST" in raw or b"<!ELEMENT" in raw:
+        raise ProjectFileError(f"{entry} : DTD interne refusee")
     try:
         root = ET.fromstring(raw)
     except ET.ParseError as exc:
         raise ProjectFileError(f"{entry} : XML invalide ({exc})") from exc
+    except RecursionError as exc:
+        raise ProjectFileError(f"{entry} : XML trop profond") from exc
     if root.tag != "qgis":
         raise ProjectFileError(f"{entry} : racine <{root.tag}> au lieu de <qgis>")
+    # Espaces de noms : ET renomme les balises en {uri}nom (invisibles pour les
+    # recherches par nom), QDom les lit sous leur nom nu. Refus.
+    for el in root.iter():
+        if not isinstance(el.tag, str) or el.tag.startswith("{") or any(k.startswith("{") for k in el.attrib):
+            raise ProjectFileError(f"{entry} : espace de noms XML refuse")
     return root
 
 
 def _text(el: Optional[ET.Element]) -> str:
-    return (el.text or "").strip() if el is not None else ""
+    """Tout le texte de l'element et de ses descendants, comme
+    QDomElement::text() (el.text s'arrete au premier enfant)."""
+    return "".join(el.itertext()).strip() if el is not None else ""
+
+
+def _layer_index(root: ET.Element) -> dict:
+    """id(element) -> libelle de la couche (maplayer) qui le contient."""
+    index = {}
+    for maplayer in root.iter("maplayer"):
+        label = _layer_label(maplayer)
+        for el in maplayer.iter():
+            index[id(el)] = label
+    return index
+
+
+def _form_holders(root: ET.Element) -> List[ET.Element]:
+    """Elements porteurs d'un code de formulaire : la couche, mais aussi le
+    <qgis> d'un style alternatif (map-layer-style)."""
+    return [el for el in root.iter() if any(child.tag in _FORM_TAGS for child in el)]
+
+
+def _embedded_elements(root: ET.Element) -> List[ET.Element]:
+    return [el for el in root.iter() if (el.get("embedded") or "").strip() == "1"]
 
 
 def _layer_label(maplayer: ET.Element) -> str:
@@ -96,22 +137,26 @@ def _action_refused(action: ET.Element) -> Optional[str]:
         return None  # commande vide : rien a executer (meme regle que QGIS)
     raw = (action.get("type") or "").strip()
     name = action.get("name") or action.get("shortTitle") or "?"
-    try:
-        action_type = int(raw)
-    except ValueError:
+    # Chiffres ASCII seulement : int("５") vaut 5 en Python, 0 pour Qt (Generic).
+    if not (raw.isascii() and raw.isdigit()):
         return f"{name} (type={raw or '?'})"
+    action_type = int(raw)
     if action_type in ALLOWED_ACTION_TYPES:
         return None
     return f"{name} (type={action_type})"
 
 
-def _form_init_refused(maplayer: ET.Element) -> Optional[str]:
-    init_fn = _text(maplayer.find("editforminit"))
-    source = _text(maplayer.find("editforminitcodesource"))
-    init_code = _text(maplayer.find("editforminitcode"))
-    init_file = _text(maplayer.find("editforminitfilepath"))
+def _form_init_refused(holder: ET.Element) -> Optional[str]:
+    init_fn = _text(holder.find("editforminit"))
+    source = _text(holder.find("editforminitcodesource"))
+    init_code = _text(holder.find("editforminitcode"))
+    init_file = _text(holder.find("editforminitfilepath"))
     if source not in _FORM_INIT_NO_SOURCE and (init_fn or init_code or init_file):
         return init_fn or "?"
+    if "." in init_fn:
+        # Revue 2.1 : « module.fonction » sans source est converti par QGIS
+        # (compatibilite < 2.12) en « from module import fonction ».
+        return init_fn
     return None
 
 
@@ -123,25 +168,21 @@ def scan_qgs(root: ET.Element) -> List[Finding]:
     if any(_text(el) for el in _expression_elements(root)):
         findings.append(Finding(FINDING_EXPRESSION_FUNCTIONS))
 
-    seen_actions = set()
-    for maplayer in root.iter("maplayer"):
-        label = _layer_label(maplayer)
-        for action in maplayer.iter("actionsetting"):
-            seen_actions.add(id(action))
-            detail = _action_refused(action)
-            if detail:
-                findings.append(Finding(FINDING_ACTION, label, detail))
-        init_fn = _form_init_refused(maplayer)
-        if init_fn:
-            findings.append(Finding(FINDING_FORM_INIT, label, init_fn))
-        if _PASSWORD_RE.search(_text(maplayer.find("datasource"))):
-            findings.append(Finding(FINDING_PASSWORD, label))
-
+    layer_of = _layer_index(root)
     for action in root.iter("actionsetting"):
-        if id(action) not in seen_actions:
-            detail = _action_refused(action)
-            if detail:
-                findings.append(Finding(FINDING_ACTION, "", detail))
+        detail = _action_refused(action)
+        if detail:
+            findings.append(Finding(FINDING_ACTION, layer_of.get(id(action), ""), detail))
+    for holder in _form_holders(root):
+        init_fn = _form_init_refused(holder)
+        if init_fn:
+            findings.append(Finding(FINDING_FORM_INIT, layer_of.get(id(holder), ""), init_fn))
+    for maplayer in root.iter("maplayer"):
+        if _PASSWORD_RE.search(_text(maplayer.find("datasource"))):
+            findings.append(Finding(FINDING_PASSWORD, _layer_label(maplayer)))
+    for el in _embedded_elements(root):
+        findings.append(Finding(FINDING_EMBEDDED_PROJECT, layer_of.get(id(el), "") or (el.get("name") or ""),
+                                el.get("project") or "?"))
     return findings
 
 
@@ -167,7 +208,7 @@ def inspect_qgz(content: bytes) -> ArchiveReport:
                 raise ProjectFileError(f"{entry} : trop volumineux une fois decompresse")
             try:
                 data = zf.read(entry)
-            except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
+            except (zipfile.BadZipFile, RuntimeError, OSError, zlib.error, EOFError) as exc:
                 raise ProjectFileError(f"lecture de {entry} impossible ({exc})") from exc
             root = _parse_qgs(data, entry)
             findings.extend(scan_qgs(root))
@@ -213,15 +254,29 @@ def strip_datasource_password(datasource: str) -> str:
 
 
 def _clear(el: Optional[ET.Element]) -> None:
+    """Vide l'element : texte ET enfants (du texte peut suivre un enfant)."""
     if el is not None:
+        for child in list(el):
+            el.remove(child)
         el.text = ""
+
+
+def _set_text(el: ET.Element, value: str) -> None:
+    _clear(el)
+    el.text = value
 
 
 def neutralize_qgs_xml(xml: str) -> NeutralizeResult:
     """Vide macros, fonctions d'expression, actions non URL, code de
     formulaire et mots de passe en clair. Rien trouve : *xml* rendu tel quel
-    (meme objet). Leve ProjectFileError sur entite XML ou XML illisible."""
+    (meme objet). Leve ProjectFileError sur entite XML, DTD interne, espace de
+    noms, couche embarquee d'un autre fichier projet ou XML illisible."""
     root = _parse_qgs(xml)
+    embedded = _embedded_elements(root)
+    if embedded:
+        # Le fichier projet reference serait lu par QGIS sans neutralisation
+        # (et un chemin UNC ouvrirait une connexion SMB sortante).
+        raise ProjectFileError("couche ou groupe embarque d'un autre fichier projet refuse")
     removed: List[Finding] = []
 
     macros = [el for el in _macro_elements(root) if _text(el)]
@@ -236,11 +291,7 @@ def neutralize_qgs_xml(xml: str) -> NeutralizeResult:
             _clear(el)
 
     parents = {id(child): parent for parent in root.iter() for child in parent}
-    layer_of = {}
-    for maplayer in root.iter("maplayer"):
-        label = _layer_label(maplayer)
-        for el in maplayer.iter():
-            layer_of[id(el)] = label
+    layer_of = _layer_index(root)
 
     for action in list(root.iter("actionsetting")):
         detail = _action_refused(action)
@@ -250,33 +301,37 @@ def neutralize_qgs_xml(xml: str) -> NeutralizeResult:
             if parent is not None:
                 parent.remove(action)
 
+    for holder in _form_holders(root):
+        init_fn = _form_init_refused(holder)
+        if init_fn:
+            removed.append(Finding(FINDING_FORM_INIT, layer_of.get(id(holder), ""), init_fn))
+            source = holder.find("editforminitcodesource")
+            if source is not None:
+                _set_text(source, "0")
+            for tag in ("editforminit", "editforminitcode", "editforminitfilepath"):
+                for el in holder.findall(tag):
+                    _clear(el)
+
     password_layers = set()
     for maplayer in root.iter("maplayer"):
-        label = _layer_label(maplayer)
-        init_fn = _form_init_refused(maplayer)
-        if init_fn:
-            removed.append(Finding(FINDING_FORM_INIT, label, init_fn))
-            source = maplayer.find("editforminitcodesource")
-            if source is not None:
-                source.text = "0"
-            for tag in ("editforminit", "editforminitcode", "editforminitfilepath"):
-                _clear(maplayer.find(tag))
         ds = maplayer.find("datasource")
-        if ds is not None and ds.text:
-            cleaned = strip_datasource_password(ds.text)
-            if cleaned != ds.text:
-                ds.text = cleaned
+        text = _text(ds)
+        if ds is not None and text:
+            cleaned = strip_datasource_password(text)
+            if cleaned != text:
+                _set_text(ds, cleaned)
                 password_layers.add(id(ds))
-                removed.append(Finding(FINDING_PASSWORD, label))
+                removed.append(Finding(FINDING_PASSWORD, _layer_label(maplayer)))
 
     # Autres emplacements d'une source : <datasource> hors couche (mises en
-    # page, couches embarquees) et attribut source de l'arbre des couches.
+    # page) et attribut source de l'arbre des couches.
     other_password = False
     for el in root.iter():
-        if el.tag == "datasource" and id(el) not in password_layers and el.text:
-            cleaned = strip_datasource_password(el.text)
-            if cleaned != el.text:
-                el.text = cleaned
+        if el.tag == "datasource" and id(el) not in password_layers:
+            text = _text(el)
+            cleaned = strip_datasource_password(text)
+            if text and cleaned != text:
+                _set_text(el, cleaned)
                 other_password = True
         source_attr = el.get("source")
         if source_attr:
@@ -289,4 +344,8 @@ def neutralize_qgs_xml(xml: str) -> NeutralizeResult:
 
     if not removed:
         return NeutralizeResult(xml, ())
-    return NeutralizeResult(_XML_HEADER + ET.tostring(root, encoding="unicode"), tuple(removed))
+    try:
+        serialized = ET.tostring(root, encoding="unicode")
+    except RecursionError as exc:
+        raise ProjectFileError("XML trop profond") from exc
+    return NeutralizeResult(_XML_HEADER + serialized, tuple(removed))

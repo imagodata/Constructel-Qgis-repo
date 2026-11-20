@@ -486,6 +486,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "qgis.delete": "Delete",
         "save.share_refused": "QGIS project saved; sharing refused for {count} people",
         "save.share_failed": "The visibility could not be applied ({message}); use “Share…” to set it.",
+        "save.finding_embedded_project": "layer or group embedded from another project file ({detail})",
     },
 
     # =====================================================================
@@ -967,6 +968,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "qgis.delete": "Supprimer",
         "save.share_refused": "Projet QGIS enregistré ; partage refusé pour {count} personnes",
         "save.share_failed": "La visibilité n'a pas pu être appliquée ({message}) ; « Partager… » pour la régler.",
+        "save.finding_embedded_project": "couche ou groupe embarqué d'un autre fichier projet ({detail})",
     },
 
     # =====================================================================
@@ -1448,5 +1450,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "qgis.delete": "Eliminar",
         "save.share_refused": "Projeto QGIS guardado; partilha recusada para {count} pessoas",
         "save.share_failed": "Não foi possível aplicar a visibilidade ({message}); use «Partilhar…» para a definir.",
+        "save.finding_embedded_project": "camada ou grupo incorporado de outro ficheiro de projeto ({detail})",
     },
 }

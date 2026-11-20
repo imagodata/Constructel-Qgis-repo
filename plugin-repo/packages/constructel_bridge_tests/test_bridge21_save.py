@@ -200,7 +200,8 @@ def test_save_update_passes_opened_version_and_locked_projet(plugin):
     out = plugin._save_qgis_project(req(projet_id=None, visibility=hm.VISIBILITY_PEOPLE, people=(("a.b", True),)))
     assert out.status == store.STATUS_OK and out.value == 5
     (save,) = plugin.calls                               # mise a jour : aucune visibilite appliquee
-    assert save[:4] == ("save", "Vue", 4, "uuid-g")
+    # Revue 2.1 (L7) : rattachement fixe en base, jamais renvoye en mise a jour.
+    assert save[:4] == ("save", "Vue", 4, None)
     assert save[4] == {"qgis_version": "3.34", "description": "d", "saved_by": "jdoe", "saved_at": "2026-11-20T09:00:00"}
     opened = plugin._opened_qgis_project
     assert opened.version == 5 and not opened.is_owner and opened.projet_id == "uuid-g"
@@ -264,3 +265,10 @@ def test_current_project_state(plugin):
     QgsProject.instance().setTitle("Ixelles")
     state = plugin._current_project_state()
     assert state.title == "Ixelles" and state.layer_count == 1 and state.login == plugin._pg_login
+
+
+def test_update_never_resends_the_attachment_even_if_the_dialog_carries_one(plugin):
+    plugin._opened_qgis_project = OpenedQgisProject("Vue", 4, "uuid-g", "GOFIBER", True, True, {})
+    plugin.save_outcome = store.StoreOutcome(store.STATUS_OK, value=5)
+    plugin._save_qgis_project(req(projet_id="uuid-g"))
+    assert plugin.calls[0][3] is None

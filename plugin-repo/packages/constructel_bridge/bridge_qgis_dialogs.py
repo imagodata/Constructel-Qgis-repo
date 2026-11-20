@@ -43,6 +43,7 @@ from .bridge_project_safety import (
     FINDING_FORM_INIT,
     FINDING_MACROS,
     FINDING_PASSWORD,
+    FINDING_EMBEDDED_PROJECT,
     FINDING_PYTHON_FILE,
     Finding,
 )
@@ -79,6 +80,7 @@ _FINDINGS = {
     FINDING_FORM_INIT: lambda f: tr("save.finding_form_init", detail=f.detail),
     FINDING_PASSWORD: lambda f: tr("save.finding_password"),
     FINDING_PYTHON_FILE: lambda f: tr("save.finding_python_file", detail=f.detail),
+    FINDING_EMBEDDED_PROJECT: lambda f: tr("save.finding_embedded_project", detail=f.detail),
 }
 
 
@@ -210,7 +212,9 @@ class SaveDialog(QDialog):
         buttons.addWidget(self.cancel_button)
         self.save_button = QPushButton(tr("save.button"))
         set_role(self.save_button, "primary")
-        self.save_button.setDefault(True)
+        # Revue 2.1 : aucun bouton par defaut, Entree dans le champ de recherche
+        # de personnes ne doit jamais enregistrer.
+        self.save_button.setAutoDefault(False)
         self.save_button.clicked.connect(lambda _checked=False: self._on_save())
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
@@ -501,7 +505,7 @@ class ShareDialog(QDialog):
         buttons.addWidget(self.close_button)
         self.apply_button = QPushButton(tr("share.apply"))
         set_role(self.apply_button, "primary")
-        self.apply_button.setDefault(True)
+        self.apply_button.setAutoDefault(False)      # Entree dans la recherche : jamais « Appliquer »
         self.apply_button.clicked.connect(lambda _checked=False: self.apply())
         buttons.addWidget(self.apply_button)
         layout.addLayout(buttons)

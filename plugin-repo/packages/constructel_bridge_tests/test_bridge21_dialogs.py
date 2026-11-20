@@ -198,7 +198,7 @@ def test_every_finding_kind_has_a_text(dlg):
     from constructel_bridge import bridge_project_safety as ps
 
     for kind in (ps.FINDING_MACROS, ps.FINDING_EXPRESSION_FUNCTIONS, ps.FINDING_ACTION, ps.FINDING_FORM_INIT,
-                 ps.FINDING_PASSWORD, ps.FINDING_PYTHON_FILE):
+                 ps.FINDING_PASSWORD, ps.FINDING_PYTHON_FILE, ps.FINDING_EMBEDDED_PROJECT):
         assert dlg.format_finding(Finding(kind, "", "x")) not in ("", kind)
 
 
@@ -451,3 +451,11 @@ def test_delete_messages_by_status(dlg, status, key):
 
 def test_delete_error_message_carries_the_server_text(dlg):
     assert dlg.delete_message(store.StoreOutcome("error", message="boom")) == dlg.tr("delete.error", message="boom")
+
+
+def test_enter_in_people_search_never_triggers_save_or_apply(dlg):
+    # Revue 2.1 (L12) : aucun bouton par defaut dans les dialogues a recherche.
+    save = _save_dialog(dlg)
+    assert not save.save_button.isDefault() and not save.save_button.autoDefault()
+    share = _share(dlg)
+    assert not share.apply_button.isDefault() and not share.apply_button.autoDefault()

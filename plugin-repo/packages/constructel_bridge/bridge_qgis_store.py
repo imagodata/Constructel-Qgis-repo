@@ -187,6 +187,7 @@ ELIGIBLE_QUERY = ("SELECT * FROM projet.fn_qgis_project_eligible_users(%s::text,
                   + str(min(ELIGIBLE_LIMIT, ELIGIBLE_MAX_LIMIT)) + ", p_exclude => %s::text[])")
 
 _FIRST_INT_RE = re.compile(r"\d+")
+_COUNT_RE = re.compile(r"(\d+)\s*personne")
 
 
 @dataclass(frozen=True)
@@ -225,8 +226,12 @@ def classify_error(exc: BaseException) -> StoreOutcome:
             status = STATUS_ERROR
     count = None
     if status == STATUS_INELIGIBLE:
-        match = _FIRST_INT_RE.search(message or "")
-        count = int(match.group(0)) if match else None
+        # « partage du projet QGIS <nom> refuse : <n> personne(s)… » : le nom
+        # (qui peut contenir des chiffres) precede ; on prend le DERNIER
+        # nombre suivi de « personne », a defaut le dernier nombre.
+        text = message or ""
+        found = _COUNT_RE.findall(text) or _FIRST_INT_RE.findall(text)
+        count = int(found[-1]) if found else None
     return StoreOutcome(status, message=message or "", detail=detail, count=count)
 
 

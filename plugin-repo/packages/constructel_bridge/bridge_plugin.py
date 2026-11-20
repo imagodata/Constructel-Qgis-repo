@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import zlib
 from typing import Optional, Sequence
 from xml.sax.saxutils import escape as xml_escape, unescape as xml_unescape
 
@@ -60,7 +61,7 @@ from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
 from .bridge_projets import NO_CAPABILITIES
 from .bridge_project_archive import write_project_archive
-from .bridge_project_safety import MAX_CONTENT_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
+from .bridge_project_safety import MAX_CONTENT_BYTES, MAX_QGS_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
 from .bridge_qgis_projects import OpenedQgisProject, SharePlan, build_metadata, save_target
 from .bridge_identity import (
     build_pgoptions,
@@ -3990,9 +3991,12 @@ class ConstructelBridgePlugin:
     # -- projets QGIS (2.1) : actions de la page Projets QGIS -----------------------------
 
     def _qgis_conn(self):
-        """Connexion utilisable pour les fonctions projet.*, sinon None."""
+        """Connexion utilisable pour les fonctions projet.* (connectee ET
+        nominative : jamais en login partage), sinon None."""
         conn = self._conn
         if not self._connected or conn is None or getattr(conn, "closed", False):
+            return None
+        if not self._is_nominative_session():
             return None
         return conn
 
@@ -4400,12 +4404,13 @@ class ConstructelBridgePlugin:
         opened = self._opened_qgis_project
         same = opened is not None and opened.name == request.name
         if forced_version is None:
-            expected, locked = save_target(request.name, opened)
-            projet_id = locked if expected is not None else request.projet_id
+            expected, _locked = save_target(request.name, opened)
         else:
-            # Ecraser : le rattachement est deja fixe en base, jamais renvoye
-            # (22023 s'il differait), sauf celui du projet ouvert de ce nom.
-            expected, projet_id = forced_version, (opened.projet_id if same else None)
+            expected = forced_version
+        # Mise a jour ou « Ecraser » : le rattachement est fixe en base et n'est
+        # jamais renvoye (NULL admis ; une valeur differente, ex. projet metier
+        # supprime entre-temps, donnerait 22023). Creation : celui du dialogue.
+        projet_id = request.projet_id if expected is None else None
         metadata = build_metadata(request.description, report.saved_by, report.saved_at, source_file,
                                   opened.metadata if same else None)
         outcome = qgis_store.save(self._conn, request.name, content, metadata, expected, projet_id, log=self._log)
@@ -4576,8 +4581,12 @@ class ConstructelBridgePlugin:
                         # Le .qgs est le premier (et souvent unique) fichier
                         qgs_names = [n for n in zf.namelist() if n.lower().endswith(".qgs")]
                         entry = qgs_names[0] if qgs_names else zf.namelist()[0]
+                        if zf.getinfo(entry).file_size > MAX_QGS_BYTES:
+                            # Revue 2.1 (M4) : bombe ZIP, jamais decompressee.
+                            raise ValueError(f"{entry} trop volumineux une fois decompresse")
                         xml = zf.read(entry).decode("utf-8")
-                except (zipfile.BadZipFile, IndexError, UnicodeDecodeError, RuntimeError, OSError) as exc:
+                except (zipfile.BadZipFile, IndexError, UnicodeDecodeError, RuntimeError, OSError,
+                        ValueError, EOFError, zlib.error) as exc:
                     self._log(f"Project '{name}' : archive illisible ({exc})", Qgis.MessageLevel.Warning)
                     self._refuse_open(tr("project.unsafe_refused", name=name))
                     return False

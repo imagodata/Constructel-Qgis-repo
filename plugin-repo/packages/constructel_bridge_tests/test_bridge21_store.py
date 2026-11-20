@@ -309,3 +309,9 @@ def test_errors_reach_the_plugin_log_callback(conn):
     store.list_visible(conn, log=seen.append)
     store.save(conn, "Vue", b"PK", {}, None, None, log=seen.append)
     assert len(seen) == 3 and all("boom" in m for m in seen)
+
+
+def test_ineligible_count_ignores_digits_of_the_project_name():
+    # Revue 2.1 (M5) : message reel du serveur, nom du projet en tete.
+    msg = "partage du projet QGIS Zone 12 POP 3 refuse : 2 personne(s) non eligible(s)"
+    assert store.classify_error(pg_error("23514", msg, hint="QGISP_NOT_ELIGIBLE")).count == 2

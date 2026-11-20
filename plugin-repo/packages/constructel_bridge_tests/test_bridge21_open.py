@@ -160,3 +160,11 @@ def test_cleared_signal_is_connected_and_disconnected(bp18, monkeypatch):
     assert plugin._on_project_cleared in QgsProject.instance().cleared._slots
     plugin.unload()
     assert plugin._on_project_cleared not in QgsProject.instance().cleared._slots
+
+
+def test_oversized_qgs_is_never_decompressed(bp18, plugin, monkeypatch):
+    # Revue 2.1 (M4) : bombe ZIP, refus avant zf.read.
+    monkeypatch.setattr(bp18, "MAX_QGS_BYTES", 10)
+    _serve_projet(plugin, monkeypatch)
+    assert plugin._open_qgis_project(row()) is False
+    assert plugin.boxes == [bp18.tr("project.unsafe_refused", name="Vue")]

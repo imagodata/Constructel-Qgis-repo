@@ -353,3 +353,15 @@ def test_list_db_projects_skips_projet_schema_when_visible_exists(plugin):
     assert [p["schema"] for p in plugin._list_db_projects()] == ["wyre", "public"]
     plugin._projet_caps = pj.ProjetCapabilities(qgis_table=True)          # lot b absent : lecture seule 2.0
     assert [p["schema"] for p in plugin._list_db_projects()] == ["wyre", "public", "projet"]
+
+
+def test_write_actions_refused_in_shared_login(plugin, monkeypatch):
+    # Revue 2.1 (L15) : garde nominative cote plugin, pas seulement l'interface.
+    calls = []
+    for name in ("delete", "shares_list", "apply_share_plan", "eligible_users"):
+        monkeypatch.setattr(store, name, lambda *a, _n=name, **k: calls.append(_n))
+    plugin._auth_mode = "shared"
+    assert plugin._delete_qgis_project("Vue").status == store.STATUS_ERROR
+    assert plugin._qgis_shares_list("Vue") is None and plugin._eligible_users(None, "ale", []) is None
+    assert plugin._apply_qgis_shares("Vue", object()).status == store.STATUS_ERROR
+    assert calls == []

@@ -175,3 +175,78 @@ def test_entity_declaration_refuses_to_open():
 def test_unreadable_xml_refuses_to_open(xml):
     with pytest.raises(ps.ProjectFileError):
         ps.neutralize_qgs_xml(xml)
+
+
+
+# ---------------------------------------------------------------- revue 2.1 : ecarts ElementTree / QDom
+
+def test_default_namespace_on_a_child_is_refused():
+    # C1 : ET renomme en {urn:x}maplayer (invisible aux recherches), QDom lit maplayer.
+    action = '<attributeactions><actionsetting type="1" name="p" action="import os"/></attributeactions>'
+    xml = qgs(layer(extra=action)).replace("<maplayer>", '<maplayer xmlns="urn:x">')
+    with pytest.raises(ps.ProjectFileError):
+        ps.neutralize_qgs_xml(xml)
+    with pytest.raises(ps.ProjectFileError):
+        ps.inspect_qgz(qgz(xml))
+    with pytest.raises(ps.ProjectFileError):
+        ps.neutralize_qgs_xml(qgs(props='<Macros xmlns="urn:x"><pythonCode>import os</pythonCode></Macros>'))
+
+
+def test_text_after_a_child_element_is_seen_and_removed():
+    # H1 : QDomElement::text() concatene tout le texte des descendants.
+    props = '<Macros><pythonCode type="QString"><x/>import os</pythonCode></Macros>'
+    form = ("<editforminit><x/>f</editforminit><editforminitcodesource><x/>2</editforminitcodesource>"
+            "<editforminitcode><x/>def f(d, l, x): pass</editforminitcode>")
+    xml = qgs(layer(extra=form), props=props)
+    assert sorted(f.kind for f in ps.scan_qgs(ET.fromstring(xml.split(">", 1)[1]))) == ["form_init", "macros"]
+    result = ps.neutralize_qgs_xml(xml)
+    assert "import os" not in result.xml and "def f" not in result.xml
+
+
+def test_form_init_code_of_an_alternative_style_is_neutralized():
+    # M1 : style alternatif (map-layer-style-manager).
+    style = ('<map-layer-style-manager><map-layer-style name="evil"><qgis><editforminit>f</editforminit>'
+             "<editforminitcodesource>2</editforminitcodesource><editforminitcode>import os</editforminitcode>"
+             "</qgis></map-layer-style></map-layer-style-manager>")
+    xml = qgs(layer(extra=style))
+    assert [(f.kind, f.layer) for f in ps.inspect_qgz(qgz(xml)).findings] == [("form_init", "Points")]
+    assert "import os" not in ps.neutralize_qgs_xml(xml).xml
+
+
+def test_internal_dtd_subset_is_refused():
+    # M2 : valeur par defaut d'attribut appliquee par expat, pas par QDom.
+    xml = '<!DOCTYPE qgis [<!ATTLIST actionsetting type CDATA "5">]>' + qgs(layer()).split(">", 1)[1]
+    with pytest.raises(ps.ProjectFileError):
+        ps.neutralize_qgs_xml(xml)
+
+
+@pytest.mark.parametrize("raw", ["５", "٥", " 5x", "+5"])
+def test_non_ascii_or_odd_action_type_is_refused(raw):
+    # M3 : int("５") vaut 5 en Python, QString::toInt echoue (0 = Generic).
+    action = f'<attributeactions><actionsetting type="{raw}" name="a" action="calc.exe"/></attributeactions>'
+    assert [f.kind for f in ps.neutralize_qgs_xml(qgs(layer(extra=action))).removed] == ["action"]
+
+
+def test_embedded_layer_from_another_project_is_refused():
+    # M6 : QGIS lirait le fichier reference sans neutralisation (et UNC -> SMB).
+    xml = qgs('<maplayer embedded="1" project="\\\\hote\\p\\evil.qgs" id="l2"/>')
+    with pytest.raises(ps.ProjectFileError):
+        ps.neutralize_qgs_xml(xml)
+    assert [f.kind for f in ps.inspect_qgz(qgz(xml)).findings] == ["embedded_project"]
+
+
+def test_dotted_init_function_without_source_is_neutralized():
+    # L1 : « module.fn » sans source -> « from module import fn » (QGIS < 2.12).
+    form = "<editforminit>evil.run</editforminit><editforminitcodesource>0</editforminitcodesource>"
+    result = ps.neutralize_qgs_xml(qgs(layer(extra=form)))
+    assert [f.kind for f in result.removed] == ["form_init"] and "evil.run" not in result.xml
+
+
+def test_corrupt_deflate_stream_is_a_project_file_error():
+    # L2 : zlib.error intercepte.
+    content = bytearray(qgz(qgs(layer() * 50)))
+    start = content.index(b"PK\x03\x04") + 30 + len(b"p.qgs")
+    for i in range(start, start + 40):
+        content[i] ^= 0xFF
+    with pytest.raises(ps.ProjectFileError):
+        ps.inspect_qgz(bytes(content))
