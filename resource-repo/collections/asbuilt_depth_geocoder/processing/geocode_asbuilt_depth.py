@@ -46,6 +46,7 @@ import math
 import os
 import random
 import re
+import struct
 import subprocess
 import sys
 import time
@@ -1213,6 +1214,269 @@ STYLES_MISSING_HINT = (
     "demandez à l'équipe Farois de publier les styles As-Built "
     "(« farois styles init », styles/asbuilt_depth_*.qml)."
 )
+
+
+# ===========================================================================
+# Schéma des objets As-Built : ``public`` (avant la migration Farois 574) ou
+# ``projet`` (après). Détecté UNE fois au début de chaque exécution, sur la
+# connexion 'be' (:func:`detect_asbuilt_schema`), puis figé : une exécution ne
+# mélange jamais les deux. Tous les noms qualifiés (tables, fonctions) passent
+# par :class:`AsbuiltSchema` ; aucun ``public.`` / ``projet.`` en dur ailleurs.
+#
+# Mode ``public`` : comportement de la version 1.3.0 (tables écrites
+# directement). Mode ``projet`` : points et non géocodées restent éditables ;
+# segments et connecteurs sont en LECTURE SEULE pour les logins et s'écrivent
+# par les fonctions SECURITY DEFINER projet.fn_asbuilt_segments_upsert/_delete
+# et projet.fn_asbuilt_connectors_upsert/_delete (Farois, 086 / mig 574).
+# ===========================================================================
+SCHEMA_MODE_PUBLIC = "public"
+SCHEMA_MODE_PROJET = "projet"
+
+POINTS_TABLE_NAME = "geofiber_asbuilt_depth_points"
+SEGMENTS_TABLE_NAME = "geofiber_asbuilt_depth_segments"
+UNGEOCODED_TABLE_NAME = "geofiber_asbuilt_ungeocoded"
+CONNECTORS_TABLE_NAME = "geofiber_asbuilt_depth_connectors"
+
+# Sonde de détection : la table des points existe-t-elle dans ``projet`` ?
+# (to_regclass : NULL si absente, aucune erreur.)
+SCHEMA_PROBE_SQL = (
+    f"SELECT to_regclass('{SCHEMA_MODE_PROJET}.{POINTS_TABLE_NAME}') IS NOT NULL"
+)
+
+# Fonctions exigées en mode ``projet`` (signature d'identité, types seuls).
+# Une seule absente = base à moitié migrée -> arrêt, jamais de DML direct.
+PROJET_REQUIRED_FUNCTIONS = (
+    "fn_asbuilt_segments_upsert(jsonb)",
+    "fn_asbuilt_segments_delete(jsonb)",
+    "fn_asbuilt_connectors_upsert(jsonb)",
+    "fn_asbuilt_connectors_delete(text[])",
+    "geofiber_asbuilt_write_allowed()",
+)
+
+# Clés primaires des tables écrites par les écrivains (dédoublonnage exigé
+# avant l'appel : 22023 sinon).
+SEGMENT_PK_COLUMNS = (
+    "point_a_intervention_id", "point_b_intervention_id", "half", "side",
+)
+CONNECTOR_PK_COLUMNS = ("intervention_id",)
+
+# Lignes par appel d'écrivain (un appel = une transaction).
+WRITER_BATCH_SIZE = 200
+ASBUILT_SRID = 31370
+
+
+class AsbuiltSchemaError(Exception):
+    """Détection du schéma impossible, ou base à moitié migrée : arrêt du run."""
+
+
+@dataclass(frozen=True)
+class AsbuiltSchema:
+    """Noms qualifiés des objets As-Built pour UN mode (``public`` / ``projet``).
+
+    Seul point de qualification du script : tables, fonctions et textes du
+    journal en dérivent. ``uses_writers`` : segments et connecteurs écrits par
+    les fonctions SECURITY DEFINER (mode ``projet``), jamais par DML direct.
+    """
+
+    mode: str = SCHEMA_MODE_PUBLIC
+
+    def __post_init__(self):
+        if self.mode not in (SCHEMA_MODE_PUBLIC, SCHEMA_MODE_PROJET):
+            raise ValueError(f"mode de schéma As-Built inconnu : {self.mode!r}")
+
+    @property
+    def schema(self) -> str:
+        return self.mode
+
+    @property
+    def uses_writers(self) -> bool:
+        return self.mode == SCHEMA_MODE_PROJET
+
+    def qualify(self, name: str) -> str:
+        return f"{self.schema}.{name}"
+
+    @property
+    def points(self) -> str:
+        return self.qualify(POINTS_TABLE_NAME)
+
+    @property
+    def segments(self) -> str:
+        return self.qualify(SEGMENTS_TABLE_NAME)
+
+    @property
+    def ungeocoded(self) -> str:
+        return self.qualify(UNGEOCODED_TABLE_NAME)
+
+    @property
+    def connectors(self) -> str:
+        return self.qualify(CONNECTORS_TABLE_NAME)
+
+    def function(self, name: str) -> str:
+        """Nom qualifié d'une fonction As-Built (``fn_asbuilt_*``…)."""
+        return self.qualify(name)
+
+    def describe(self) -> str:
+        """Ligne de journal : mode retenu pour TOUTE l'exécution."""
+        if self.uses_writers:
+            return (
+                f"Schéma As-Built : {self.schema} (migration Farois 574 appliquée) — "
+                f"tables {self.schema}.geofiber_asbuilt_* ; segments et connecteurs "
+                f"écrits par les fonctions {self.function('fn_asbuilt_segments_upsert')}"
+                "/_delete et "
+                f"{self.function('fn_asbuilt_connectors_upsert')}/_delete "
+                "(tables en lecture seule). Mode figé pour toute l'exécution."
+            )
+        return (
+            f"Schéma As-Built : {self.schema} (base avant la migration Farois 574) — "
+            f"tables {self.schema}.geofiber_asbuilt_* écrites directement, comme en "
+            "version 1.3.0. Mode figé pour toute l'exécution."
+        )
+
+
+def _probe_is_true(rows) -> bool:
+    """Première cellule d'un résultat SQL booléen -> ``bool`` (``t``/``true``/1). PURE."""
+    if not rows or not rows[0]:
+        return False
+    value = rows[0][0]
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("t", "true", "1")
+
+
+def schema_mode_from_probe(rows) -> str:
+    """Résultat de :data:`SCHEMA_PROBE_SQL` -> ``projet`` ou ``public``. PURE."""
+    return SCHEMA_MODE_PROJET if _probe_is_true(rows) else SCHEMA_MODE_PUBLIC
+
+
+def projet_functions_probe_sql() -> str:
+    """Fonctions As-Built présentes dans ``projet`` (catalogue seul : aucun droit requis)."""
+    names = sorted({sig.split("(", 1)[0] for sig in PROJET_REQUIRED_FUNCTIONS})
+    listed = ", ".join(f"'{name}'" for name in names)
+    return (
+        "SELECT p.proname || '(' || pg_catalog.oidvectortypes(p.proargtypes) || ')' "
+        "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n "
+        "ON n.oid = p.pronamespace "
+        f"WHERE n.nspname = '{SCHEMA_MODE_PROJET}' AND p.proname IN ({listed})"
+    )
+
+
+def missing_projet_functions(rows) -> list:
+    """Signatures de :data:`PROJET_REQUIRED_FUNCTIONS` absentes du résultat. PURE.
+
+    ``rows`` : lignes de :func:`projet_functions_probe_sql` (``nom(types)``,
+    espaces neutralisés).
+    """
+    present = {
+        re.sub(r"\s+", "", str(row[0])) for row in (rows or []) if row and row[0]
+    }
+    return [sig for sig in PROJET_REQUIRED_FUNCTIONS if sig not in present]
+
+
+def half_migrated_message(missing) -> str:
+    """Arrêt explicite : table ``projet`` présente, fonction(s) absente(s). PURE."""
+    listed = ", ".join(f"{SCHEMA_MODE_PROJET}.{sig}" for sig in missing)
+    return (
+        "Base Farois à moitié migrée : la table "
+        f"{SCHEMA_MODE_PROJET}.{POINTS_TABLE_NAME} existe mais il manque "
+        f"{listed} (migration Farois 574 incomplète). Arrêt avant tout "
+        "géocodage et toute écriture : le script n'écrit jamais directement "
+        "les segments ni les connecteurs. Prévenez l'administrateur Farois "
+        "(migration 574 à terminer ou à annuler), puis relancez."
+    )
+
+
+# Fragments (minuscules) d'un refus d'écriture : SQLSTATE 42501, message de la
+# garde As-Built de Farois (« As-Built en lecture seule pour … : scope PROJET
+# GOFIBER en ecriture requis »), message PostgreSQL en anglais ou en français.
+WRITE_DENIED_MARKERS = (
+    "42501",
+    "lecture seule pour",
+    "scope projet",
+    "permission denied",
+    "droit refusé",
+    "droit refuse",
+    "permission refusée",
+    "permission refusee",
+)
+
+
+def is_write_denied(text) -> bool:
+    """Le message d'erreur signale-t-il un refus de droit (42501) ? PURE."""
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in WRITE_DENIED_MARKERS)
+
+
+def write_denied_message(detail: str = "") -> str:
+    """Message affiché à l'utilisateur quand la base refuse l'écriture (mode ``projet``). PURE."""
+    message = (
+        "Écriture refusée par la base Farois : le compte de la connexion « be » "
+        "n'a pas le droit d'écrire dans l'As-Built GoFiber (schéma projet, "
+        "migration Farois 574). Demandez à l'administrateur Farois de cocher, "
+        "pour VOTRE login nominatif, le scope PROJET GOFIBER en écriture "
+        "(Farois, fiche de l'utilisateur, onglet Périmètre) ; votre rôle Farois "
+        "doit aussi permettre l'écriture réseau (ADMIN, MANAGER, PROJECT_MANAGER "
+        "ou DESIGNER). Un compte technique partagé ne peut pas écrire. Relancez "
+        "ensuite le traitement avec les mêmes rapports."
+    )
+    detail = " ".join(str(detail or "").split())
+    if detail:
+        message += f" Détail de la base : {detail}"
+    return message
+
+
+def write_allowed_sql(names: AsbuiltSchema) -> str:
+    """Pré-contrôle du droit d'écriture de la session (mode ``projet`` seulement)."""
+    if not names.uses_writers:
+        raise ValueError("pré-contrôle d'écriture réservé au mode projet")
+    return f"SELECT {names.function('geofiber_asbuilt_write_allowed')}()"
+
+
+def detect_asbuilt_schema(execute, warn=None) -> AsbuiltSchema:
+    """Détecte le schéma As-Built sur la connexion 'be' — UNE fois par exécution.
+
+    ``execute`` : ``sql -> lignes`` (``executeSql`` de la connexion 'be').
+    ``to_regclass('projet.geofiber_asbuilt_depth_points')`` non NULL -> mode
+    ``projet``, sinon ``public`` (comportement 1.3.0). En mode ``projet`` :
+    fonctions exigées présentes (:data:`PROJET_REQUIRED_FUNCTIONS`, sinon
+    :func:`half_migrated_message`), puis pré-contrôle du droit d'écriture de
+    la session (refus -> :func:`write_denied_message`, AVANT tout géocodage).
+    Lève :class:`AsbuiltSchemaError` pour tout arrêt ; ``warn(message)`` pour
+    un pré-contrôle non concluant (l'écriture dira s'il y a refus).
+    """
+    try:
+        rows = execute(SCHEMA_PROBE_SQL)
+    except Exception as exc:
+        raise AsbuiltSchemaError(
+            "Détection du schéma As-Built impossible sur la connexion 'be' "
+            f"({exc}) — arrêt avant tout géocodage et toute écriture."
+        ) from exc
+    names = AsbuiltSchema(schema_mode_from_probe(rows))
+    if not names.uses_writers:
+        return names
+    try:
+        rows = execute(projet_functions_probe_sql())
+    except Exception as exc:
+        raise AsbuiltSchemaError(
+            "Vérification des fonctions As-Built du schéma projet impossible "
+            f"({exc}) — arrêt avant tout géocodage et toute écriture."
+        ) from exc
+    missing = missing_projet_functions(rows)
+    if missing:
+        raise AsbuiltSchemaError(half_migrated_message(missing))
+    try:
+        rows = execute(write_allowed_sql(names))
+    except Exception as exc:
+        if is_write_denied(str(exc)):
+            raise AsbuiltSchemaError(write_denied_message(str(exc))) from exc
+        if warn is not None:
+            warn(
+                f"Droit d'écriture As-Built non vérifiable ({exc}) — un refus "
+                "éventuel sera signalé à l'écriture."
+            )
+        return names
+    if not _probe_is_true(rows):
+        raise AsbuiltSchemaError(write_denied_message())
+    return names
 
 
 def _style_loaded_ok(result) -> bool:
@@ -3399,14 +3663,15 @@ def batch_cell_key(x, y, cell=SQL_BATCH_CELL_M):
     return (math.floor(x / cell), math.floor(y / cell), x, y)
 
 
-def batch_locate_sql(items, radius) -> str:
+def batch_locate_sql(items, radius, schema=SCHEMA_MODE_PUBLIC) -> str:
     """UNE requête appelant fn_asbuilt_locate_on_road pour tout un lot (LATERAL).
 
     ``items`` : ``(tag entier, x, y, littéral SQL du nom)`` ; mêmes arguments
     que l'appel point par point (:meth:`_locate_sql`), rayon compris.
     ``WITH ORDINALITY`` conserve l'ordre des lignes de la fonction : la
     PREMIÈRE ligne par tag est celle qu'aurait prise l'appel unitaire
-    (``result[0]``, cf. :func:`first_rows_by_tag`). Fonction PURE.
+    (``result[0]``, cf. :func:`first_rows_by_tag`). ``schema`` : celui de la
+    fonction (:attr:`AsbuiltSchema.schema`). Fonction PURE.
     """
     values = ", ".join(
         f"({int(tag)}, {float(x)!r}::double precision, {float(y)!r}::double precision, "
@@ -3418,7 +3683,7 @@ def batch_locate_sql(items, radius) -> str:
         "ST_X(l.projected_point), ST_Y(l.projected_point), l.road_length_m, "
         "ST_X(l.road_start), ST_Y(l.road_start), ST_X(l.road_end), ST_Y(l.road_end) "
         f"FROM (VALUES {values}) AS v(tag, x, y, street) "
-        "CROSS JOIN LATERAL public.fn_asbuilt_locate_on_road("
+        f"CROSS JOIN LATERAL {schema}.fn_asbuilt_locate_on_road("
         "ST_SetSRID(ST_MakePoint(v.x, v.y), 31370), v.street, "
         f"{float(radius)!r}) WITH ORDINALITY AS l(road_key, position_m, projected_point, "
         "road_length_m, road_start, road_end, ord) "
@@ -3426,12 +3691,13 @@ def batch_locate_sql(items, radius) -> str:
     )
 
 
-def batch_road_geometry_sql(items, radius) -> str:
+def batch_road_geometry_sql(items, radius, schema=SCHEMA_MODE_PUBLIC) -> str:
     """UNE requête fn_asbuilt_road_geometry (axe + type de voie) pour un lot de routes.
 
     ``items`` : ``(tag, x, y, littéral du nom)`` — un point représentant par
     road_key, avec le nom qui l'a localisé. Retour : tag, road_key, géométrie
-    en WKT, road_highway ; première ligne par tag (WITH ORDINALITY). PURE.
+    en WKT, road_highway ; première ligne par tag (WITH ORDINALITY).
+    ``schema`` : celui de la fonction (:attr:`AsbuiltSchema.schema`). PURE.
     """
     values = ", ".join(
         f"({int(tag)}, {float(x)!r}::double precision, {float(y)!r}::double precision, "
@@ -3441,7 +3707,7 @@ def batch_road_geometry_sql(items, radius) -> str:
     return (
         "SELECT v.tag, g.road_key, ST_AsText(g.road_geom), g.road_highway "
         f"FROM (VALUES {values}) AS v(tag, x, y, street) "
-        "CROSS JOIN LATERAL public.fn_asbuilt_road_geometry("
+        f"CROSS JOIN LATERAL {schema}.fn_asbuilt_road_geometry("
         "ST_SetSRID(ST_MakePoint(v.x, v.y), 31370), v.street, "
         f"{float(radius)!r}) WITH ORDINALITY AS g(road_key, road_geom, road_highway, ord) "
         "ORDER BY v.tag, g.ord"
@@ -3899,19 +4165,31 @@ def build_store_payload(ways, already_sent=()):
     return payload, [item["osm_id"] for item in payload]
 
 
-def store_osm_ways_sql(payload) -> str:
-    """Appel SQL de fn_asbuilt_store_osm_ways avec le lot en JSON, sans injection.
+def dollar_quoted_json(payload, tag_base: str) -> str:
+    """JSON du ``payload`` en chaîne « dollar-quoted », sans injection. PURE.
 
     Le JSON (échappements JSON standard : guillemets, antislashs, contrôles)
-    est passé en chaîne « dollar-quoted » dont la balise est choisie ABSENTE du
-    texte — apostrophes et antislashs n'y ont aucun sens particulier. PURE.
+    est entouré d'une balise ``$<tag>$`` choisie ABSENTE du texte —
+    apostrophes et antislashs n'y ont aucun sens particulier.
     """
     text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    tag, n = "osmw", 0
+    tag, n = tag_base, 0
     while f"${tag}$" in text:
         n += 1
-        tag = f"osmw{n}"
-    return f"SELECT public.fn_asbuilt_store_osm_ways(${tag}${text}${tag}$::jsonb)"
+        tag = f"{tag_base}{n}"
+    return f"${tag}${text}${tag}$"
+
+
+def store_osm_ways_sql(payload, schema=SCHEMA_MODE_PUBLIC) -> str:
+    """Appel SQL de fn_asbuilt_store_osm_ways avec le lot en JSON, sans injection.
+
+    JSON passé par :func:`dollar_quoted_json` ; ``schema`` : celui de la
+    fonction (:attr:`AsbuiltSchema.schema`). PURE.
+    """
+    return (
+        f"SELECT {schema}.fn_asbuilt_store_osm_ways("
+        f"{dollar_quoted_json(payload, 'osmw')}::jsonb)"
+    )
 
 
 def build_overpass_ids_query(way_ids, timeout_s=OVERPASS_QUERY_TIMEOUT_S) -> str:
@@ -4813,6 +5091,336 @@ def depth_update_dirty_ids(update: DepthUpdate) -> set:
     if (update.old_category or "") != new_category:
         return {update.target_id}
     return set()
+
+
+# --- Écrivains As-Built (mode ``projet``, migration Farois 574) --------------
+# Segments et connecteurs sont en lecture seule pour les logins : écriture par
+# projet.fn_asbuilt_segments_upsert(jsonb) / _delete(jsonb) et
+# projet.fn_asbuilt_connectors_upsert(jsonb) / _delete(text[]) (SECURITY
+# DEFINER, garde « scope PROJET GOFIBER en écriture » en premier geste).
+# Contrat (Farois, sql/80_security/086) : tableau JSON d'objets dont les clés
+# sont les colonnes (created_at / updated_at ignorées), geom en EWKB
+# hexadécimal SRID 31370 (22023 sinon), INSERT … ON CONFLICT (clé primaire) DO
+# UPDATE des seules colonnes citées ; lignes DÉDOUBLONNÉES par clé primaire
+# avant l'appel (22023 sinon). Suppression des segments par clé
+# {point_a_intervention_id, point_b_intervention_id, half, side} : ``side``
+# toujours fourni (absent = les DEUX côtés).
+
+def _ewkb_coords(coords) -> bytes:
+    points = [(float(x), float(y)) for x, y in coords]
+    return struct.pack("<I", len(points)) + b"".join(
+        struct.pack("<dd", x, y) for x, y in points
+    )
+
+
+def ewkb_hex_linestring(coords, srid=ASBUILT_SRID) -> str:
+    """LineString 2D -> EWKB hexadécimal (petit-boutiste, SRID inclus). PURE."""
+    header = struct.pack("<BII", 1, 2 | 0x20000000, int(srid))
+    return (header + _ewkb_coords(coords)).hex().upper()
+
+
+def ewkb_hex_multilinestring(parts, srid=ASBUILT_SRID) -> str:
+    """MultiLineString 2D -> EWKB hexadécimal (SRID sur la collection). PURE."""
+    parts = list(parts)
+    data = struct.pack("<BIII", 1, 5 | 0x20000000, int(srid), len(parts))
+    for part in parts:
+        data += struct.pack("<BI", 1, 2) + _ewkb_coords(part)
+    return data.hex().upper()
+
+
+def _json_number(value):
+    """Nombre fini pour le JSON (NaN / infini -> ``None`` : JSON invalide sinon). PURE."""
+    if value is None:
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def segment_writer_row(half, parts, multi_column=True) -> dict:
+    """Moitié de segment -> objet JSON de ``fn_asbuilt_segments_upsert``. PURE.
+
+    Mêmes colonnes que l'écriture directe (version 1.3.0) plus ``geom`` en
+    EWKB 31370 : MultiLineString (toutes les ``parts``) si la colonne l'est,
+    sinon LineString (première partie, cf. :func:`geometry_for_column`).
+    """
+    parts = [list(part) for part in parts]
+    geom = (
+        ewkb_hex_multilinestring(parts) if multi_column
+        else ewkb_hex_linestring(parts[0])
+    )
+    return {
+        "point_a_intervention_id": str(half.point_a_intervention_id),
+        "point_b_intervention_id": str(half.point_b_intervention_id),
+        "half": str(half.half),
+        "side": str(half.side),
+        "depth_category": half.depth_category,
+        "is_long": bool(half.is_long),
+        "length_m": _json_number(half.length_m),
+        "road_key": half.road_key,
+        "geom": geom,
+    }
+
+
+def segment_delete_key(key) -> dict:
+    """Clé ``(a, b, half, side)`` -> objet de ``fn_asbuilt_segments_delete``. PURE.
+
+    ``side`` est OBLIGATOIRE ('L' / 'R') : absent, l'écrivain supprimerait
+    les deux côtés -> ``ValueError``.
+    """
+    point_a, point_b, half, side = key
+    if side not in ("L", "R"):
+        raise ValueError(f"côté invalide {side!r} pour le segment {key!r}")
+    return {
+        "point_a_intervention_id": str(point_a),
+        "point_b_intervention_id": str(point_b),
+        "half": str(half),
+        "side": side,
+    }
+
+
+def connector_writer_row(connector) -> dict:
+    """Connecteur -> objet JSON de ``fn_asbuilt_connectors_upsert`` (LineString 31370). PURE."""
+    return {
+        "intervention_id": str(connector.intervention_id),
+        "depth_category": connector.depth_category,
+        "side": connector.side,
+        "road_key": connector.road_key,
+        "length_m": _json_number(connector.length_m),
+        "geom": ewkb_hex_linestring([
+            (connector.start_x, connector.start_y),
+            (connector.end_x, connector.end_y),
+        ]),
+    }
+
+
+def dedupe_by_key(rows, key_columns) -> tuple:
+    """Lignes dédoublonnées par clé -> ``(lignes, nb_doublons)``. PURE.
+
+    La DERNIÈRE occurrence d'une clé l'emporte, à la place de la première
+    (ordre stable) : l'écrivain refuse un lot qui cite deux fois une clé.
+    """
+    order, by_key = [], {}
+    for row in rows:
+        key = tuple(row.get(column) for column in key_columns)
+        if key not in by_key:
+            order.append(key)
+        by_key[key] = row
+    return [by_key[key] for key in order], len(rows) - len(order)
+
+
+def _writer_sql(names: AsbuiltSchema, function: str, argument: str) -> str:
+    if not names.uses_writers:
+        raise ValueError(
+            f"écrivain {function} réservé au mode projet (mode {names.mode} : "
+            "écriture directe, jamais de mélange)"
+        )
+    return f"SELECT {names.function(function)}({argument})"
+
+
+def segments_upsert_sql(names: AsbuiltSchema, rows) -> str:
+    """Appel de ``fn_asbuilt_segments_upsert`` (lignes déjà dédoublonnées). PURE."""
+    return _writer_sql(
+        names, "fn_asbuilt_segments_upsert", f"{dollar_quoted_json(list(rows), 'seg')}::jsonb"
+    )
+
+
+def segments_delete_sql(names: AsbuiltSchema, keys) -> str:
+    """Appel de ``fn_asbuilt_segments_delete`` (objets de :func:`segment_delete_key`). PURE."""
+    return _writer_sql(
+        names, "fn_asbuilt_segments_delete", f"{dollar_quoted_json(list(keys), 'segk')}::jsonb"
+    )
+
+
+def connectors_upsert_sql(names: AsbuiltSchema, rows) -> str:
+    """Appel de ``fn_asbuilt_connectors_upsert`` (lignes déjà dédoublonnées). PURE."""
+    return _writer_sql(
+        names, "fn_asbuilt_connectors_upsert", f"{dollar_quoted_json(list(rows), 'con')}::jsonb"
+    )
+
+
+def connectors_delete_sql(names: AsbuiltSchema, intervention_ids) -> str:
+    """Appel de ``fn_asbuilt_connectors_delete(text[])``. PURE."""
+    values = ", ".join(sql_text(str(i)) for i in intervention_ids)
+    return _writer_sql(names, "fn_asbuilt_connectors_delete", f"ARRAY[{values}]::text[]")
+
+
+@dataclass
+class WriterBatchResult:
+    """Issue d'une suite d'appels d'écrivain (cf. :func:`run_writer_batches`)."""
+
+    done: list = field(default_factory=list)   # éléments écrits (lots réussis)
+    failed: int = 0                             # éléments en échec
+    denied: str = ""                            # message de refus (42501), vide sinon
+
+
+def run_writer_batches(execute, build_sql, items, label_of, feedback, label,
+                       batch_size=WRITER_BATCH_SIZE) -> WriterBatchResult:
+    """Appelle un écrivain par lots ; un lot = une transaction. PURE (``execute`` injecté).
+
+    Lot en échec : rejoué élément par élément (une ligne fautive n'emporte pas
+    les autres, comme l'écriture ligne à ligne de la version 1.3.0). Refus de
+    droit (:func:`is_write_denied`) : ARRÊT immédiat, ``denied`` renseigné,
+    éléments restants comptés en échec. Annulation : arrêt entre deux lots.
+    """
+    result = WriterBatchResult()
+    items = list(items)
+    position = 0
+    while position < len(items):
+        if feedback.isCanceled():
+            break
+        chunk = items[position:position + batch_size]
+        position += len(chunk)
+        try:
+            execute(build_sql(chunk))
+            result.done.extend(chunk)
+            continue
+        except Exception as exc:
+            if is_write_denied(str(exc)):
+                result.denied = str(exc)
+                result.failed += len(chunk) + (len(items) - position)
+                return result
+            if len(chunk) == 1:
+                result.failed += 1
+                feedback.reportError(f"{label} {label_of(chunk[0])} : {exc}", fatalError=False)
+                continue
+        for index, item in enumerate(chunk):
+            try:
+                execute(build_sql([item]))
+                result.done.append(item)
+            except Exception as exc:
+                if is_write_denied(str(exc)):
+                    result.denied = str(exc)
+                    result.failed += (len(chunk) - index) + (len(items) - position)
+                    return result
+                result.failed += 1
+                feedback.reportError(f"{label} {label_of(item)} : {exc}", fatalError=False)
+    return result
+
+
+@dataclass
+class SegmentWriteResult:
+    inserted: int = 0
+    updated: int = 0
+    failed: int = 0
+    deleted: int = 0
+    failed_delete: int = 0
+    dropped_parts: int = 0
+    denied: str = ""
+
+
+def write_segments_with_writers(execute, names, writes, to_delete, geometries,
+                                multi_column, feedback,
+                                batch_size=WRITER_BATCH_SIZE) -> SegmentWriteResult:
+    """Mode ``projet`` : segments écrits puis purgés par les écrivains, jamais en DML direct.
+
+    ``writes`` : ``(SegmentHalf, is_update)`` ; ``to_delete`` : clés
+    ``(a, b, half, side)`` ; ``geometries`` : clé -> parties décalées
+    (:func:`segment_half_geometry`). Mêmes compteurs que l'écriture directe.
+    Lignes dédoublonnées par clé primaire (:data:`SEGMENT_PK_COLUMNS`) avant
+    l'appel. Refus de droit : arrêt, purge NON jouée, ``denied`` renseigné.
+    PURE (``execute`` et ``feedback`` injectés).
+    """
+    result = SegmentWriteResult()
+    rows, kinds = [], {}
+    for half, is_update in writes:
+        key = segment_key(half)
+        parts, dropped = geometry_for_column(geometries[key], multi_column)
+        result.dropped_parts += dropped
+        rows.append(segment_writer_row(half, parts, multi_column))
+        kinds[tuple(str(k) for k in key)] = bool(is_update)
+    rows, n_dupes = dedupe_by_key(rows, SEGMENT_PK_COLUMNS)
+    if n_dupes:
+        feedback.pushWarning(
+            f"Segments : {n_dupes} ligne(s) en double (même clé point_a, point_b, "
+            "half, side) écartée(s) avant l'écriture — la dernière est gardée."
+        )
+
+    def _row_key(row):
+        return tuple(row[column] for column in SEGMENT_PK_COLUMNS)
+
+    def _label(row):
+        return "(" + ", ".join(_row_key(row)) + ")"
+
+    upserted = run_writer_batches(
+        execute, lambda chunk: segments_upsert_sql(names, chunk), rows, _label,
+        feedback, "Echec upsert segment", batch_size,
+    )
+    for row in upserted.done:
+        if kinds.get(_row_key(row)):
+            result.updated += 1
+        else:
+            result.inserted += 1
+    result.failed = upserted.failed
+    if upserted.denied:
+        result.denied = upserted.denied
+        return result
+
+    keys = []
+    for key in to_delete:
+        try:
+            keys.append(segment_delete_key(key))
+        except ValueError as exc:
+            result.failed_delete += 1
+            feedback.reportError(f"Suppression segment : {exc}", fatalError=False)
+    keys, _n = dedupe_by_key(keys, SEGMENT_PK_COLUMNS)
+    removed = run_writer_batches(
+        execute, lambda chunk: segments_delete_sql(names, chunk), keys, _label,
+        feedback, "Suppression segment", batch_size,
+    )
+    result.deleted = len(removed.done)
+    result.failed_delete += removed.failed
+    result.denied = removed.denied
+    return result
+
+
+@dataclass
+class ConnectorWriteResult:
+    inserted: int = 0
+    updated: int = 0
+    deleted: int = 0
+    failed: int = 0
+    denied: str = ""
+
+
+def write_connectors_with_writers(execute, names, upserts, to_delete, feedback,
+                                  batch_size=WRITER_BATCH_SIZE) -> ConnectorWriteResult:
+    """Mode ``projet`` : connecteurs écrits puis purgés par les écrivains. PURE.
+
+    ``upserts`` : ``(Connector, is_update)`` ; ``to_delete`` : intervention_id.
+    Dédoublonnage par :data:`CONNECTOR_PK_COLUMNS`. Refus : arrêt, purge non
+    jouée.
+    """
+    result = ConnectorWriteResult()
+    rows, kinds = [], {}
+    for connector, is_update in upserts:
+        rows.append(connector_writer_row(connector))
+        kinds[str(connector.intervention_id)] = bool(is_update)
+    rows, _n = dedupe_by_key(rows, CONNECTOR_PK_COLUMNS)
+    upserted = run_writer_batches(
+        execute, lambda chunk: connectors_upsert_sql(names, chunk), rows,
+        lambda row: row["intervention_id"], feedback, "Connecteur", batch_size,
+    )
+    for row in upserted.done:
+        if kinds.get(row["intervention_id"]):
+            result.updated += 1
+        else:
+            result.inserted += 1
+    result.failed = upserted.failed
+    if upserted.denied:
+        result.denied = upserted.denied
+        return result
+    ids = list(dict.fromkeys(str(i) for i in to_delete))
+    if ids and not feedback.isCanceled():
+        try:
+            execute(connectors_delete_sql(names, ids))
+            result.deleted = len(ids)
+        except Exception as exc:
+            result.failed += len(ids)
+            if is_write_denied(str(exc)):
+                result.denied = str(exc)
+            else:
+                feedback.reportError(f"Suppression des connecteurs : {exc}", fatalError=False)
+    return result
 
 
 # ===========================================================================
