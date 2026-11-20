@@ -393,6 +393,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "scope.write_none_short": "write: no MRO/POP ticked",
         "scope.write_scoped": "write on {dims}",
         "scope.write_all": "write on the whole perimeter",
+        "home.projets_row": "Business projects",
+        "home.projets_no_operator": "No operator",
+        "home.projet_tooltip": "Linked for information to {operator} · {count} layers",
+        "home.projet_tooltip_none": "{count} layers",
+        "home.loaded_projets": "{count} business project layers",
+        "home.loaded_projets_one": "1 business project layer",
     },
 
     # =====================================================================
@@ -781,6 +787,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "scope.write_none_short": "écriture : aucun MRO/POP coché",
         "scope.write_scoped": "écriture sur {dims}",
         "scope.write_all": "écriture sur tout le périmètre",
+        "home.projets_row": "Projets métier",
+        "home.projets_no_operator": "Sans opérateur",
+        "home.projet_tooltip": "Rattaché pour information à {operator} · {count} couches",
+        "home.projet_tooltip_none": "{count} couches",
+        "home.loaded_projets": "{count} couches de projets métier",
+        "home.loaded_projets_one": "1 couche de projet métier",
     },
 
     # =====================================================================
@@ -1169,5 +1181,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "scope.write_none_short": "escrita: nenhum MRO/POP marcado",
         "scope.write_scoped": "escrita em {dims}",
         "scope.write_all": "escrita em todo o perimetro",
+        "home.projets_row": "Projetos de negócio",
+        "home.projets_no_operator": "Sem operador",
+        "home.projet_tooltip": "Associado, para informação, a {operator} · {count} camadas",
+        "home.projet_tooltip_none": "{count} camadas",
+        "home.loaded_projets": "{count} camadas de projetos de negócio",
+        "home.loaded_projets_one": "1 camada de projeto de negócio",
     },
 }
