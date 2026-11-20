@@ -14,14 +14,18 @@ from __future__ import annotations
 from typing import Callable, Optional, Sequence
 
 from qgis.PyQt.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QRadioButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
 )
 
@@ -42,15 +46,19 @@ from .bridge_project_safety import (
     FINDING_PYTHON_FILE,
     Finding,
 )
-from .bridge_qgis_projects import name_error, save_target, suggest_name
+from .bridge_qgis_projects import EligibleUser, name_error, save_target, share_plan, suggest_name
 from .bridge_qgis_store import (
     STATUS_CONFLICT,
+    STATUS_DENIED,
     STATUS_GONE,
+    STATUS_INELIGIBLE,
     STATUS_INVALID,
+    STATUS_MISSING,
     STATUS_NAME_TAKEN,
     STATUS_NOMINATIVE,
     STATUS_OK,
     STATUS_PROJET_DENIED,
+    StoreOutcome,
 )
 from .i18n import tr
 
@@ -437,3 +445,181 @@ def run_save_flow(dialog_factory, conflict_factory, actions, login: str):
             return outcome
         dialog.show_outcome(outcome, login)
 
+
+# =====================================================================
+# Partager (spec § 7.8, mes projets seulement)
+# =====================================================================
+
+class ShareDialog(QDialog):
+    """Partage avec le projet metier, « Qui a acces » (droits, retraits) et
+    ajout de personnes ; « Appliquer » enchaine les appels et s'arrete a la
+    premiere erreur."""
+
+    def __init__(self, row, actions, capabilities, parent=None):
+        super().__init__(parent)
+        self._row = row
+        self._actions = actions
+        self._capabilities = capabilities
+        self._current: list = []
+        self._rights: dict = {}
+        self._removed: set = set()
+        self._share_project = bool(row.share_project)
+        self._list_ok = False
+        self.done_message = ""
+        style_dialog(self, tr("share.title", name=row.name))
+
+        layout = QVBoxLayout(self)
+        self.projet_box = None
+        if row.projet_id and capabilities.share_project:
+            self.projet_box = QCheckBox(tr("share.projet_members", projet=row.projet_label or row.projet_code or ""))
+            self.projet_box.setChecked(self._share_project)
+            layout.addWidget(self.projet_box)
+
+        layout.addWidget(QLabel(tr("share.who")))
+        self.list_error_label = QLabel("")
+        self.list_error_label.setWordWrap(True)
+        layout.addWidget(self.list_error_label)
+        self.who = QTreeWidget()
+        self.who.setColumnCount(3)
+        self.who.setHeaderHidden(True)
+        self.who.setRootIsDecorated(False)
+        layout.addWidget(self.who)
+
+        layout.addWidget(QLabel(tr("share.add")))
+        self.picker = PeoplePicker(self._search_people, self)
+        layout.addWidget(self.picker)
+
+        self.message_label = QLabel("")
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        self.close_button = QPushButton(tr("share.close"))
+        self.close_button.setAutoDefault(False)
+        self.close_button.clicked.connect(lambda _checked=False: self.reject())
+        buttons.addWidget(self.close_button)
+        self.apply_button = QPushButton(tr("share.apply"))
+        set_role(self.apply_button, "primary")
+        self.apply_button.setDefault(True)
+        self.apply_button.clicked.connect(lambda _checked=False: self.apply())
+        buttons.addWidget(self.apply_button)
+        layout.addLayout(buttons)
+        self._reload()
+
+    def _search_people(self, prefix: str, exclude: Sequence[str]):
+        return self._actions.eligible_users(self._row.projet_code, prefix, exclude)
+
+    def _reload(self) -> None:
+        """Relit « Qui a acces » ; une liste illisible desactive « Appliquer »."""
+        rows = self._actions.shares_list(self._row.name)
+        self._list_ok = rows is not None
+        self._current = list(rows or ())
+        self._rights = {r.username: bool(r.can_edit) for r in self._current}
+        self._removed = set()
+        self.list_error_label.setText("" if self._list_ok else tr("share.list_error"))
+        self.list_error_label.setVisible(not self._list_ok)
+        self.apply_button.setEnabled(self._list_ok)
+        self.picker.set_excluded([r.username for r in self._current])
+        self._refresh_rows()
+
+    def _refresh_rows(self) -> None:
+        self.who.clear()
+        for share in self._current:
+            caption = EligibleUser(share.username, share.display_name, share.unit).caption()
+            item = QTreeWidgetItem(self.who, [caption])
+            combo = QComboBox()
+            combo.addItem(tr("people.right_open"), False)
+            combo.addItem(tr("people.right_edit"), True)
+            combo.setCurrentIndex(1 if self._rights.get(share.username) else 0)
+            combo.currentIndexChanged.connect(
+                lambda _index=0, login=share.username, box=combo: self._set_right(login, bool(box.currentData())))
+            self.who.setItemWidget(item, 1, combo)
+            removed = share.username in self._removed
+            button = QPushButton(tr("share.restore") if removed else tr("people.remove"))
+            set_role(button, "link")
+            button.clicked.connect(lambda _checked=False, login=share.username: self.toggle_removed(login))
+            self.who.setItemWidget(item, 2, button)
+            combo.setEnabled(not removed)
+            item.setDisabled(removed)
+            if not share.operant:
+                font = item.font(0)
+                font.setItalic(True)
+                item.setFont(0, font)
+                item.setToolTip(0, tr("share.inoperant"))
+        self.who.setVisible(bool(self._current))
+
+    def _set_right(self, login: str, can_edit: bool) -> None:
+        self._rights[login] = bool(can_edit)
+
+    def set_right(self, login: str, can_edit: bool) -> None:
+        self._set_right(login, can_edit)
+        self._refresh_rows()
+
+    def toggle_removed(self, login: str) -> None:
+        """Bouton Retirer : marque la ligne (retrait a l'application) ou la
+        retablit."""
+        self._removed.symmetric_difference_update({login})
+        self._refresh_rows()
+
+    def plan(self):
+        wanted = dict(self._rights)
+        wanted.update({login: can_edit for login, can_edit in self.picker.chosen()})
+        after = self.projet_box.isChecked() if self.projet_box is not None else self._share_project
+        return share_plan(self._current, wanted, self._removed, self._share_project, after)
+
+    def apply(self):
+        """Applique le plan ; vide : ferme. Relit la liste ensuite ; ok :
+        ferme, sinon message (ce qui a ete applique, ce qui ne l'a pas ete)."""
+        plan = self.plan()
+        if plan.is_empty():
+            self.accept()
+            return StoreOutcome(STATUS_OK, value=0)
+        outcome = self._actions.apply_shares(self._row.name, plan)
+        done = int(outcome.value or 0)
+        if plan.share_project is not None and (outcome.status == STATUS_OK or done >= 1):
+            self._share_project = bool(plan.share_project)
+        self._reload()
+        self.picker.clear()
+        if self.projet_box is not None:
+            self.projet_box.setChecked(self._share_project)
+        if outcome.status == STATUS_OK:
+            self.done_message = tr("share.done")
+            self.accept()
+            return outcome
+        if outcome.status == STATUS_INELIGIBLE:
+            text = tr("share.ineligible", count=outcome.count or 0)
+        elif outcome.status in (STATUS_DENIED, STATUS_PROJET_DENIED):
+            text = tr("share.denied")
+        else:
+            text = tr("share.error", message=outcome.message or "")
+        if done:
+            text += "\n" + tr("share.partial", done=done)
+        self.message_label.setText(text)
+        return outcome
+
+
+# =====================================================================
+# Supprimer (spec § 7.11)
+# =====================================================================
+
+def confirm_delete(parent, name: str, ask: Optional[Callable[[str, str], bool]] = None) -> bool:
+    """Confirmation de suppression, bouton par defaut « Non »."""
+    title, text = tr("delete.title"), tr("delete.confirm", name=name)
+    if ask is not None:
+        return bool(ask(title, text))
+    buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    answer = QMessageBox.question(parent, title, text, buttons, QMessageBox.StandardButton.No)
+    return answer == QMessageBox.StandardButton.Yes
+
+
+def delete_message(outcome) -> str:
+    if outcome.status == STATUS_OK:
+        return tr("delete.done")
+    if outcome.status == STATUS_MISSING:
+        return tr("delete.missing")
+    if outcome.status == STATUS_DENIED:
+        return tr("delete.denied")
+    if outcome.status == STATUS_NOMINATIVE:
+        return tr("save.nominative")
+    return tr("delete.error", message=outcome.message or "")

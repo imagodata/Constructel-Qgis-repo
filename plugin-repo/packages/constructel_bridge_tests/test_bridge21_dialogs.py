@@ -305,3 +305,149 @@ def test_conflict_default_button_is_cancel(dlg):
     assert update.message_label.text() == dlg.tr("conflict.changed", name="Vue")
     update.cancel_button.clicked.emit()
     assert update.choice() == dlg.CHOICE_CANCEL and update.result == 0
+
+
+# --- partager (tache 18) -----------------------------------------------------------------------
+
+from constructel_bridge.bridge_qgis_projects import QgisProjectRow, SharePlan, ShareRow  # noqa: E402
+
+
+def qrow(name="Vue", **kw):
+    base = dict(owner="jdoe", projet_id="uuid-g", projet_code="GOFIBER", projet_label="GoFiber", share_project=False,
+                published=False, owner_role="BE", version=3, updated_at=None, updated_by="jdoe", is_owner=True,
+                can_edit=True, share_count=2, description=None)
+    base.update(kw)
+    return QgisProjectRow(name=name, **base)
+
+
+class _ShareActions:
+    def __init__(self, lists, outcomes=()):
+        self.lists = list(lists)
+        self.outcomes = list(outcomes)
+        self.log = []
+
+    def shares_list(self, name):
+        self.log.append(("list", name))
+        return self.lists.pop(0) if len(self.lists) > 1 else self.lists[0]
+
+    def apply_shares(self, name, plan):
+        self.log.append(("apply", name, plan))
+        return self.outcomes.pop(0)
+
+    def eligible_users(self, code, prefix, exclude):
+        self.log.append(("eligible", code, prefix, list(exclude)))
+        return [ALICE]
+
+
+SHARES = [ShareRow("b.martin", "Bob Martin", "ADMIN", True, True), ShareRow("c.vieux", None, None, False, False)]
+
+
+def _share(dlg, lists=(SHARES,), outcomes=(), row=None, caps=FULL):
+    actions = _ShareActions(lists, outcomes)
+    dialog = dlg.ShareDialog(row or qrow(), actions, caps)
+    dialog.actions = actions
+    return dialog
+
+
+def test_share_dialog_lists_people_and_marks_inoperant(dlg):
+    dialog = _share(dlg)
+    assert dialog.title == dlg.tr("share.title", name="Vue")
+    first, second = dialog.who.children
+    assert first.text(0) == "Bob Martin (b.martin) — ADMIN" and dialog.who.itemWidget(first, 1).currentData() is True
+    assert second.toolTip(0) == dlg.tr("share.inoperant") and first.toolTip(0) == ""
+    assert dialog.apply_button.isEnabled()
+    dialog.picker.input.type("ali")
+    dialog.picker.timer.timeout.emit()
+    assert dialog.actions.log[-1] == ("eligible", "GOFIBER", "ali", ["b.martin", "c.vieux"])
+
+
+def test_unreadable_share_list_disables_apply(dlg):
+    dialog = _share(dlg, lists=(None,))
+    assert not dialog.apply_button.isEnabled() and dialog.list_error_label.text() == dlg.tr("share.list_error")
+
+
+def test_projet_box_only_for_attached_projects_with_capability(dlg):
+    assert _share(dlg).projet_box is not None
+    assert _share(dlg, row=qrow(share_project=True)).projet_box.isChecked()
+    assert _share(dlg, row=qrow(projet_id=None, projet_code=None, projet_label=None)).projet_box is None
+    no_cap = pj.ProjetCapabilities(True, True, True, True, True, True, False)
+    assert _share(dlg, caps=no_cap).projet_box is None
+
+
+def test_plan_from_rights_changes_removals_and_new_people(dlg):
+    dialog = _share(dlg)
+    dialog.projet_box.setChecked(True)
+    dialog.who.itemWidget(dialog.who.children[0], 1).setCurrentIndex(0)      # b.martin : peut ouvrir
+    dialog.who.itemWidget(dialog.who.children[1], 2).clicked.emit()           # c.vieux retire
+    assert dialog.who.children[1].isDisabled()
+    dialog.picker.choose(ALICE)
+    dialog.picker.set_right("a.leroy", True)
+    assert dialog.plan() == SharePlan(True, ("c.vieux",), ("a.leroy",), ("b.martin",))
+    dialog.who.itemWidget(dialog.who.children[1], 2).clicked.emit()           # retabli
+    assert dialog.plan().unshare == ()
+
+
+def test_apply_empty_plan_just_closes(dlg):
+    dialog = _share(dlg)
+    out = dialog.apply()
+    assert out.status == store.STATUS_OK and dialog.result == 1
+    assert not any(entry[0] == "apply" for entry in dialog.actions.log)
+
+
+def test_apply_ok_reloads_and_closes(dlg):
+    dialog = _share(dlg, outcomes=(store.StoreOutcome(store.STATUS_OK, value=1),))
+    dialog.picker.choose(ALICE)
+    assert dialog.apply().status == store.STATUS_OK and dialog.result == 1
+    assert dialog.done_message == dlg.tr("share.done")
+    assert [e[0] for e in dialog.actions.log] == ["list", "apply", "list"]
+
+
+def test_apply_ineligible_keeps_dialog_open_and_reloads_list(dlg):
+    after = SHARES + [ShareRow("d.new", None, None, False, True)]
+    dialog = _share(dlg, lists=(SHARES, after),
+                    outcomes=(store.StoreOutcome(store.STATUS_INELIGIBLE, value=2, count=1),))
+    dialog.projet_box.setChecked(True)
+    dialog.picker.choose(ALICE)
+    out = dialog.apply()
+    assert out.status == store.STATUS_INELIGIBLE and dialog.result is None
+    assert dialog.message_label.text() == dlg.tr("share.ineligible", count=1) + "\n" + dlg.tr("share.partial", done=2)
+    assert len(dialog.who.children) == 3 and dialog.picker.chosen() == ()
+    assert dialog.projet_box.isChecked()             # share_project applique avant l'erreur
+    assert dialog.plan().share_project is None
+
+
+def test_apply_denied_message(dlg):
+    dialog = _share(dlg, outcomes=(store.StoreOutcome(store.STATUS_DENIED, value=0),))
+    dialog.picker.choose(ALICE)
+    dialog.apply()
+    assert dialog.message_label.text() == dlg.tr("share.denied")
+
+
+def test_confirm_delete_defaults_to_no(dlg, monkeypatch):
+    asked = []
+    assert dlg.confirm_delete(None, "Vue", ask=lambda title, text: asked.append(text) or False) is False
+    assert asked == [dlg.tr("delete.confirm", name="Vue")]
+
+    calls = []
+
+    class _Box:
+        class StandardButton:
+            Yes, No = 0x4000, 0x10000
+
+        @staticmethod
+        def question(parent, title, text, buttons, default):
+            calls.append(default)
+            return _Box.StandardButton.No
+
+    monkeypatch.setattr(dlg, "QMessageBox", _Box)
+    assert dlg.confirm_delete(None, "Vue") is False and calls == [_Box.StandardButton.No]
+
+
+@pytest.mark.parametrize("status,key", [("ok", "delete.done"), ("missing", "delete.missing"),
+                                        ("denied", "delete.denied"), ("nominative", "save.nominative")])
+def test_delete_messages_by_status(dlg, status, key):
+    assert dlg.delete_message(store.StoreOutcome(status)) == dlg.tr(key)
+
+
+def test_delete_error_message_carries_the_server_text(dlg):
+    assert dlg.delete_message(store.StoreOutcome("error", message="boom")) == dlg.tr("delete.error", message="boom")

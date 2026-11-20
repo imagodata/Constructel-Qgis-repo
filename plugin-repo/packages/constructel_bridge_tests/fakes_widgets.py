@@ -470,6 +470,12 @@ class _Item:
     def text(self, _column):
         return self._text
 
+    def font(self, _column=0):
+        return _Font()
+
+    def setFont(self, _column, _font):
+        pass
+
     def childCount(self):
         return len(self.children)
 

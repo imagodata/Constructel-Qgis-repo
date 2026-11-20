@@ -106,6 +106,7 @@ GOFIBER = pj.ProjetInfo("b3f1", "GOFIBER", "GoFiber", "WYRE", (
     pj.ProjetLayer("geofiber_asbuilt_depth_points", "Points", "Profondeur As-Built", "default", "geom", 20),
     pj.ProjetLayer("geofiber_meta", "Métadonnées", None, "default", None, 30),
 ))
+MINE = None  # pose plus bas (QgisProjectRow)
 LIBRE = pj.ProjetInfo("c4", "LIBRE", "Libre", None, (pj.ProjetLayer("t", "T", None, "default", None, 0),))
 PEOPLE = [EligibleUser("a.leroy", "Alice Leroy", "BE"), EligibleUser("a.lemaire", None, "ADMIN"),
           EligibleUser("b.alex", "Bernard Alex", None)]
@@ -119,12 +120,45 @@ def snapshot21(nominative=True, capabilities=FULL_CAPS):
                                counts=LoadedCounts({}, 0, 0, 2))
 
 
+def _mine_row():
+    from constructel_bridge.bridge_qgis_projects import QgisProjectRow
+
+    return QgisProjectRow("Vue Ixelles", "a.leroy", "b3f1", "GOFIBER", "GoFiber", False, False, "BE", 3,
+                          "2026-11-19T10:00:00", "a.leroy", True, True, 2, "ma vue")
+
+
+def qgis_actions(rows=None):
+    from constructel_bridge.bridge_qgis_projects import QgisProjectRow, ShareRow
+    from constructel_bridge import bridge_qgis_store as qs
+
+    shared = QgisProjectRow("Vue de Bob", "b.martin", None, None, None, False, False, "ADMIN", 1,
+                            None, "b.martin", False, True, None, "")
+    published = QgisProjectRow("Référence GoFiber", "admin", "b3f1", "GOFIBER", "GoFiber", True, True, "ADMIN", 9,
+                               None, "admin", False, False, None, "publiée")
+    rows = [MINE, shared, published] if rows is None else rows
+    ok = qs.StoreOutcome(qs.STATUS_OK, value=1)
+    return hm.QgisProjectActions(
+        list_visible=lambda: LOG.append("list_visible") or list(rows),
+        open=lambda row: LOG.append(("open_qgis", row.name)) or True,
+        save=lambda request: ok,
+        overwrite=lambda request: ok,
+        delete=lambda name: LOG.append(("delete", name)) or ok,
+        shares_list=lambda name: [ShareRow("b.martin", "Bob Martin", "ADMIN", True, True),
+                                  ShareRow("c.vieux", None, None, False, False)],
+        apply_shares=lambda name, plan: LOG.append(("apply_shares", name)) or ok,
+        eligible_users=lambda code, prefix, exclude: search_people(prefix, exclude),
+        current_state=lambda: hm.CurrentProjectState("Ixelles", 4, "a.leroy"),
+    )
+
+
 def search_people(prefix, exclude):
     LOG.append(("search", prefix, tuple(exclude)))
     return [p for p in PEOPLE if p.username not in exclude]
 
 
 def smoke_21(dialog) -> None:
+    global MINE
+    MINE = _mine_row()
     """Ecrans 2.1 (Task 21) : rangee Projets metier, selecteur de personnes."""
     from constructel_bridge.bridge_people_picker import PeoplePicker
 
@@ -207,6 +241,26 @@ def smoke_21(dialog) -> None:
             getattr(conflict, button).click()
             app.processEvents()
             LOG.append(("conflict", creating, conflict.choice()))
+
+    # 5. Dialogue « Partager… » sur un de mes projets, avec une ligne inoperante.
+    from constructel_bridge.bridge_qgis_projects import ShareRow
+
+    share_actions = qgis_actions()
+    share = qd.ShareDialog(MINE, share_actions, FULL_CAPS, None)
+    share.show()
+    app.processEvents()
+    assert share.objectName() == "bridgeHome" and share.who.topLevelItemCount() == 2
+    share.who.itemWidget(share.who.topLevelItem(0), 1).setCurrentIndex(0)
+    share.who.itemWidget(share.who.topLevelItem(1), 2).click()
+    share.projet_box.setChecked(True)
+    share.picker.choose(PEOPLE[0])
+    plan = share.plan()
+    assert plan.share_project is True and plan.unshare == ("c.vieux",), plan
+    share.apply()
+    app.processEvents()
+
+    # 6. Confirmation de suppression (reponse factice).
+    assert qd.confirm_delete(None, "Vue", ask=lambda title, text: LOG.append(("ask", title)) or True)
 
 
 def actions():
