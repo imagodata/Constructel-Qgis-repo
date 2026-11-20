@@ -860,6 +860,10 @@ def _get_plugin_version() -> str:
 
 PLUGIN_VERSION = _get_plugin_version()
 
+# 2.1 : reglage QGIS d'execution des macros et cle de rattrapage (une fois).
+MACROS_SETTING = "qgis/enableMacros"
+MACROS_RESET_KEY = "constructel_bridge/macros_reset_21"
+
 # 2.0 (spec § 8.4) : rattrapage ponctuel du setup, pose une fois par poste.
 ONBOARDING_CATCHUP_KEY = "constructel_bridge/onboarding_catchup_2_0"
 
@@ -1038,9 +1042,11 @@ class ConstructelBridgePlugin:
         _apply_cached_audit_identity(self._log)
         init_language()
         register_expressions()
-        # Activer les macros projet pour que openProject/saveProject/closeProject
-        # s'executent automatiquement (evite le bandeau "macros desactivees")
-        QgsSettings().setValue("qgis/enableMacros", "Always")
+        # 2.1 (decision de Simon du 20/11) : le Bridge n'impose plus
+        # l'execution automatique des macros ; une valeur « Always » posee par
+        # les versions precedentes est ramenee UNE fois a « Ask » (QGIS demande
+        # avant d'executer les macros d'un projet).
+        self._reset_macros_setting()
 
         icon_path = os.path.join(os.path.dirname(__file__), "constructel_bridge_icon.png")
         plugin_icon = QIcon(icon_path)
@@ -4295,6 +4301,18 @@ class ConstructelBridgePlugin:
     # =====================================================================
     # Charger un projet depuis PostgreSQL
     # =====================================================================
+
+    @staticmethod
+    def _reset_macros_setting() -> None:
+        """Rattrapage unique (MACROS_RESET_KEY) : ``qgis/enableMacros`` passe
+        de ``Always`` a ``Ask`` ; tout autre choix (Never, Ask, SessionOnly…)
+        n'est jamais touche, et rien n'est ecrit s'il n'y a pas de valeur."""
+        settings = QgsSettings()
+        if settings.value(MACROS_RESET_KEY, False) in (True, "true", "True", 1, "1"):
+            return
+        if settings.value(MACROS_SETTING, None) == "Always":
+            settings.setValue(MACROS_SETTING, "Ask")
+        settings.setValue(MACROS_RESET_KEY, True)
 
     def _on_project_cleared(self) -> None:
         """QgsProject.cleared : le projet QGIS ouvert n'est plus celui-ci."""
