@@ -8,7 +8,7 @@
 #
 # Rafraichir apres une migration Farois qui touche ces relations, depuis un
 # checkout de Farois a jour (a la racine du depot Farois) :
-#   grep -E '^col (chantier\.(interventions|incidents|permis_voirie|facade_planning|complaints|worksite_interventions|synergies)|osiris\.(frozen_zones|worksites|chantiers_autorises|phases_in_progress|hypercoordination_zones|deviations|events)|docs\.v_element_documents_list|ref\.v_form_lists)\.' \
+#   grep -E '^col (chantier\.(interventions|incidents|permis_voirie|facade_planning|complaints|worksite_interventions|synergies)|osiris\.(frozen_zones|v_frozen_zones_communs|worksites|chantiers_autorises|phases_in_progress|hypercoordination_zones|deviations|events)|docs\.v_element_documents_list|ref\.v_form_lists)\.' \
 #     sql/schema_inventory/golden.txt > /tmp/rows.txt
 #   puis recopier ces lignes sous cet en-tete (les lignes commencant par # sont ignorees).
 # Si le test echoue apres un rafraichissement, le catalogue du plugin (table,
@@ -437,6 +437,15 @@ col osiris.frozen_zones.imported_at timestamp with time zone
 col osiris.frozen_zones.ogc_fid integer
 col osiris.frozen_zones.start_date timestamp with time zone
 col osiris.frozen_zones.zone_mro_id uuid
+# 2.1.1 : vue de repli (Farois mig 573, golden.txt du worktree lot a, 2026-11-20).
+col osiris.v_frozen_zones_communs.end_date timestamp with time zone
+col osiris.v_frozen_zones_communs.geom public.geometry(MultiPolygon,31370)
+col osiris.v_frozen_zones_communs.id_frozen_zone integer
+col osiris.v_frozen_zones_communs.id_ph integer
+col osiris.v_frozen_zones_communs.id_ws integer
+col osiris.v_frozen_zones_communs.imported_at timestamp with time zone
+col osiris.v_frozen_zones_communs.ogc_fid integer
+col osiris.v_frozen_zones_communs.start_date timestamp with time zone
 col osiris.hypercoordination_zones.geom public.geometry(MultiPolygon,31370)
 col osiris.hypercoordination_zones.id_hyperco integer
 col osiris.hypercoordination_zones.imported_at timestamp with time zone

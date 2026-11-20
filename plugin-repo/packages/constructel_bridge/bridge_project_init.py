@@ -34,6 +34,7 @@ from .bridge_operators import (
     OPERATOR_GROUPS,
     OPERATOR_KEYS,
     OPERATOR_TABLES,
+    CATALOG_FALLBACKS,
     OPERATOR_TEMPLATE_SCHEMA,
     PROJET_SCHEMA,
     OperatorInfo,
@@ -526,6 +527,32 @@ def _catalog_table_id(entry) -> str:
     return entry[3] if entry[0] in WFS_KEYS else f"{entry[2]}.{entry[3]}"
 
 
+def catalog_table_ids(entry) -> list:
+    """Identifiants qui valent « deja chargee » pour *entry* : sa table et,
+    s'il en a une, sa source de repli (2.1.1, CATALOG_FALLBACKS)."""
+    ids = [_catalog_table_id(entry)]
+    fallback = CATALOG_FALLBACKS.get(entry[0])
+    if fallback is not None:
+        ids.append(".".join(fallback[1]))
+    return ids
+
+
+def _source_of(entry, fallback_keys) -> tuple:
+    """(schema, table) lus pour *entry* : le repli si sa cle est dans
+    *fallback_keys*, sinon la table du catalogue."""
+    if entry[0] in fallback_keys and entry[0] in CATALOG_FALLBACKS:
+        return CATALOG_FALLBACKS[entry[0]][1]
+    return entry[2], entry[3]
+
+
+def _present_in(index, entry):
+    """Couche de *index* qui porte deja *entry* (table ou repli), sinon None."""
+    for table_id in catalog_table_ids(entry):
+        if table_id in index:
+            return index[table_id]
+    return None
+
+
 def _layer_table_ids(layer) -> list[str]:
     """Identifiants « deja chargee » d'une couche : schema.table pour une
     couche PostgreSQL, typename(s) du catalogue contenus dans la source d'une
@@ -568,7 +595,7 @@ def _detect_existing_layers(schema: str | None = OPERATOR_TEMPLATE_SCHEMA) -> se
     ``None`` : cles communes presentes seulement."""
     index = _existing_layer_index(QgsProject.instance())
     catalog = _common_catalog() if schema is None else catalog_for(schema)
-    return {entry[0] for entry in catalog if _catalog_table_id(entry) in index}
+    return {entry[0] for entry in catalog if _present_in(index, entry) is not None}
 
 
 def existing_by_schema(schemas: Sequence[str]) -> dict[Optional[str], set[str]]:
@@ -615,8 +642,9 @@ def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> Loade
     known_operator_schemas) : une table operateur d'un autre schema (copie
     dans public...) ne fait pas naitre d'operateur ; None = tout schema."""
     known = None if known is None else set(known)
-    common_ids = {_catalog_table_id(e) for e in LAYER_CATALOG
-                  if e[1] not in OPERATOR_GROUPS and e[0] not in _TECHNICAL_KEYS}
+    common_ids = {table_id for e in LAYER_CATALOG
+                  if e[1] not in OPERATOR_GROUPS and e[0] not in _TECHNICAL_KEYS
+                  for table_id in catalog_table_ids(e)}
     basemap_names = {bm["name"] for bm in BASEMAPS}
     per_operator: dict[str, int] = {}
     common = 0
@@ -951,8 +979,9 @@ def _discover_catalog_layers(project) -> dict:
     dans son schema ("interventions"). La premiere couche trouvee l'emporte
     (une copie filtree ajoutee apres l'originale est ignoree)."""
     operator_keys = {e[3]: e[0] for e in LAYER_CATALOG if e[0] in OPERATOR_KEYS}
-    common_keys = {_catalog_table_id(e): e[0] for e in LAYER_CATALOG
-                   if e[0] not in OPERATOR_KEYS and e[0] not in WFS_KEYS}
+    common_keys = {table_id: e[0] for e in LAYER_CATALOG
+                   if e[0] not in OPERATOR_KEYS and e[0] not in WFS_KEYS
+                   for table_id in catalog_table_ids(e)}
     loaded = {}
     for layer in project.mapLayers().values():
         if not isinstance(layer, QgsVectorLayer):
@@ -1032,7 +1061,8 @@ def ensure_relations(loaded: dict | None = None, primary_schema: str | None = No
 def init_project(conn_params: dict, password: str, selected: set[str],
                  add_basemap: bool = True, apply_styles: bool = True,
                  selected_basemaps: set[str] | None = None, *,
-                 operator: OperatorInfo | None, suffix: bool | None = None) -> int:
+                 operator: OperatorInfo | None, suffix: bool | None = None,
+                 fallback_keys: Iterable[str] = ()) -> int:
     """Charge les couches selectionnees (cles simples du catalogue) pour
     *operator* (spec § 6.3, § 6.4). ``operator=None`` (2.0, chargement sans
     operateur) : seules les entrees communes (hors OPERATOR_GROUPS) sont lues,
@@ -1058,6 +1088,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     """
     project = QgsProject.instance()
     catalog = _common_catalog() if operator is None else catalog_for(operator.schema)
+    fallback_keys = frozenset(fallback_keys or ())
 
     # -- CRS projet -------------------------------------------------------
     crs = QgsCoordinateReferenceSystem("EPSG:31370")
@@ -1078,7 +1109,7 @@ def init_project(conn_params: dict, password: str, selected: set[str],
     # communes presentes : reliees, jamais restylees (T9-c2b).
     present = {}
     for entry in catalog:
-        layer = existing.get(_catalog_table_id(entry))
+        layer = _present_in(existing, entry)
         if layer is not None:
             present[layer_key(entry[0], entry[2])] = layer
     stamped = False
@@ -1111,7 +1142,11 @@ def init_project(conn_params: dict, password: str, selected: set[str],
         if key in WFS_KEYS:
             layer = _build_wfs_layer(table, label)
         else:
-            uri = _build_uri(conn_params, password, schema, table, geom_col, pk)
+            # 2.1.1 : source de repli (vue) si la session n'a pas le SELECT sur
+            # la table ; la couche garde le nom de la table du catalogue et la
+            # cle primaire du catalogue (une vue n'en declare pas).
+            source_schema, source_table = _source_of(entry, fallback_keys)
+            uri = _build_uri(conn_params, password, source_schema, source_table, geom_col, pk)
             # Toujours utiliser le nom de table comme nom QGIS
             # (requis pour les ValueRelation qui referencent par LayerName)
             layer = QgsVectorLayer(uri.uri(False), table, "postgres")
