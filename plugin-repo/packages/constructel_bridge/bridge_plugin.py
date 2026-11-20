@@ -59,6 +59,8 @@ from .bridge_presets import (
 from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
 from .bridge_projets import NO_CAPABILITIES
+from .bridge_project_safety import ProjectFileError, neutralize_qgs_xml
+from .bridge_qgis_projects import OpenedQgisProject
 from .bridge_identity import (
     build_pgoptions,
     decode_password,
@@ -994,6 +996,7 @@ class ConstructelBridgePlugin:
         self._projets: tuple = ()
         self._opened_qgis_project = None
         self._last_open_row = None
+        self._open_refused = False
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -1175,6 +1178,11 @@ class ConstructelBridgePlugin:
         # Ecouter le signal readProject pour reagir quand un projet est
         # charge par n'importe quel moyen (explorateur PG, fichier, etc.)
         QgsProject.instance().readProject.connect(self._on_project_read)
+        # 2.1 : le projet QGIS ouvert depuis `projet.qgis_projects` est oublie
+        # des que QGIS vide le projet (Nouveau, ouverture d'un autre projet).
+        cleared = getattr(QgsProject.instance(), "cleared", None)
+        if cleared is not None:
+            cleared.connect(self._on_project_cleared)
 
         # Nettoyer les authcfg des datasources AVANT la sauvegarde du projet
         # pour que le projet ecrit soit portable (pas d'authcfg user-specific).
@@ -1215,6 +1223,10 @@ class ConstructelBridgePlugin:
         try:
             QgsProject.instance().writeProject.disconnect(self._on_write_project)
         except TypeError:
+            pass
+        try:
+            QgsProject.instance().cleared.disconnect(self._on_project_cleared)
+        except (TypeError, AttributeError):
             pass
         try:
             QgsProject.instance().layersAdded.disconnect(self._on_layers_added_scope)
@@ -4228,6 +4240,27 @@ class ConstructelBridgePlugin:
     # Charger un projet depuis PostgreSQL
     # =====================================================================
 
+    def _on_project_cleared(self) -> None:
+        """QgsProject.cleared : le projet QGIS ouvert n'est plus celui-ci."""
+        self._opened_qgis_project = None
+
+    def _open_qgis_project(self, row) -> bool:
+        """Ouvre un projet QGIS de `projet.qgis_projects` (``QgisProjectActions.open``)
+        puis le retient (version, rattachement, droits, metadata) : c'est lui
+        qui fait d'un enregistrement une mise a jour. Le record est pose APRES
+        ``project.read`` (qui emet ``cleared``)."""
+        self._last_open_row = None
+        if not self._open_db_project(PROJET_SCHEMA, row.name):
+            return False
+        open_row = self._last_open_row
+        if open_row is None:
+            return True
+        self._opened_qgis_project = OpenedQgisProject(
+            row.name, open_row.version, open_row.projet_id, row.projet_code,
+            bool(row.is_owner), bool(row.can_edit), dict(open_row.metadata),
+        )
+        return True
+
     def _open_db_project(self, schema: str, name: str) -> bool:
         """Charge le projet *name* du schema *schema* (2.0, plan tache 8).
 
@@ -4242,6 +4275,7 @@ class ConstructelBridgePlugin:
         # depuis un fichier temporaire.  Cela evite le dialogue
         # "Saisir les identifiants" quand le projet contient des
         # authcfg d'un autre utilisateur.
+        self._open_refused = False
         if self._read_and_clean_project(project, schema, name):
             self._log(tr("project.loaded", name=name))
             self.iface.messageBar().pushSuccess(
@@ -4249,6 +4283,8 @@ class ConstructelBridgePlugin:
                 tr("project.loaded", name=name),
             )
             return True
+        if getattr(self, "_open_refused", False):
+            return False  # message deja affiche (contenu dangereux, introuvable)
         raw_error = project.error()
         if hasattr(raw_error, "summary"):
             error = raw_error.summary()
@@ -4261,6 +4297,12 @@ class ConstructelBridgePlugin:
             tr("project.load_error", name=name, error=error),
         )
         return False
+
+    def _refuse_open(self, message: str) -> None:
+        """Ouverture refusee (contenu dangereux ou illisible, projet
+        introuvable) : un seul message, pas celui d'erreur generique."""
+        self._open_refused = True
+        QMessageBox.warning(self.iface.mainWindow(), tr("project.title"), message)
 
     def _base_project_schemas(self) -> tuple[str, ...]:
         """Operateurs utilisables puis ``public`` (spec 6.7), sans lecture
@@ -4308,19 +4350,34 @@ class ConstructelBridgePlugin:
                 schema == PROJET_SCHEMA and self._projet_schema_exists()):
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
-        cur = self._conn.cursor()
-        try:
-            cur.execute(
-                f'SELECT content FROM "{schema}".qgis_projects WHERE name = %s',
-                (name,),
-            )
-            row = cur.fetchone()
-        except Exception as exc:
-            self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
-            return False
-        if not row:
-            self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
-            return False
+        if schema == PROJET_SCHEMA and PROJET_SCHEMA not in self._base_project_schemas():
+            # 2.1 : lecture sous RLS (content, metadata, version, projet_id) ;
+            # la ligne est rendue a _open_qgis_project par _last_open_row.
+            try:
+                open_row = qgis_store.read_for_open(self._conn, name)
+            except Exception as exc:  # noqa: BLE001 -- dit par _open_db_project
+                self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
+                return False
+            if open_row is None:
+                self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
+                self._refuse_open(tr("project.qgis_not_found", name=name))
+                return False
+            self._last_open_row = open_row
+            row = (open_row.content,)
+        else:
+            cur = self._conn.cursor()
+            try:
+                cur.execute(
+                    f'SELECT content FROM "{schema}".qgis_projects WHERE name = %s',
+                    (name,),
+                )
+                row = cur.fetchone()
+            except Exception as exc:
+                self._log(f"Failed to read project XML from PG: {exc}", Qgis.MessageLevel.Warning)
+                return False
+            if not row:
+                self._log(f"Project '{name}' not found in {schema}.qgis_projects", Qgis.MessageLevel.Warning)
+                return False
 
         raw = row[0]
         if isinstance(raw, memoryview):
@@ -4335,11 +4392,16 @@ class ConstructelBridgePlugin:
             import zipfile
             # QGIS stocke le projet comme .qgz (archive ZIP) dans PG
             if raw[:2] == b"PK":
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    # Le .qgs est le premier (et souvent unique) fichier
-                    qgs_names = [n for n in zf.namelist() if n.endswith(".qgs")]
-                    entry = qgs_names[0] if qgs_names else zf.namelist()[0]
-                    xml = zf.read(entry).decode("utf-8")
+                try:
+                    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                        # Le .qgs est le premier (et souvent unique) fichier
+                        qgs_names = [n for n in zf.namelist() if n.lower().endswith(".qgs")]
+                        entry = qgs_names[0] if qgs_names else zf.namelist()[0]
+                        xml = zf.read(entry).decode("utf-8")
+                except (zipfile.BadZipFile, IndexError, UnicodeDecodeError, RuntimeError, OSError) as exc:
+                    self._log(f"Project '{name}' : archive illisible ({exc})", Qgis.MessageLevel.Warning)
+                    self._refuse_open(tr("project.unsafe_refused", name=name))
+                    return False
             else:
                 # Tenter decode direct (texte brut ou autre encodage)
                 for enc in ("utf-8", "latin-1"):
@@ -4351,6 +4413,27 @@ class ConstructelBridgePlugin:
                 else:
                     self._log("Cannot decode project content from PG", Qgis.MessageLevel.Warning)
                     return False
+
+        # 2.1 (spec § 7.5) : neutraliser le code embarque de TOUT projet ouvert
+        # depuis la base par le Bridge, le sien compris, AVANT le nettoyage des
+        # authcfg : macros, fonctions d'expression, actions non URL, code de
+        # formulaire, mots de passe en clair. Entite XML ou XML illisible :
+        # ouverture refusee.
+        try:
+            neutralized = neutralize_qgs_xml(xml)
+        except ProjectFileError as exc:
+            self._log(f"Project '{name}' refused: {exc}", Qgis.MessageLevel.Warning)
+            self._refuse_open(tr("project.unsafe_refused", name=name))
+            return False
+        if neutralized.removed:
+            xml = neutralized.xml
+            for finding in neutralized.removed:
+                self._log(f"Project '{name}' : neutralise {finding.kind}"
+                          + (f" (couche {finding.layer})" if finding.layer else "")
+                          + (f" : {finding.detail}" if finding.detail else ""))
+            self.iface.messageBar().pushMessage(
+                "Constructel Bridge", tr("project.neutralized", count=len(neutralized.removed)),
+                level=Qgis.MessageLevel.Info, duration=10)
 
         # Nettoyer les authcfg des datasources et injecter user/password.
         # Meme logique known_identities que _fix_layer_credentials /

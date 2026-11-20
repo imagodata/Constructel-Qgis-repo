@@ -399,6 +399,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.projet_tooltip_none": "{count} layers",
         "home.loaded_projets": "{count} business project layers",
         "home.loaded_projets_one": "1 business project layer",
+        "project.neutralized": "{count} embedded code items neutralised (macros, actions, functions, forms, passwords)",
+        "project.unsafe_refused": "The QGIS project “{name}” was not opened: its content is unreadable or unsafe.",
+        "project.qgis_not_found": "The QGIS project “{name}” cannot be found: it was deleted, or you no longer have access to it.",
     },
 
     # =====================================================================
@@ -793,6 +796,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.projet_tooltip_none": "{count} couches",
         "home.loaded_projets": "{count} couches de projets métier",
         "home.loaded_projets_one": "1 couche de projet métier",
+        "project.neutralized": "{count} éléments de code embarqué neutralisés (macros, actions, fonctions, formulaires, mots de passe)",
+        "project.unsafe_refused": "Le projet QGIS « {name} » n'a pas été ouvert : son contenu est illisible ou dangereux.",
+        "project.qgis_not_found": "Le projet QGIS « {name} » est introuvable : il a été supprimé, ou vous n'y avez plus accès.",
     },
 
     # =====================================================================
@@ -1187,5 +1193,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "home.projet_tooltip_none": "{count} camadas",
         "home.loaded_projets": "{count} camadas de projetos de negócio",
         "home.loaded_projets_one": "1 camada de projeto de negócio",
+        "project.neutralized": "{count} elementos de código incorporado neutralizados (macros, ações, funções, formulários, palavras-passe)",
+        "project.unsafe_refused": "O projeto QGIS «{name}» não foi aberto: o seu conteúdo é ilegível ou perigoso.",
+        "project.qgis_not_found": "O projeto QGIS «{name}» não foi encontrado: foi eliminado ou já não tem acesso a ele.",
     },
 }

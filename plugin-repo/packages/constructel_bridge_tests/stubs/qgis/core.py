@@ -457,6 +457,7 @@ class QgsProject:
         self.readProject = _StubSignal()
         self.writeProject = _StubSignal()
         self.layerLoaded = _StubSignal()
+        self.cleared = _StubSignal()   # 2.1 : projet QGIS ouvert oublie
 
     @classmethod
     def instance(cls):
