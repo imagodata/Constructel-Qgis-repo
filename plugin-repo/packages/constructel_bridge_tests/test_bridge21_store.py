@@ -162,3 +162,141 @@ def test_no_query_passes_p_as_user(conn):
     store.current_version(conn, "Vue")
     store.shares_list(conn, "Vue")
     assert conn.executed and all("p_as_user" not in sql for sql, _ in conn.executed)
+
+
+# ---------------------------------------------------------------- Task 6 : ecritures et erreurs
+# Mise a jour du contrat (Q4) : le plugin classe par le HINT code, jamais par le texte.
+
+@pytest.mark.parametrize("code,hint,status", [
+    ("FP409", "QGISP_VERSION_CONFLICT", "conflict"),
+    ("42501", "QGISP_NAME_TAKEN", "name_taken"),
+    ("42501", "QGISP_NOT_FOUND", "gone"),
+    ("42501", "QGISP_NOT_NOMINATIVE", "nominative"),
+    ("42501", "QGISP_PROJET_FORBIDDEN", "projet_denied"),
+    ("42501", "QGISP_NOT_OWNER", "denied"),
+    ("42501", "QGISP_ADMIN_ONLY", "denied"),
+    ("42501", "QGISP_DELEGATION_DENIED", "error"),
+    ("23514", "QGISP_NOT_ELIGIBLE", "ineligible"),
+    ("22023", None, "invalid"),
+    ("42501", "QGISP_SOMETHING_NEW", "error"),
+    ("42501", None, "error"),
+    (None, None, "error"),
+])
+def test_classify_error_by_hint(code, hint, status):
+    assert store.classify_error(pg_error(code, "message quelconque", hint=hint)).status == status
+
+
+def test_message_text_is_never_used_to_classify():
+    # Ancien texte « deja utilise » sans HINT : erreur generique, pas name_taken.
+    out = store.classify_error(pg_error("42501", "nom de projet x deja utilise"))
+    assert out.status == "error" and out.message == "nom de projet x deja utilise"
+
+
+def test_unknown_hint_keeps_the_message():
+    out = store.classify_error(pg_error("42501", "nouveau refus", hint="QGISP_FUTURE"))
+    assert out.status == "error" and out.message == "nouveau refus"
+
+
+def test_invalid_shows_server_message():
+    out = store.classify_error(pg_error("22023", "nom de projet QGIS invalide"))
+    assert out.status == "invalid" and out.message == "nom de projet QGIS invalide"
+
+
+def test_version_conflict_code_without_hint_is_still_a_conflict():
+    assert store.classify_error(pg_error("FP409", "conflit")).status == "conflict"
+
+
+def test_hint_read_from_diag_hint_attribute_too():
+    exc = PgError("42501", "x")
+    exc.diag = SimpleNamespace(message_primary="x", message_detail=None, hint="QGISP_NAME_TAKEN")
+    assert store.classify_error(exc).status == "name_taken"
+
+
+def test_ineligible_count_and_conflict_detail():
+    out = store.classify_error(pg_error("23514", "partage refuse : 2 personne(s)", hint="QGISP_NOT_ELIGIBLE"))
+    assert out.count == 2
+    out = store.classify_error(pg_error("FP409", "conflit", detail="version courante 5, modifiee le 2026-11-19 par bob",
+                                        hint="QGISP_VERSION_CONFLICT"))
+    assert out.detail.startswith("version courante 5")
+
+
+def test_plain_exception_is_a_generic_error():
+    out = store.classify_error(RuntimeError("server closed the connection"))
+    assert out.status == "error" and "server closed" in out.message
+
+
+def test_save_create_passes_null_version_and_returns_new_version(conn):
+    conn.answer(one=(1,))
+    out = store.save(conn, "Vue", b"PK\x03\x04", {"description": "d"}, None, None)
+    sql, params = conn.executed[-1]
+    assert "fn_qgis_project_save" in sql and params[3] is None and params[4] is None
+    assert params[0] == "Vue" and bytes(getattr(params[1], "adapted", params[1])) == b"PK\x03\x04" and params[2] == '{"description": "d"}'
+    assert out.status == "ok" and out.value == 1
+
+
+def test_save_update_and_conflict(conn):
+    conn.answer(one=(5,))
+    out = store.save(conn, "Vue", b"PK", {"description": "é"}, 4, "a0b1")
+    sql, params = conn.executed[-1]
+    assert params[3] == 4 and params[4] == "a0b1" and "é" in params[2] and out.value == 5
+    conn.fail_at(2, pg_error("FP409", "conflit", detail="version courante 6", hint="QGISP_VERSION_CONFLICT"))
+    out = store.save(conn, "Vue", b"PK", {}, 4, None)
+    assert out.status == "conflict" and out.detail == "version courante 6"
+
+
+def test_delete_true_false_denied(conn):
+    conn.answer(one=(True,))
+    assert store.delete(conn, "Vue").status == "ok"
+    conn.answer(one=(False,))
+    assert store.delete(conn, "Vue").status == "missing"
+    conn.fail_at(3, pg_error("42501", "reserve", hint="QGISP_NOT_OWNER"))
+    assert store.delete(conn, "Vue").status == "denied"
+
+
+def test_eligible_users_needs_three_characters_and_passes_exclude(conn):
+    assert store.eligible_users(conn, "GOFIBER", " ab ", []) == [] and conn.executed == []
+    conn.answer(all=[("a.leroy", "Alice Leroy", "BE")])
+    (user,) = store.eligible_users(conn, "GOFIBER", "ale", ["b.x"])
+    sql, params = conn.executed[-1]
+    assert "p_exclude" in sql and params == ("GOFIBER", "ale", ["b.x"]) and user.username == "a.leroy"
+    assert "p_as_user" not in sql
+
+
+def test_eligible_users_prefix_capped_and_errors_are_none(conn):
+    conn.answer(all=[])
+    store.eligible_users(conn, None, "x" * 80, ())
+    assert conn.executed[-1][1] == (None, "x" * 50, [])
+    conn.error = pg_error("42501", "inaccessible", hint="QGISP_PROJET_FORBIDDEN")
+    assert store.eligible_users(conn, "GOFIBER", "ale", []) is None
+
+
+def test_eligible_users_requests_the_limit_within_server_bounds(conn):
+    conn.answer(all=[])
+    store.eligible_users(conn, None, "ale", [])
+    assert ", 20, p_exclude" in conn.executed[-1][0]
+
+
+def test_apply_share_plan_order_chunks_and_stop_on_first_error(conn):
+    plan = SharePlan(True, ("c",), tuple(f"u{i:02d}" for i in range(25)), ("d",))
+    conn.answer_each(ok=4)                     # set_share_project, unshare, share(20), share(5) ok ; share(open) leve 23514
+    conn.fail_at(5, pg_error("23514", "partage refuse : 1 personne(s)", hint="QGISP_NOT_ELIGIBLE"))
+    out = store.apply_share_plan(conn, "Vue", plan)
+    names = [sql.split("(")[0].split(".")[-1] for sql, _ in conn.executed]
+    assert names == ["fn_qgis_project_set_share_project", "fn_qgis_project_unshare", "fn_qgis_project_share",
+                     "fn_qgis_project_share", "fn_qgis_project_share"]
+    assert out.status == "ineligible" and out.value == 4 and out.count == 1
+    assert conn.executed[2][1] == ("Vue", [f"u{i:02d}" for i in range(20)], True)
+    assert conn.executed[4][1] == ("Vue", ["d"], False)
+
+
+def test_apply_share_plan_ok_counts_calls(conn):
+    out = store.apply_share_plan(conn, "Vue", SharePlan(None, (), ("a",), ()))
+    assert out.status == "ok" and out.value == 1 and len(conn.executed) == 1
+
+
+def test_writes_never_pass_p_as_user(conn):
+    store.save(conn, "Vue", b"PK", {}, None, None)
+    store.delete(conn, "Vue")
+    store.eligible_users(conn, None, "ale", [])
+    store.apply_share_plan(conn, "Vue", SharePlan(True, ("a",), ("b",), ("c",)))
+    assert all("p_as_user" not in sql for sql, _ in conn.executed)

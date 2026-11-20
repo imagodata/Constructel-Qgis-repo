@@ -8,9 +8,11 @@ ouvre et ferme son curseur ; une lecture en echec rend une valeur neutre
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from .bridge_projets import (
     CAPABILITIES_QUERY,
@@ -21,7 +23,18 @@ from .bridge_projets import (
     parse_capabilities,
     parse_projet_rows,
 )
-from .bridge_qgis_projects import QgisProjectRow, ShareRow, row_from_record
+from .bridge_qgis_projects import (
+    ELIGIBLE_LIMIT,
+    ELIGIBLE_MAX_LIMIT,
+    ELIGIBLE_MAX_PREFIX,
+    ELIGIBLE_MIN_PREFIX,
+    EligibleUser,
+    QgisProjectRow,
+    SharePlan,
+    ShareRow,
+    chunks,
+    row_from_record,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -120,3 +133,157 @@ def shares_list(conn, name: str) -> Optional[List[ShareRow]]:
         _LOG.warning("Partages du projet QGIS %s illisibles : %s", name, exc)
         return None
     return [ShareRow(str(r[0]), r[1], r[2], bool(r[3]), bool(r[4])) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Ecritures et classement des erreurs (Task 6)
+# ---------------------------------------------------------------------------
+STATUS_OK = "ok"
+STATUS_CONFLICT = "conflict"
+STATUS_NAME_TAKEN = "name_taken"
+STATUS_GONE = "gone"
+STATUS_NOMINATIVE = "nominative"
+STATUS_PROJET_DENIED = "projet_denied"
+STATUS_DENIED = "denied"
+STATUS_INVALID = "invalid"
+STATUS_INELIGIBLE = "ineligible"
+STATUS_MISSING = "missing"
+STATUS_ERROR = "error"
+
+# HINT codes et stables du contrat (lot b, Q4) : le plugin teste le HINT,
+# jamais le texte du message. Un HINT inconnu = erreur generique (message).
+# QGISP_DELEGATION_DENIED (p_as_user renseigne) ne doit jamais arriver : le
+# Bridge ne le passe pas ; il est traite comme une erreur generique.
+HINT_STATUS = {
+    "QGISP_VERSION_CONFLICT": STATUS_CONFLICT,
+    "QGISP_NAME_TAKEN": STATUS_NAME_TAKEN,
+    "QGISP_NOT_FOUND": STATUS_GONE,
+    "QGISP_NOT_NOMINATIVE": STATUS_NOMINATIVE,
+    "QGISP_PROJET_FORBIDDEN": STATUS_PROJET_DENIED,
+    "QGISP_NOT_OWNER": STATUS_DENIED,
+    "QGISP_ADMIN_ONLY": STATUS_DENIED,
+    "QGISP_NOT_ELIGIBLE": STATUS_INELIGIBLE,
+}
+
+SAVE_QUERY = "SELECT projet.fn_qgis_project_save(%s::text, %s::bytea, %s::jsonb, %s::integer, %s::uuid)"
+DELETE_QUERY = "SELECT projet.fn_qgis_project_delete(%s::text)"
+SET_SHARE_PROJECT_QUERY = "SELECT projet.fn_qgis_project_set_share_project(%s::text, %s::boolean)"
+UNSHARE_QUERY = "SELECT projet.fn_qgis_project_unshare(%s::text, %s::text[])"
+SHARE_QUERY = "SELECT projet.fn_qgis_project_share(%s::text, %s::text[], %s::boolean)"
+ELIGIBLE_QUERY = ("SELECT * FROM projet.fn_qgis_project_eligible_users(%s::text, %s::text, "
+                  + str(min(ELIGIBLE_LIMIT, ELIGIBLE_MAX_LIMIT)) + ", p_exclude => %s::text[])")
+
+_FIRST_INT_RE = re.compile(r"\d+")
+
+
+@dataclass(frozen=True)
+class StoreOutcome:
+    status: str
+    value: object = None
+    message: str = ""
+    detail: str = ""
+    count: Optional[int] = None
+
+
+def _diag(exc: BaseException, *names: str) -> str:
+    diag = getattr(exc, "diag", None)
+    for name in names:
+        value = getattr(diag, name, None) if diag is not None else None
+        if value:
+            return str(value)
+    return ""
+
+
+def classify_error(exc: BaseException) -> StoreOutcome:
+    code = getattr(exc, "pgcode", None)
+    hint = _diag(exc, "message_hint", "hint").strip()
+    message = _diag(exc, "message_primary")
+    if not message:
+        text = str(exc).strip()
+        message = text.splitlines()[0] if text else ""
+    detail = _diag(exc, "message_detail")
+    status = HINT_STATUS.get(hint)
+    if status is None:
+        if code == "FP409":
+            status = STATUS_CONFLICT
+        elif code == "22023":
+            status = STATUS_INVALID
+        else:
+            status = STATUS_ERROR
+    count = None
+    if status == STATUS_INELIGIBLE:
+        match = _FIRST_INT_RE.search(message or "")
+        count = int(match.group(0)) if match else None
+    return StoreOutcome(status, message=message or "", detail=detail, count=count)
+
+
+def _binary(content: bytes):
+    try:
+        import psycopg2  # noqa: PLC0415 - absent des tests sans base
+        return psycopg2.Binary(content)
+    except Exception:  # noqa: BLE001
+        return bytes(content)
+
+
+def save(conn, name: str, content: bytes, metadata: dict, expected_version: Optional[int],
+         projet_id: Optional[str]) -> StoreOutcome:
+    params = (name, _binary(content), json.dumps(metadata or {}, ensure_ascii=False), expected_version, projet_id)
+    try:
+        row = _run(conn, SAVE_QUERY, params, fetch="one")
+    except Exception as exc:  # noqa: BLE001
+        outcome = classify_error(exc)
+        _LOG.warning("Enregistrement du projet QGIS %s refuse (%s) : %s %s", name, outcome.status,
+                     outcome.message, outcome.detail)
+        return outcome
+    version = int(row[0]) if row and row[0] is not None else None
+    return StoreOutcome(STATUS_OK, value=version)
+
+
+def delete(conn, name: str) -> StoreOutcome:
+    try:
+        row = _run(conn, DELETE_QUERY, (name,), fetch="one")
+    except Exception as exc:  # noqa: BLE001
+        outcome = classify_error(exc)
+        _LOG.warning("Suppression du projet QGIS %s refusee (%s) : %s", name, outcome.status, outcome.message)
+        return outcome
+    return StoreOutcome(STATUS_OK if row and row[0] else STATUS_MISSING)
+
+
+def eligible_users(conn, projet_code: Optional[str], prefix: str,
+                   exclude: Sequence[str]) -> Optional[List[EligibleUser]]:
+    """Personnes eligibles au partage ; [] sans requete sous 3 caracteres,
+    None si la recherche echoue."""
+    cleaned = (prefix or "").strip()
+    if len(cleaned) < ELIGIBLE_MIN_PREFIX:
+        return []
+    cleaned = cleaned[:ELIGIBLE_MAX_PREFIX]
+    try:
+        rows = _run(conn, ELIGIBLE_QUERY, (projet_code, cleaned, [str(x) for x in exclude or ()]))
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("Recherche de personnes impossible : %s", exc)
+        return None
+    return [EligibleUser(str(r[0]), r[1], r[2]) for r in rows]
+
+
+def apply_share_plan(conn, name: str, plan: SharePlan) -> StoreOutcome:
+    """Partage avec le projet metier, retraits, puis partages « peut
+    modifier » et « peut ouvrir », par paquets de 20 ; arret a la premiere
+    erreur (value = nombre d'appels reussis)."""
+    calls = []
+    if plan.share_project is not None:
+        calls.append((SET_SHARE_PROJECT_QUERY, (name, bool(plan.share_project))))
+    calls += [(UNSHARE_QUERY, (name, list(batch))) for batch in chunks(plan.unshare)]
+    calls += [(SHARE_QUERY, (name, list(batch), True)) for batch in chunks(plan.edit)]
+    calls += [(SHARE_QUERY, (name, list(batch), False)) for batch in chunks(plan.open)]
+    done = 0
+    for sql, params in calls:
+        try:
+            _run(conn, sql, params, fetch="one")
+        except Exception as exc:  # noqa: BLE001
+            outcome = classify_error(exc)
+            _LOG.warning("Partage du projet QGIS %s interrompu apres %d appel(s) (%s) : %s",
+                         name, done, outcome.status, outcome.message)
+            return StoreOutcome(outcome.status, value=done, message=outcome.message,
+                                detail=outcome.detail, count=outcome.count)
+        done += 1
+    return StoreOutcome(STATUS_OK, value=done)
