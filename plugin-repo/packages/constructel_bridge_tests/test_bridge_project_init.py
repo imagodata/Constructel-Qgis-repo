@@ -301,3 +301,49 @@ def test_ducts_progress_group_translated(project_init):
 
     tr = layer_translations.FORM_CONTAINERS_PER_LAYER["ducts"]["📊 Avancement"]
     assert tr == {"fr": "📊 Avancement", "en": "📊 Progress", "pt": "📊 Progresso"}
+
+
+# --- fonds UrbIS : service geoservices-basemap (2026-11-20) -----------------------------
+
+_URBIS_LAYERS = {
+    "urbis_fr": "UrbISFrenchLabeledColor",
+    "urbis_fr_gray": "UrbISFrenchLabeledGray",
+    "urbis_nl": "UrbISDutchLabeledColor",
+    "urbis_nl_gray": "UrbISDutchLabeledGray",
+    "urbis_fr_nl": "UrbISFrenchDutchLabeledColor",
+    "urbis_fr_nl_gray": "UrbISFrenchDutchLabeledGray",
+    "urbis_none": "UrbISNotLabeledColor",
+    "urbis_none_gray": "UrbISNotLabeledGray",
+}
+
+
+def test_urbis_catalog_has_the_eight_basemap_layers(project_init):
+    urbis = {bm["key"]: bm for bm in project_init.BASEMAPS if bm["group"] == "UrbIS Brussels"}
+    assert set(urbis) == set(_URBIS_LAYERS)
+    for key, layer in _URBIS_LAYERS.items():
+        source = urbis[key]["source"]
+        assert f"&layers={layer}&" in source
+        assert "&styles=&tileMatrixSet=EPSG:31370&" in source
+        assert "&url=https://geoservices-basemap.irisnet.be/geowebcache/service/wmts?" in source
+        assert urbis[key]["provider"] == "wms"
+    # Noms historiques conserves (detection des fonds deja charges par le nom).
+    assert urbis["urbis_fr"]["name"] == "UrbIS FR"
+    assert urbis["urbis_fr_gray"]["name"] == "UrbIS FR Gray"
+    assert len({bm["name"] for bm in project_init.BASEMAPS}) == len(project_init.BASEMAPS)
+    # Seules les deux entrees FR historiques sont pre-cochees.
+    assert {k for k, bm in urbis.items() if bm["default"]} == {"urbis_fr", "urbis_fr_gray"}
+
+
+def test_no_basemap_source_cites_the_retired_urbis_layer(project_init):
+    # urbisFRGray a ete retiree de geoservices-urbis (HTTP 400) : aucune source
+    # de fond ni connexion du plugin ne doit plus la citer, ni l'ancien
+    # GeoWebCache (les commentaires qui documentent le piege sont exclus).
+    for bm in project_init.BASEMAPS:
+        assert "urbisFRGray" not in bm["source"], bm["key"]
+        assert "geoservices-urbis.irisnet.be" not in bm["source"], bm["key"]
+    for path in MODULE.parent.rglob("*.py"):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            assert "urbisFRGray" not in line, f"{path}:{lineno}"
+            assert "geoservices-urbis.irisnet.be/geowebcache" not in line, f"{path}:{lineno}"

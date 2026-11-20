@@ -1137,7 +1137,7 @@ def test_external_services_use_current_qgis_connection_keys(bp):
     s = QgsSettings()
     wms = "WMTS UrbIS Bruxelles"
     assert s.value(_OWS.format("wms", wms, "url")) == (
-        "https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
+        "https://geoservices-basemap.irisnet.be/geowebcache/service/wmts"
     )
     assert s.value(_OWS.format("wms", wms, "dpi-mode")) == 7
     wfs = "WFS Cadastre UrbIS Bruxelles"
