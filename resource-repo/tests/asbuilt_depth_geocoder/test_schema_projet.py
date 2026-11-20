@@ -2,7 +2,8 @@
 """Schéma As-Built public / projet (migration Farois 574) — collection 1.4.0.
 
 La 1.4.0 est publiée AVANT la migration : elle détecte le schéma au début de
-chaque exécution (``to_regclass('projet.geofiber_asbuilt_depth_points')``),
+chaque exécution (table ``projet.geofiber_asbuilt_depth_points`` présente,
+lue dans le catalogue comme ``to_regclass`` mais sans exiger USAGE sur le schéma),
 garde en ``public`` le comportement de la 1.3.0 et, en ``projet``, écrit les
 segments et connecteurs (tables en lecture seule) par les écrivains SECURITY
 DEFINER de Farois (``sql/80_security/086``), jamais par DML direct.
@@ -34,6 +35,7 @@ GUARD_ERROR = (
     "(Farois, onglet Perimetre)"
 )
 ALL_FUNCTIONS = [[sig] for sig in mod.PROJET_REQUIRED_FUNCTIONS]
+PROBE = "c.relname = 'geofiber_asbuilt_depth_points'"  # motif de la sonde de détection
 
 
 class FakeFeedback:
@@ -83,7 +85,7 @@ class FakeDb:
 
 def _projet_db(functions=ALL_FUNCTIONS, allowed=True):
     return FakeDb([
-        ("to_regclass", [[True]]),
+        (PROBE, [[True]]),
         ("oidvectortypes", functions),
         ("geofiber_asbuilt_write_allowed()", allowed if isinstance(allowed, Exception)
          else [[allowed]]),
@@ -188,16 +190,25 @@ def test_journal_du_mode_retenu():
 # --- détection du schéma ------------------------------------------------------
 
 def test_detection_mode_public_une_seule_requete():
-    db = FakeDb([("to_regclass", [[False]])])
+    db = FakeDb([(PROBE, [[False]])])
     names = mod.detect_asbuilt_schema(db)
     assert names == PUBLIC
     assert db.calls == [mod.SCHEMA_PROBE_SQL]
-    assert "to_regclass('projet.geofiber_asbuilt_depth_points')" in mod.SCHEMA_PROBE_SQL
+
+
+def test_sonde_lue_dans_le_catalogue():
+    """Pas de to_regclass : il lève 42501 sans USAGE sur projet (schéma créé
+    dès la 573), ce qui casserait le mode public pour ces logins."""
+    sql = mod.SCHEMA_PROBE_SQL
+    assert "to_regclass" not in sql
+    assert "pg_catalog.pg_class" in sql and "pg_catalog.pg_namespace" in sql
+    assert "n.nspname = 'projet'" in sql
+    assert "c.relname = 'geofiber_asbuilt_depth_points'" in sql
 
 
 def test_detection_mode_public_si_resultat_vide_ou_null():
-    assert mod.detect_asbuilt_schema(FakeDb([("to_regclass", [])])) == PUBLIC
-    assert mod.detect_asbuilt_schema(FakeDb([("to_regclass", [[None]])])) == PUBLIC
+    assert mod.detect_asbuilt_schema(FakeDb([(PROBE, [])])) == PUBLIC
+    assert mod.detect_asbuilt_schema(FakeDb([(PROBE, [[None]])])) == PUBLIC
 
 
 def test_detection_mode_projet():
@@ -211,13 +222,13 @@ def test_detection_mode_projet():
 
 def test_detection_projet_valeur_texte():
     db = _projet_db()
-    db.answers[0] = ("to_regclass", [["t"]])
+    db.answers[0] = (PROBE, [["t"]])
     db.answers[2] = ("geofiber_asbuilt_write_allowed()", [["true"]])
     assert mod.detect_asbuilt_schema(db) == PROJET
 
 
 def test_detection_impossible_arrete():
-    db = FakeDb([("to_regclass", RuntimeError("server closed the connection"))])
+    db = FakeDb([(PROBE, RuntimeError("server closed the connection"))])
     with pytest.raises(AsbuiltSchemaError, match="Détection du schéma As-Built impossible"):
         mod.detect_asbuilt_schema(db)
 
@@ -289,6 +300,14 @@ def test_message_de_refus_clair():
     assert "jdupont" in message  # détail de la base repris, sur une ligne
     assert "\n" not in message
     assert "Détail" not in mod.write_denied_message()
+    assert "ftth_reader_communs" not in message
+
+
+def test_message_de_refus_execute_manquant():
+    message = mod.write_denied_message(
+        "ERROR: permission denied for function geofiber_asbuilt_write_allowed")
+    assert "scope PROJET GOFIBER" in message
+    assert "ftth_editor" in message and "ftth_reader_communs" in message
 
 
 def test_precontrole_reserve_au_mode_projet():
@@ -330,8 +349,13 @@ def test_ligne_segment_colonnes_exactes():
 def test_ligne_segment_longueur_non_finie():
     row = mod.segment_writer_row(_half("1", "2", length=float("nan")),
                                  (((0.0, 0.0), (1.0, 0.0)),))
-    assert row["length_m"] is None
+    # JSON valide, et même valeur qu'une écriture directe (float8in('NaN')).
+    assert row["length_m"] == "NaN"
     json.dumps(row, allow_nan=False)
+    assert mod._json_number(float("inf")) == "Infinity"
+    assert mod._json_number(float("-inf")) == "-Infinity"
+    assert mod._json_number(None) is None
+    assert mod._json_number(3) == 3.0
 
 
 def test_ligne_connecteur():
@@ -454,6 +478,7 @@ def test_refus_arrete_les_ecritures_et_la_purge():
     assert out.failed == 3 and out.inserted == 0
     assert len(db.calls) == 1  # ni lot suivant, ni reprise ligne à ligne, ni purge
     assert not any("segments_delete" in sql for sql in db.calls)
+    assert out.failed_delete == 1 and out.deleted == 0  # purge non jouée, comptée
 
 
 def test_cote_invalide_jamais_envoye_sans_side():
@@ -495,7 +520,31 @@ def test_connecteurs_refus():
     c1 = Connector("100", "vert", "R", "osm:1", 4.0, 0.0, 0.0, 1.0, 1.0)
     db = FakeDb(fail=lambda sql: RuntimeError(GUARD_ERROR))
     out = mod.write_connectors_with_writers(db, PROJET, [(c1, False)], ["102"], FakeFeedback())
-    assert out.denied and out.failed == 1 and len(db.calls) == 1
+    assert out.denied and out.failed == 2 and len(db.calls) == 1  # upsert + purge non jouée
+
+
+def test_connecteurs_doublons_signales():
+    c1 = Connector("100", "vert", "R", "osm:1", 4.0, 0.0, 0.0, 1.0, 1.0)
+    fb = FakeFeedback()
+    mod.write_connectors_with_writers(FakeDb(), PROJET, [(c1, False), (c1, False)], [], fb)
+    assert fb.warnings and "en double" in fb.warnings[0]
+
+
+def test_annulation_pendant_la_reprise_ligne_a_ligne():
+    halves = [_half(str(1000 + i), str(2000 + i)) for i in range(4)]
+
+    def fail(sql):
+        if sql.count("point_a_intervention_id") > 1:  # lot de plusieurs lignes
+            return RuntimeError("new row violates check constraint")
+        return None
+
+    db = FakeDb(fail=fail)
+    # 1er contrôle : avant le lot ; 2e : avant la 1re ligne rejouée ; puis annulé.
+    out = mod.write_segments_with_writers(
+        db, PROJET, [(h, False) for h in halves], [], _geometries(*halves), True,
+        FakeFeedback(cancel_after=2), batch_size=4,
+    )
+    assert out.inserted == 1 and len(db.calls) == 2
 
 
 # --- garde statique du script ---------------------------------------------------------

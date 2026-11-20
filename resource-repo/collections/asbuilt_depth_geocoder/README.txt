@@ -31,6 +31,14 @@ Pendant la fenêtre de migration : ne pas lancer le script. Une version
 1.3.0 lancée après la migration s'arrête dès le début (table
 public.geofiber_asbuilt_depth_points introuvable) sans rien écrire.
 
+Après une exécution interrompue en cours de route (migration, droit
+retiré, coupure réseau) : relancer avec les mêmes rapports suffit pour
+les points et les non géocodées. Les segments d'un point déjà en base
+dont la couleur ou la position a changé pendant l'exécution interrompue
+ne sont pas repris par le recalcul incrémental : cocher une fois
+« Reconstruire tous les segments ». Le premier lancement après la
+migration se fait de préférence avec cette case cochée.
+
 Projets QGIS existants : les couches As-Built qui pointent vers
 public.geofiber_asbuilt_* deviennent invalides après la migration. Les
 retirer (le script ajoute les couches projet.* au prochain lancement)

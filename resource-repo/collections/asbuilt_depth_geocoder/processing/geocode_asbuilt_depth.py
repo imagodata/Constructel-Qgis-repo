@@ -1244,9 +1244,16 @@ UNGEOCODED_TABLE_NAME = "geofiber_asbuilt_ungeocoded"
 CONNECTORS_TABLE_NAME = "geofiber_asbuilt_depth_connectors"
 
 # Sonde de détection : la table des points existe-t-elle dans ``projet`` ?
-# (to_regclass : NULL si absente, aucune erreur.)
+# Équivalent de ``to_regclass('projet.geofiber_asbuilt_depth_points') IS NOT
+# NULL``, mais lu dans le catalogue : to_regclass lève 42501 (« permission
+# denied for schema projet ») pour un login sans USAGE sur ``projet``, schéma
+# créé dès la migration 573 — la 1.4.0 s'arrêterait alors sur une base encore
+# en public. Le catalogue est lisible par tous.
 SCHEMA_PROBE_SQL = (
-    f"SELECT to_regclass('{SCHEMA_MODE_PROJET}.{POINTS_TABLE_NAME}') IS NOT NULL"
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+    f"WHERE n.nspname = '{SCHEMA_MODE_PROJET}' "
+    f"AND c.relname = '{POINTS_TABLE_NAME}' AND c.relkind IN ('r', 'p'))"
 )
 
 # Fonctions exigées en mode ``projet`` (signature d'identité, types seuls).
@@ -1425,6 +1432,13 @@ def write_denied_message(detail: str = "") -> str:
         "ensuite le traitement avec les mêmes rapports."
     )
     detail = " ".join(str(detail or "").split())
+    lowered = detail.lower()
+    if "permission denied for function" in lowered or "pour la fonction" in lowered:
+        message += (
+            " Si le scope est déjà coché : le compte n'a pas le droit d'exécuter "
+            "les fonctions As-Built (membre ni de ftth_editor ni de "
+            "ftth_reader_communs) — à signaler tel quel à l'administrateur Farois."
+        )
     if detail:
         message += f" Détail de la base : {detail}"
     return message
@@ -1441,8 +1455,8 @@ def detect_asbuilt_schema(execute, warn=None) -> AsbuiltSchema:
     """Détecte le schéma As-Built sur la connexion 'be' — UNE fois par exécution.
 
     ``execute`` : ``sql -> lignes`` (``executeSql`` de la connexion 'be').
-    :data:`SCHEMA_PROBE_SQL` (``to_regclass`` de la table des points dans
-    ``projet``) non NULL -> mode ``projet``, sinon ``public`` (comportement
+    :data:`SCHEMA_PROBE_SQL` (table des points présente dans ``projet``,
+    lue dans le catalogue) -> mode ``projet``, sinon ``public`` (comportement
     1.3.0). En mode ``projet`` :
     fonctions exigées présentes (:data:`PROJET_REQUIRED_FUNCTIONS`, sinon
     :func:`half_migrated_message`), puis pré-contrôle du droit d'écriture de
@@ -5136,11 +5150,19 @@ def ewkb_hex_multilinestring(parts, srid=ASBUILT_SRID) -> str:
 
 
 def _json_number(value):
-    """Nombre fini pour le JSON (NaN / infini -> ``None`` : JSON invalide sinon). PURE."""
+    """Nombre pour le JSON ; NaN / infini en chaîne (``"NaN"``, ``"Infinity"``). PURE.
+
+    Le JSON n'a pas de NaN ; jsonb_populate_recordset lit la chaîne avec
+    l'entrée de ``double precision`` : même valeur qu'une écriture directe.
+    """
     if value is None:
         return None
     number = float(value)
-    return number if math.isfinite(number) else None
+    if math.isfinite(number):
+        return number
+    if math.isnan(number):
+        return "NaN"
+    return "Infinity" if number > 0 else "-Infinity"
 
 
 def segment_writer_row(half, parts, multi_column=True) -> dict:
@@ -5275,6 +5297,7 @@ def run_writer_batches(execute, build_sql, items, label_of, feedback, label,
     while position < len(items):
         if feedback.isCanceled():
             break
+        feedback.setProgress(int(100 * position / len(items)))
         chunk = items[position:position + batch_size]
         position += len(chunk)
         try:
@@ -5291,6 +5314,8 @@ def run_writer_batches(execute, build_sql, items, label_of, feedback, label,
                 feedback.reportError(f"{label} {label_of(chunk[0])} : {exc}", fatalError=False)
                 continue
         for index, item in enumerate(chunk):
+            if feedback.isCanceled():
+                break
             try:
                 execute(build_sql([item]))
                 result.done.append(item)
@@ -5360,6 +5385,7 @@ def write_segments_with_writers(execute, names, writes, to_delete, geometries,
     result.failed = upserted.failed
     if upserted.denied:
         result.denied = upserted.denied
+        result.failed_delete = len(to_delete)  # purge non jouée
         return result
 
     keys = []
@@ -5402,7 +5428,12 @@ def write_connectors_with_writers(execute, names, upserts, to_delete, feedback,
     for connector, is_update in upserts:
         rows.append(connector_writer_row(connector))
         kinds[str(connector.intervention_id)] = bool(is_update)
-    rows, _n = dedupe_by_key(rows, CONNECTOR_PK_COLUMNS)
+    rows, n_dupes = dedupe_by_key(rows, CONNECTOR_PK_COLUMNS)
+    if n_dupes:
+        feedback.pushWarning(
+            f"Connecteurs : {n_dupes} ligne(s) en double (même intervention) "
+            "écartée(s) avant l'écriture — la dernière est gardée."
+        )
     upserted = run_writer_batches(
         execute, lambda chunk: connectors_upsert_sql(names, chunk), rows,
         lambda row: row["intervention_id"], feedback, "Connecteur", batch_size,
@@ -5413,10 +5444,11 @@ def write_connectors_with_writers(execute, names, upserts, to_delete, feedback,
         else:
             result.inserted += 1
     result.failed = upserted.failed
+    ids = list(dict.fromkeys(str(i) for i in to_delete))
     if upserted.denied:
         result.denied = upserted.denied
+        result.failed += len(ids)  # purge non jouée
         return result
-    ids = list(dict.fromkeys(str(i) for i in to_delete))
     if ids and not feedback.isCanceled():
         try:
             execute(connectors_delete_sql(names, ids))
@@ -6727,6 +6759,7 @@ if HAS_QGIS:
 
                 layer.startEditing()
                 ok = False
+                denied = False
                 try:
                     # Colonne absente de la table (ex. measured_at avant la
                     # migration Farois 460) : valeur ignorée, pas d'échec.
@@ -6760,7 +6793,7 @@ if HAS_QGIS:
                         f"Echec upsert intervention {intervention_id} : {exc}",
                         fatalError=False,
                     )
-                    self._note_write_denied(feedback, str(exc))
+                    denied = self._note_write_denied(feedback, str(exc))
                     ok = False
 
                 if ok:
@@ -6787,8 +6820,10 @@ if HAS_QGIS:
                             f"Intervention {intervention_id} : {err}",
                             fatalError=False,
                         )
-                        self._note_write_denied(feedback, err)
+                        denied = self._note_write_denied(feedback, err) or denied
                     layer.rollBack()
+                    if denied:  # mode projet, refus 42501 : inutile d'insister
+                        break
 
             feedback.pushInfo(
                 f"Points : {inserted + updated} upsertee(s) ({inserted} creee(s), "
@@ -7180,6 +7215,7 @@ if HAS_QGIS:
 
                 layer.startEditing()
                 ok = False
+                denied = False
                 try:
                     if existing:
                         fid = existing[0].id()
@@ -7206,7 +7242,7 @@ if HAS_QGIS:
                         f"Echec upsert non-geocode {values['intervention_id']} : {exc}",
                         fatalError=False,
                     )
-                    self._note_write_denied(feedback, str(exc))
+                    denied = self._note_write_denied(feedback, str(exc))
                     ok = False
 
                 if ok:
@@ -7219,8 +7255,10 @@ if HAS_QGIS:
                             f"Non-geocode {values['intervention_id']} : {err}",
                             fatalError=False,
                         )
-                        self._note_write_denied(feedback, err)
+                        denied = self._note_write_denied(feedback, err) or denied
                     layer.rollBack()
+                    if denied:  # mode projet, refus 42501 : inutile d'insister
+                        break
 
             feedback.pushInfo(
                 f"Non geocodees : {inserted} creee(s), {updated} mise(s) a jour, "
@@ -8418,6 +8456,17 @@ if HAS_QGIS:
             # de toute facon impossible. Type de geometrie selon la colonne
             # reelle (MultiLineString, ou LineString avant migration).
             multi_column = self._segments_is_multi(feedback)
+            if self._names.uses_writers and not multi_column:
+                # L'écrivain projet force ST_Multi : une colonne LineString
+                # rejetterait chaque ligne. Arrêt net plutôt que N échecs.
+                feedback.pushWarning(
+                    f"Segments : colonne geom de {self._names.segments} non "
+                    "MultiLineString (ou type illisible) — l'écrivain "
+                    f"{self._names.function('fn_asbuilt_segments_upsert')} exige "
+                    "MultiLineString : migration requise, segments ni recalculés "
+                    "ni modifiés pour ce run."
+                )
+                return
             segments_layer = self._open_be_layer(
                 self._names.schema, SEGMENTS_TABLE_NAME, BE_GEOM_COLUMN,
                 QgsWkbTypes.Type.MultiLineString if multi_column else QgsWkbTypes.Type.LineString,
