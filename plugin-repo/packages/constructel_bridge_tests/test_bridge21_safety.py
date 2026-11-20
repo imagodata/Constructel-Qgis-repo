@@ -114,3 +114,64 @@ def test_archive_without_qgs_raises():
         zf.writestr("readme.txt", "x")
     with pytest.raises(ps.ProjectFileError):
         ps.inspect_qgz(buf.getvalue())
+
+
+# ---------------------------------------------------------------- Task 2
+
+def test_nothing_to_neutralize_returns_the_same_text():
+    xml = qgs(layer())
+    result = ps.neutralize_qgs_xml(xml)
+    assert result.xml is xml and result.removed == ()
+
+
+def test_everything_embedded_is_neutralized_and_reported():
+    props = ("<Macros><pythonCode>import os</pythonCode></Macros>"
+             "<ExpressionFunctions><pythonCode>def f(): pass</pythonCode></ExpressionFunctions>")
+    extra = ('<attributeactions><actionsetting type="1" name="Py" action="x()"/>'
+             '<actionsetting type="5" name="Url" action="http://a"/></attributeactions>'
+             "<editforminit>run</editforminit><editforminitcodesource>2</editforminitcodesource>"
+             "<editforminitcode>def run(): pass</editforminitcode>")
+    xml = qgs(layer(extra=extra).replace("authcfg=abc", "password='s3cret'"), props=props)
+    result = ps.neutralize_qgs_xml(xml)
+    assert sorted(f.kind for f in result.removed) == ["action", "expression_functions", "form_init", "macros", "password"]
+    assert ps.scan_qgs(ET.fromstring(result.xml.split("\n", 2)[2])) == []
+    assert 'name="Url"' in result.xml and "s3cret" not in result.xml
+    assert result.xml.startswith('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE qgis')
+
+
+def test_form_init_is_reset_to_no_source():
+    extra = ("<editforminit>run</editforminit><editforminitcodesource>1</editforminitcodesource>"
+             "<editforminitfilepath>C:/x/init.py</editforminitfilepath>")
+    root = ET.fromstring(ps.neutralize_qgs_xml(qgs(layer(extra=extra))).xml.split("\n", 2)[2])
+    ml = root.find(".//maplayer")
+    assert ml.findtext("editforminitcodesource") == "0"
+    assert not ml.findtext("editforminit") and not ml.findtext("editforminitfilepath")
+
+
+def test_password_in_layer_tree_source_attribute_is_stripped_too():
+    xml = qgs(layer()).replace("</qgis>", '<layer-tree-group><layer-tree-layer id="l1" source="dbname=x password=abc"/></layer-tree-group></qgis>')
+    result = ps.neutralize_qgs_xml(xml)
+    assert "abc" not in result.xml.split("</projectlayers>")[1]
+    assert [f.kind for f in result.removed] == ["password"]
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("dbname='x' password='a b' user=u", "dbname='x' user=u"),
+    ("dbname=x password=abc", "dbname=x"),
+    ("contextualWMSLegend=0&password=abc&url=https://w", "contextualWMSLegend=0&url=https://w"),
+    ("password=abc&url=https://w", "url=https://w"),
+    ("dbname=x authcfg=abc", "dbname=x authcfg=abc"),
+])
+def test_strip_datasource_password(source, expected):
+    assert ps.strip_datasource_password(source) == expected
+
+
+def test_entity_declaration_refuses_to_open():
+    with pytest.raises(ps.ProjectFileError):
+        ps.neutralize_qgs_xml('<!DOCTYPE qgis [<!ENTITY a "b">]><qgis>&a;</qgis>')
+
+
+@pytest.mark.parametrize("xml", ["<qgis>", "<notqgis/>", ""])
+def test_unreadable_xml_refuses_to_open(xml):
+    with pytest.raises(ps.ProjectFileError):
+        ps.neutralize_qgs_xml(xml)

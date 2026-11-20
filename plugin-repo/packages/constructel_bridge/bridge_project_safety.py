@@ -181,3 +181,112 @@ def inspect_qgz(content: bytes) -> ArchiveReport:
         saved_by=root.get("saveUserFull") or root.get("saveUser") or None,
         findings=tuple(findings),
     )
+
+
+# ---------------------------------------------------------------------------
+# Neutralisation a l'ouverture (spec 2.1 § 7.5) : appliquee a TOUT projet
+# ouvert depuis la base par le Bridge, le sien compris.
+# ---------------------------------------------------------------------------
+_XML_HEADER = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+               "<!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>\n")
+_URI_PASSWORD_RE = re.compile(r"&password=[^&]*", re.IGNORECASE)
+_LEADING_URI_PASSWORD_RE = re.compile(r"^password=[^&\s]*&", re.IGNORECASE)
+_LIBPQ_PASSWORD_RE = re.compile(r"\bpassword\s*=\s*(?:'(?:[^'\\]|\\.)*'|[^\s']\S*)(?=\s|$)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class NeutralizeResult:
+    xml: str
+    removed: tuple
+
+
+def strip_datasource_password(datasource: str) -> str:
+    """Retire un mot de passe en clair d'une source (libpq ou URI)."""
+    if not datasource or "password" not in datasource.lower():
+        return datasource
+    out = _URI_PASSWORD_RE.sub("", datasource)
+    out = _LEADING_URI_PASSWORD_RE.sub("", out)
+    out = _LIBPQ_PASSWORD_RE.sub("", out)
+    if out == datasource:
+        return datasource
+    return re.sub(r" {2,}", " ", out).strip()
+
+
+def _clear(el: Optional[ET.Element]) -> None:
+    if el is not None:
+        el.text = ""
+
+
+def neutralize_qgs_xml(xml: str) -> NeutralizeResult:
+    """Vide macros, fonctions d'expression, actions non URL, code de
+    formulaire et mots de passe en clair. Rien trouve : *xml* rendu tel quel
+    (meme objet). Leve ProjectFileError sur entite XML ou XML illisible."""
+    root = _parse_qgs(xml)
+    removed: List[Finding] = []
+
+    macros = [el for el in _macro_elements(root) if _text(el)]
+    if macros:
+        removed.append(Finding(FINDING_MACROS))
+        for el in macros:
+            _clear(el)
+    expressions = [el for el in _expression_elements(root) if _text(el)]
+    if expressions:
+        removed.append(Finding(FINDING_EXPRESSION_FUNCTIONS))
+        for el in expressions:
+            _clear(el)
+
+    parents = {id(child): parent for parent in root.iter() for child in parent}
+    layer_of = {}
+    for maplayer in root.iter("maplayer"):
+        label = _layer_label(maplayer)
+        for el in maplayer.iter():
+            layer_of[id(el)] = label
+
+    for action in list(root.iter("actionsetting")):
+        detail = _action_refused(action)
+        if detail:
+            removed.append(Finding(FINDING_ACTION, layer_of.get(id(action), ""), detail))
+            parent = parents.get(id(action))
+            if parent is not None:
+                parent.remove(action)
+
+    password_layers = set()
+    for maplayer in root.iter("maplayer"):
+        label = _layer_label(maplayer)
+        init_fn = _form_init_refused(maplayer)
+        if init_fn:
+            removed.append(Finding(FINDING_FORM_INIT, label, init_fn))
+            source = maplayer.find("editforminitcodesource")
+            if source is not None:
+                source.text = "0"
+            for tag in ("editforminit", "editforminitcode", "editforminitfilepath"):
+                _clear(maplayer.find(tag))
+        ds = maplayer.find("datasource")
+        if ds is not None and ds.text:
+            cleaned = strip_datasource_password(ds.text)
+            if cleaned != ds.text:
+                ds.text = cleaned
+                password_layers.add(id(ds))
+                removed.append(Finding(FINDING_PASSWORD, label))
+
+    # Autres emplacements d'une source : <datasource> hors couche (mises en
+    # page, couches embarquees) et attribut source de l'arbre des couches.
+    other_password = False
+    for el in root.iter():
+        if el.tag == "datasource" and id(el) not in password_layers and el.text:
+            cleaned = strip_datasource_password(el.text)
+            if cleaned != el.text:
+                el.text = cleaned
+                other_password = True
+        source_attr = el.get("source")
+        if source_attr:
+            cleaned = strip_datasource_password(source_attr)
+            if cleaned != source_attr:
+                el.set("source", cleaned)
+                other_password = True
+    if other_password and not password_layers:
+        removed.append(Finding(FINDING_PASSWORD))
+
+    if not removed:
+        return NeutralizeResult(xml, ())
+    return NeutralizeResult(_XML_HEADER + ET.tostring(root, encoding="unicode"), tuple(removed))
