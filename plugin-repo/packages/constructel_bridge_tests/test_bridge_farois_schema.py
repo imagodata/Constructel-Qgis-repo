@@ -131,3 +131,30 @@ def test_renamed_tables_keep_their_accented_layer_labels():
         "fr": "Interventions chantier", "en": "Worksite interventions", "pt": "Intervenções de obra"}
     assert LAYER_TREE_LABELS["planning_facades"] == {
         "fr": "Planning façades", "en": "Facade planning", "pt": "Planeamento de fachadas"}
+
+
+
+# --- 2.1.1 : sources de repli (CATALOG_FALLBACKS de bridge_operators) -------------------------
+
+def _fallbacks():
+    path = TESTS_DIR.parent / "constructel_bridge" / "bridge_operators.py"
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "CATALOG_FALLBACKS" for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("CATALOG_FALLBACKS introuvable")
+
+
+@pytest.mark.parametrize("key", sorted(_fallbacks()))
+def test_fallback_relation_has_the_catalog_geometry_and_key(key):
+    (schema, table), (fb_schema, fb_relation) = _fallbacks()[key]
+    entry = next(e for e in _module_literal("LAYER_CATALOG") if e[0] == key)
+    assert (entry[2], entry[3]) == (schema, table)
+    columns = SNAPSHOT_RELATIONS.get((fb_schema, fb_relation))
+    assert columns, f"{key}: {fb_schema}.{fb_relation} absente de farois_schema_snapshot.txt"
+    assert columns[entry[4]] == SNAPSHOT_RELATIONS[(schema, table)][entry[4]]   # meme geometrie (type, SRID)
+    assert entry[5] in columns
+
+
+def test_frozen_zones_view_hides_zone_mro_id():
+    assert "zone_mro_id" in SNAPSHOT_RELATIONS[("osiris", "frozen_zones")]
+    assert "zone_mro_id" not in SNAPSHOT_RELATIONS[("osiris", "v_frozen_zones_communs")]

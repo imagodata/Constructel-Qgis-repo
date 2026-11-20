@@ -78,6 +78,8 @@ from .bridge_mtls import (
     validate_client_certificate,
 )
 from .bridge_operators import (
+    CATALOG_FALLBACKS,
+    CATALOG_SOURCES_QUERY,
     FALLBACK_OPERATOR,
     LAST_OPERATOR_KEY,
     LAST_OPERATORS_KEY,
@@ -88,8 +90,10 @@ from .bridge_operators import (
     SUFFIX_SETTINGS_KEY,
     OperatorInfo,
     browser_schemas,
+    catalog_sources_params,
     format_project_operators,
     is_safe_schema,
+    parse_catalog_sources,
     parse_operator_rows,
     parse_project_operators,
     parse_suffix_flag,
@@ -1000,6 +1004,9 @@ class ConstructelBridgePlugin:
         # projet QGIS ouvert depuis `projet.qgis_projects` (mise a jour).
         self._projet_caps = NO_CAPABILITIES
         self._projets: tuple = ()
+        # 2.1.1 : cles du catalogue lues depuis leur source de repli
+        # (CATALOG_FALLBACKS), decidees une fois par connexion.
+        self._catalog_fallbacks: frozenset = frozenset()
         self._opened_qgis_project = None
         self._last_open_row = None
         self._open_refused = False
@@ -2523,9 +2530,11 @@ class ConstructelBridgePlugin:
         self._log("Operateurs utilisables : " + (", ".join(op.code for op in self._operators) or "aucun"))
 
     def _reset_projet_registry(self) -> None:
-        """Oublie capacites et projets metier (deconnexion, avant connexion)."""
+        """Oublie capacites, projets metier et sources de repli du catalogue
+        (deconnexion, avant connexion)."""
         self._projet_caps = NO_CAPABILITIES
         self._projets = ()
+        self._catalog_fallbacks = frozenset()
 
     def _load_projet_registry(self) -> None:
         """Bridge 2.1 (spec § 7.1, § 7.2) : capacites du schema `projet`
@@ -2541,6 +2550,32 @@ class ConstructelBridgePlugin:
         if caps.registry:
             self._projets = tuple(qgis_store.read_projets(self._conn, log=self._log))
         self._log("Projets metier visibles : " + (", ".join(p.code for p in self._projets) or "aucun"))
+        self._load_catalog_sources()
+
+    def _load_catalog_sources(self) -> None:
+        """2.1.1 : sources de repli du catalogue (zones gelees : vue
+        osiris.v_frozen_zones_communs si la table n'est pas lisible et la vue
+        l'est). Une requete sur le catalogue PostgreSQL ; en echec, ou base
+        sans la vue : les tables, sans erreur ni boite."""
+        self._catalog_fallbacks = frozenset()
+        if not self._conn or getattr(self._conn, "closed", False):
+            return
+        cur = None
+        try:
+            cur = self._conn.cursor()
+            cur.execute(CATALOG_SOURCES_QUERY, catalog_sources_params())
+            self._catalog_fallbacks = parse_catalog_sources(cur.fetchall())
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant : tables du catalogue
+            self._log(f"Sources de repli du catalogue indisponibles : {exc}")
+        finally:
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        for key in sorted(self._catalog_fallbacks):
+            schema, relation = CATALOG_FALLBACKS[key][1]
+            self._log(f"Couche {key} lue depuis {schema}.{relation} (table non lisible par la session)")
 
     def _scope_name_schemas(self) -> tuple[str, ...]:
         """Schemas ou resoudre les noms MRO/POP du perimetre : operateurs
@@ -4198,6 +4233,7 @@ class ConstructelBridgePlugin:
                         selected_basemaps=set(pending_basemaps),
                         operator=operator,
                         suffix=suffix,
+                        fallback_keys=self._catalog_fallbacks,
                     )
                     pending_basemaps = set()
                     carried = frozenset()

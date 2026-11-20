@@ -328,3 +328,47 @@ def retarget_layer_source(ds: str, schema: str) -> str:
             return ds
         return f'{ds[:start]}table="{schema}"{match.group(2)}"{match.group(3)}"{ds[match.end():]}'
     return ds
+
+
+# ---------------------------------------------------------------------------
+# 2.1.1 : sources de repli d'une entree du catalogue. Cle du catalogue ->
+# ((schema, table du catalogue), (schema, relation de repli)). La relation de
+# repli est lue quand la session n'a PAS le SELECT sur la table et l'a sur le
+# repli ; sinon la table (comportement inchange, base sans le repli comprise).
+# Meme cle, meme libelle, meme groupe, meme cle primaire, meme geometrie, meme
+# style. Farois mig 573 : un login au seul scope PROJET (ftth_reader_communs)
+# n'a aucun droit sur osiris.frozen_zones (colonne zone_mro_id) et lit la vue
+# osiris.v_frozen_zones_communs (sans zone_mro_id).
+# ---------------------------------------------------------------------------
+CATALOG_FALLBACKS = {
+    "osiris_frozen": (("osiris", "frozen_zones"), ("osiris", "v_frozen_zones_communs")),
+}
+
+# Une ligne par entree : (cle, table lisible, repli lisible). to_regclass rend
+# NULL pour une relation absente (base sans la migration) : COALESCE -> false.
+CATALOG_SOURCES_QUERY = (
+    "SELECT v.k, "
+    "COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass(v.t), 'SELECT'), false), "
+    "COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass(v.f), 'SELECT'), false) "
+    "FROM pg_catalog.unnest(%s::text[], %s::text[], %s::text[]) AS v(k, t, f)"
+)
+
+
+def catalog_sources_params() -> tuple:
+    keys = sorted(CATALOG_FALLBACKS)
+    return (keys,
+            [".".join(CATALOG_FALLBACKS[k][0]) for k in keys],
+            [".".join(CATALOG_FALLBACKS[k][1]) for k in keys])
+
+
+def parse_catalog_sources(rows) -> frozenset:
+    """Cles a charger depuis leur repli : table non lisible ET repli lisible."""
+    keys = set()
+    for row in rows or ():
+        try:
+            key, table_ok, fallback_ok = row[0], row[1], row[2]
+        except (TypeError, IndexError):
+            continue
+        if key in CATALOG_FALLBACKS and not table_ok and fallback_ok is True:
+            keys.add(key)
+    return frozenset(keys)
