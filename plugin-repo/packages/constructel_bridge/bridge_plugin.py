@@ -57,6 +57,8 @@ from .bridge_presets import (
     presets_to_json,
 )
 from .bridge_expressions import register_expressions, unregister_expressions
+from . import bridge_qgis_store as qgis_store
+from .bridge_projets import NO_CAPABILITIES
 from .bridge_identity import (
     build_pgoptions,
     decode_password,
@@ -985,6 +987,13 @@ class ConstructelBridgePlugin:
         # Wyre, comme 1.8.4) ; False si elle est lue, meme sans operateur
         # utilisable (decision T2-c4).
         self._operators_unavailable = False
+        # Bridge 2.1 : capacites du schema Farois `projet` et projets metier
+        # visibles, lus a la connexion (jamais a l'ouverture de la fenetre) ;
+        # projet QGIS ouvert depuis `projet.qgis_projects` (mise a jour).
+        self._projet_caps = NO_CAPABILITIES
+        self._projets: tuple = ()
+        self._opened_qgis_project = None
+        self._last_open_row = None
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -1222,6 +1231,7 @@ class ConstructelBridgePlugin:
         self._unhook_layers()
         if self._conn and not self._conn.closed:
             self._conn.close()
+        self._reset_projet_registry()
         # Retirer le bouton toolbar dropdown
         if hasattr(self, "_toolbar_action") and self._toolbar_action:
             self.iface.removeToolBarIcon(self._toolbar_action)
@@ -2215,6 +2225,7 @@ class ConstructelBridgePlugin:
                 pass
 
         self._connected = True
+        self._reset_projet_registry()
         self._auth_mode = AUTH_MODE_NOMINAL if nominal else AUTH_MODE_SHARED
         self._pg_login = login or ""
         self._ad_password = password if nominal else None
@@ -2241,6 +2252,7 @@ class ConstructelBridgePlugin:
         # Bridge 1.9 : operateurs utilisables, dans les deux modes ; jamais
         # bloquant (_load_operators ne leve pas).
         self._load_operators()
+        self._load_projet_registry()
         self._refresh_browser_schemas()
 
         if nominal:
@@ -2489,6 +2501,26 @@ class ConstructelBridgePlugin:
         self._operator_registry = {op.schema: op for op in registry}
         self._operators = usable_operators(registry, scope_codes)
         self._log("Operateurs utilisables : " + (", ".join(op.code for op in self._operators) or "aucun"))
+
+    def _reset_projet_registry(self) -> None:
+        """Oublie capacites et projets metier (deconnexion, avant connexion)."""
+        self._projet_caps = NO_CAPABILITIES
+        self._projets = ()
+
+    def _load_projet_registry(self) -> None:
+        """Bridge 2.1 (spec § 7.1, § 7.2) : capacites du schema `projet`
+        (une requete sur pg_catalog), puis, si le registre est lisible, les
+        projets metier visibles (RLS). Jamais bloquant ni de boite : une base
+        sans schema `projet` ou sans fonction du lot (b) masque seulement les
+        fonctionnalites ; le detail va au journal."""
+        self._reset_projet_registry()
+        if not self._conn or getattr(self._conn, "closed", False):
+            return
+        caps = qgis_store.read_capabilities(self._conn, log=self._log)
+        self._projet_caps = caps
+        if caps.registry:
+            self._projets = tuple(qgis_store.read_projets(self._conn, log=self._log))
+        self._log("Projets metier visibles : " + (", ".join(p.code for p in self._projets) or "aucun"))
 
     def _scope_name_schemas(self) -> tuple[str, ...]:
         """Schemas ou resoudre les noms MRO/POP du perimetre : operateurs
@@ -3982,7 +4014,16 @@ class ConstructelBridgePlugin:
             checkin=self._home_checkin_state(summary),
             login=self._home_login() if connected else "",
             email=(self._bridge_user_email or "") if connected else "",
+            projets=tuple(self._projets) if connected else (),
+            capabilities=self._projet_caps if connected else NO_CAPABILITIES,
+            nominative=self._is_nominative_session(),
+            opened_qgis_project=self._opened_qgis_project,
+            operator_code_labels=tuple((op.code, op.label) for op in self._operator_registry.values()),
         )
+
+    def _is_nominative_session(self) -> bool:
+        """Session connectee au login nominatif (enregistrement des projets QGIS)."""
+        return bool(self._connected) and self._auth_mode == AUTH_MODE_NOMINAL and bool(self._pg_login)
 
     def _home_login(self) -> str:
         """Login de la session : nominatif, sinon l'utilisateur Bridge."""
@@ -4206,24 +4247,9 @@ class ConstructelBridgePlugin:
         return project_schemas(operators)
 
     def _projet_schema_exists(self) -> bool:
-        """True si le schema transverse ``projet`` existe en base (2.0 R7).
-        Un echec de lecture ou l'absence de connexion = absent."""
-        conn = getattr(self, "_conn", None)
-        if conn is None:
-            return False
-        try:
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-                    (PROJET_SCHEMA,),
-                )
-                return bool(cur.fetchone())
-            finally:
-                cur.close()
-        except Exception as exc:  # noqa: BLE001 -- schema optionnel : jamais bloquant
-            self._log(f"schema {PROJET_SCHEMA} : lecture impossible ({exc})", Qgis.MessageLevel.Warning)
-            return False
+        """True si ``projet.qgis_projects`` est lisible par la session (2.1 :
+        capacites lues a la connexion, plus aucune requete ici)."""
+        return bool(self._projet_caps.qgis_table) and getattr(self, "_conn", None) is not None
 
     def _project_schemas(self) -> tuple[str, ...]:
         """Schemas des ``qgis_projects`` : operateurs utilisables, ``public``,

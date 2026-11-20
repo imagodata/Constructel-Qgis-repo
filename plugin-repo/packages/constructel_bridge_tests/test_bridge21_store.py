@@ -300,3 +300,12 @@ def test_writes_never_pass_p_as_user(conn):
     store.eligible_users(conn, None, "ale", [])
     store.apply_share_plan(conn, "Vue", SharePlan(True, ("a",), ("b",), ("c",)))
     assert all("p_as_user" not in sql for sql, _ in conn.executed)
+
+
+def test_errors_reach_the_plugin_log_callback(conn):
+    seen = []
+    conn.error = RuntimeError("boom")
+    store.read_capabilities(conn, log=seen.append)
+    store.list_visible(conn, log=seen.append)
+    store.save(conn, "Vue", b"PK", {}, None, None, log=seen.append)
+    assert len(seen) == 3 and all("boom" in m for m in seen)

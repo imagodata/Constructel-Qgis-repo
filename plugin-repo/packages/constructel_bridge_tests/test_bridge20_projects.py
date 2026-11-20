@@ -301,6 +301,10 @@ def test_load_project_menu_now_opens_the_projects_page(bp18, plugin):
 
 
 def test_projet_schema_listed_only_when_it_exists(plugin, fake_cursor, monkeypatch):
+    # 2.1 (tache 9) : l'existence de `projet.qgis_projects` vient des capacites
+    # lues a la connexion (`_projet_caps`), plus d'une requete a chaque appel.
+    from constructel_bridge.bridge_projets import NO_CAPABILITIES, ProjetCapabilities
+
     plugin._operators = [WYRE]
     probes = []
     real_execute = fake_cursor.execute
@@ -309,17 +313,16 @@ def test_projet_schema_listed_only_when_it_exists(plugin, fake_cursor, monkeypat
         real_execute(sql, params)
         if "information_schema.schemata" in sql:
             probes.append(params[0])
-            fake_cursor._one = (1,) if "projet" in existing else None
 
     monkeypatch.setattr(fake_cursor, "execute", execute)
-    existing = {"projet"}
+    plugin._projet_caps = ProjetCapabilities(qgis_table=True)
     assert plugin._project_schemas() == ("wyre", "public", "projet")
     assert [p["schema"] for p in plugin._list_db_projects()] == ["wyre", "public", "projet"]
 
-    existing.clear()
+    plugin._projet_caps = NO_CAPABILITIES
     assert plugin._project_schemas() == ("wyre", "public")
     assert [p["schema"] for p in plugin._list_db_projects()] == ["wyre", "public"]
-    assert set(probes) == {"projet"}
+    assert probes == []
 
 
 def test_projet_schema_absent_when_database_unreadable_or_offline(plugin):
@@ -335,7 +338,9 @@ def test_projet_schema_absent_when_database_unreadable_or_offline(plugin):
 
 
 def test_read_and_clean_accepts_projet_only_when_it_exists(plugin, fake_cursor, monkeypatch):
+    # 2.1 (tache 9) : liste blanche du schema `projet` = capacites de la connexion.
     from qgis.core import QgsProject
+    from constructel_bridge.bridge_projets import NO_CAPABILITIES, ProjetCapabilities
     from constructel_bridge_tests.test_bridge18_layers import _XmlCursor
 
     plugin._operators = [WYRE]
@@ -345,12 +350,11 @@ def test_read_and_clean_accepts_projet_only_when_it_exists(plugin, fake_cursor, 
     queries = []
     base_execute = cursor.execute
     cursor.execute = lambda sql, *a, **k: queries.append(sql) or base_execute(sql, *a, **k)
-    cursor.fetchone = lambda: (1,) if cursor_state["exists"] else None
-    cursor_state = {"exists": False}
     plugin._conn.cursor = lambda: cursor
 
+    plugin._projet_caps = NO_CAPABILITIES
     assert plugin._read_and_clean_project(QgsProject.instance(), "projet", "x") is False
-    assert not any("qgis_projects" in q for q in queries)
-    cursor_state["exists"] = True
+    assert queries == []
+    plugin._projet_caps = ProjetCapabilities(qgis_table=True)
     # Schéma présent : accepté par la liste blanche (la lecture du XML relève de _XmlCursor).
     assert "projet" in plugin._project_schemas()

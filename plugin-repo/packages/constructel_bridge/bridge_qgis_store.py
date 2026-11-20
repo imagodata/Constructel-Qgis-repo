@@ -12,7 +12,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from .bridge_projets import (
     CAPABILITIES_QUERY,
@@ -44,6 +44,19 @@ VERSION_QUERY = "SELECT version FROM projet.qgis_projects WHERE name = %s"
 SHARES_LIST_QUERY = "SELECT * FROM projet.fn_qgis_project_shares_list(%s::text)"
 
 
+Log = Optional[Callable[[str], None]]
+
+
+def _report(log: Log, message: str) -> None:
+    """Journal Python et, si fourni, journal du plugin (QgsMessageLog)."""
+    _LOG.warning(message)
+    if log is not None:
+        try:
+            log(message)
+        except Exception:  # noqa: BLE001 - le journal ne fait jamais echouer
+            pass
+
+
 def _run(conn, sql: str, params=None, fetch: str = "all"):
     """Execute *sql* sur un curseur ferme ensuite ; leve les erreurs."""
     cur = conn.cursor()
@@ -61,30 +74,30 @@ def _run(conn, sql: str, params=None, fetch: str = "all"):
             pass
 
 
-def read_capabilities(conn) -> ProjetCapabilities:
+def read_capabilities(conn, log: Log = None) -> ProjetCapabilities:
     try:
         rows = _run(conn, CAPABILITIES_QUERY, (list(CAPABILITY_FUNCTIONS),))
     except Exception as exc:  # noqa: BLE001 - capacites absentes, sans boite
-        _LOG.info("Capacites du schema projet illisibles : %s", exc)
+        _report(log, f"Capacites du schema projet indisponibles : {exc}")
         return NO_CAPABILITIES
     return parse_capabilities(rows)
 
 
-def read_projets(conn) -> tuple:
+def read_projets(conn, log: Log = None) -> tuple:
     try:
         rows = _run(conn, PROJETS_QUERY)
     except Exception as exc:  # noqa: BLE001
-        _LOG.info("Registre des projets metier illisible : %s", exc)
+        _report(log, f"Registre des projets metier indisponible : {exc}")
         return ()
     return parse_projet_rows(rows)
 
 
-def list_visible(conn) -> Optional[List[QgisProjectRow]]:
+def list_visible(conn, log: Log = None) -> Optional[List[QgisProjectRow]]:
     try:
         rows = _run(conn, VISIBLE_QUERY)
         return [row_from_record(r) for r in rows]
     except Exception as exc:  # noqa: BLE001
-        _LOG.warning("Liste des projets QGIS illisible : %s", exc)
+        _report(log, f"Liste des projets QGIS indisponible : {exc}")
         return None
 
 
@@ -115,22 +128,22 @@ def read_for_open(conn, name: str) -> Optional[OpenRow]:
     )
 
 
-def current_version(conn, name: str) -> Optional[int]:
+def current_version(conn, name: str, log: Log = None) -> Optional[int]:
     try:
         row = _run(conn, VERSION_QUERY, (name,), fetch="one")
     except Exception as exc:  # noqa: BLE001
-        _LOG.warning("Version du projet QGIS %s illisible : %s", name, exc)
+        _report(log, f"Version du projet QGIS {name} indisponible : {exc}")
         return None
     if not row or row[0] is None:
         return None
     return int(row[0])
 
 
-def shares_list(conn, name: str) -> Optional[List[ShareRow]]:
+def shares_list(conn, name: str, log: Log = None) -> Optional[List[ShareRow]]:
     try:
         rows = _run(conn, SHARES_LIST_QUERY, (name,))
     except Exception as exc:  # noqa: BLE001
-        _LOG.warning("Partages du projet QGIS %s illisibles : %s", name, exc)
+        _report(log, f"Partages du projet QGIS {name} indisponibles : {exc}")
         return None
     return [ShareRow(str(r[0]), r[1], r[2], bool(r[3]), bool(r[4])) for r in rows]
 
@@ -226,31 +239,31 @@ def _binary(content: bytes):
 
 
 def save(conn, name: str, content: bytes, metadata: dict, expected_version: Optional[int],
-         projet_id: Optional[str]) -> StoreOutcome:
+         projet_id: Optional[str], log: Log = None) -> StoreOutcome:
     params = (name, _binary(content), json.dumps(metadata or {}, ensure_ascii=False), expected_version, projet_id)
     try:
         row = _run(conn, SAVE_QUERY, params, fetch="one")
     except Exception as exc:  # noqa: BLE001
         outcome = classify_error(exc)
-        _LOG.warning("Enregistrement du projet QGIS %s refuse (%s) : %s %s", name, outcome.status,
-                     outcome.message, outcome.detail)
+        _report(log, f"Enregistrement du projet QGIS {name} refuse ({outcome.status}) : "
+                     f"{outcome.message} {outcome.detail}".rstrip())
         return outcome
     version = int(row[0]) if row and row[0] is not None else None
     return StoreOutcome(STATUS_OK, value=version)
 
 
-def delete(conn, name: str) -> StoreOutcome:
+def delete(conn, name: str, log: Log = None) -> StoreOutcome:
     try:
         row = _run(conn, DELETE_QUERY, (name,), fetch="one")
     except Exception as exc:  # noqa: BLE001
         outcome = classify_error(exc)
-        _LOG.warning("Suppression du projet QGIS %s refusee (%s) : %s", name, outcome.status, outcome.message)
+        _report(log, f"Suppression du projet QGIS {name} refusee ({outcome.status}) : {outcome.message}")
         return outcome
     return StoreOutcome(STATUS_OK if row and row[0] else STATUS_MISSING)
 
 
 def eligible_users(conn, projet_code: Optional[str], prefix: str,
-                   exclude: Sequence[str]) -> Optional[List[EligibleUser]]:
+                   exclude: Sequence[str], log: Log = None) -> Optional[List[EligibleUser]]:
     """Personnes eligibles au partage ; [] sans requete sous 3 caracteres,
     None si la recherche echoue."""
     cleaned = (prefix or "").strip()
@@ -260,12 +273,12 @@ def eligible_users(conn, projet_code: Optional[str], prefix: str,
     try:
         rows = _run(conn, ELIGIBLE_QUERY, (projet_code, cleaned, [str(x) for x in exclude or ()]))
     except Exception as exc:  # noqa: BLE001
-        _LOG.warning("Recherche de personnes impossible : %s", exc)
+        _report(log, f"Recherche de personnes impossible : {exc}")
         return None
     return [EligibleUser(str(r[0]), r[1], r[2]) for r in rows]
 
 
-def apply_share_plan(conn, name: str, plan: SharePlan) -> StoreOutcome:
+def apply_share_plan(conn, name: str, plan: SharePlan, log: Log = None) -> StoreOutcome:
     """Partage avec le projet metier, retraits, puis partages « peut
     modifier » et « peut ouvrir », par paquets de 20 ; arret a la premiere
     erreur (value = nombre d'appels reussis)."""
@@ -281,8 +294,8 @@ def apply_share_plan(conn, name: str, plan: SharePlan) -> StoreOutcome:
             _run(conn, sql, params, fetch="one")
         except Exception as exc:  # noqa: BLE001
             outcome = classify_error(exc)
-            _LOG.warning("Partage du projet QGIS %s interrompu apres %d appel(s) (%s) : %s",
-                         name, done, outcome.status, outcome.message)
+            _report(log, f"Partage du projet QGIS {name} interrompu apres {done} appel(s) "
+                         f"({outcome.status}) : {outcome.message}")
             return StoreOutcome(outcome.status, value=done, message=outcome.message,
                                 detail=outcome.detail, count=outcome.count)
         done += 1
