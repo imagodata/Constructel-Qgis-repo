@@ -36,7 +36,7 @@ def test_package_asbuilt_sans_qml_ni_cache(tmp_path, monkeypatch):
         )
     metadata = configparser.ConfigParser(interpolation=None)
     metadata.read(tmp_path / "metadata.ini", encoding="utf-8")
-    assert metadata[NAME]["version"] == "1.3.0"
+    assert metadata[NAME]["version"] == "1.4.0"
 
 
 def test_package_collection_inconnue(tmp_path, monkeypatch):

@@ -1,3 +1,51 @@
+GeoFiber As-Built — schéma projet (migration Farois 574)
+Version de collection : 1.4.0.
+
+La migration Farois 574 déplace les tables et fonctions As-Built du
+schéma public vers le schéma projet (projet GoFiber). Cette version
+fonctionne des deux côtés de la bascule : au début de chaque exécution,
+elle regarde si la table projet.geofiber_asbuilt_depth_points existe.
+
+- Elle existe : schéma projet. Les points et les non géocodées sont
+  écrits directement ; les segments et les connecteurs sont en lecture
+  seule et sont écrits par les fonctions de la base
+  (fn_asbuilt_segments_upsert / _delete, fn_asbuilt_connectors_upsert /
+  _delete).
+- Elle n'existe pas : schéma public, comportement identique à la 1.3.0.
+
+Le journal du traitement indique le schéma retenu (ligne « Schéma
+As-Built : … »). Une exécution ne mélange jamais les deux schémas.
+
+Droits, schéma projet : il faut se connecter avec son login nominatif
+(pas un compte technique partagé) et avoir le scope PROJET GOFIBER coché
+en écriture dans Farois (fiche utilisateur, onglet Périmètre), avec un
+rôle Farois qui permet l'écriture réseau (ADMIN, MANAGER,
+PROJECT_MANAGER ou DESIGNER). Sinon le script s'arrête avant tout
+géocodage et affiche quoi demander à l'administrateur Farois.
+
+Base à moitié migrée (table dans projet mais une fonction d'écriture
+absente) : arrêt explicite avant tout géocodage, le script n'écrit
+jamais directement les segments ni les connecteurs.
+
+Pendant la fenêtre de migration : ne pas lancer le script. Une version
+1.3.0 lancée après la migration s'arrête dès le début (table
+public.geofiber_asbuilt_depth_points introuvable) sans rien écrire.
+
+Après une exécution interrompue en cours de route (migration, droit
+retiré, coupure réseau) : relancer avec les mêmes rapports suffit pour
+les points et les non géocodées. Les segments d'un point déjà en base
+dont la couleur ou la position a changé pendant l'exécution interrompue
+ne sont pas repris par le recalcul incrémental : cocher une fois
+« Reconstruire tous les segments ». Le premier lancement après la
+migration se fait de préférence avec cette case cochée.
+
+Projets QGIS existants : les couches As-Built qui pointent vers
+public.geofiber_asbuilt_* deviennent invalides après la migration. Les
+retirer (le script ajoute les couches projet.* au prochain lancement)
+ou changer leur source vers le schéma projet. Les styles par défaut
+de la base suivent les tables (lignes layer_styles passées à projet
+par la migration).
+
 GeoFiber As-Built — styles gérés par Farois
 Version de collection : 1.3.0.
 
