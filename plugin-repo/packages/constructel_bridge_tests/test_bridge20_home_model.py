@@ -26,6 +26,7 @@ class Counts:
     per_operator: dict
     common: int
     basemaps: int
+    projet: int = 0      # 2.1 : couches de projets metier
 
 
 def last(*schemas):

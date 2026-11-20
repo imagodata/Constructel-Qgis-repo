@@ -35,6 +35,7 @@ from .bridge_operators import (
     OPERATOR_KEYS,
     OPERATOR_TABLES,
     OPERATOR_TEMPLATE_SCHEMA,
+    PROJET_SCHEMA,
     OperatorInfo,
     base_key,
     canonical_group,
@@ -603,6 +604,7 @@ class LoadedCounts:
     per_operator: dict   # schema -> couches operateur presentes dans l'arbre de couches
     common: int          # couches communes de travail (hors v_form_lists, docs_elements)
     basemaps: int        # fonds de plan de BASEMAPS presents (chacun compte une fois)
+    projet: int = 0      # 2.1 : couches du schema `projet` (projets metier)
 
 
 def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> LoadedCounts:
@@ -618,6 +620,7 @@ def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> Loade
     basemap_names = {bm["name"] for bm in BASEMAPS}
     per_operator: dict[str, int] = {}
     common = 0
+    projet = 0
     basemaps: set[str] = set()
     seen: set[str] = set()
     for node in project.layerTreeRoot().findLayers():
@@ -629,11 +632,13 @@ def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> Loade
             basemaps.add(layer.name())
         for table_id in _layer_table_ids(layer):
             schema, dot, table = table_id.partition(".")
-            if table_id in common_ids:
+            if schema == PROJET_SCHEMA and dot:
+                projet += 1
+            elif table_id in common_ids:
                 common += 1
             elif dot and table in OPERATOR_TABLES and (known is None or schema in known):
                 per_operator[schema] = per_operator.get(schema, 0) + 1
-    return LoadedCounts(per_operator, common, len(basemaps))
+    return LoadedCounts(per_operator, common, len(basemaps), projet)
 
 
 # =====================================================================
@@ -652,12 +657,15 @@ def _is_group(node) -> bool:
 
 
 def _root_rank(node):
-    """Rang d'un enfant de la racine : 0 groupe d'operateur, 1 Commun,
-    2 Basemaps, 3 Reference ; None pour le reste."""
+    """Rang d'un enfant de la racine : 0 groupe d'operateur, 0.5 groupe de
+    projet metier (2.1), 1 Commun, 2 Basemaps, 3 Reference ; None pour le
+    reste."""
     if not _is_group(node):
         return None
     if node.customProperty(GROUP_SCHEMA_PROPERTY):
         return 0
+    if node.customProperty(PROJET_GROUP_PROPERTY):
+        return 0.5
     kind = (node.customProperty(GROUP_KIND_PROPERTY)
             or canonical_group(node.name(), GROUP_NAMES) or node.name())
     return _ROOT_RANKS.get(kind)
@@ -707,7 +715,7 @@ def ensure_operator_group(root, operator: OperatorInfo):
     for child in root.children():
         if _is_group(child) and child.customProperty(GROUP_SCHEMA_PROPERTY) == operator.schema:
             return child
-    group = _insert_root_group(root, operator.label, (1, 2, 3))
+    group = _insert_root_group(root, operator.label, (0.5, 1, 2, 3))
     group.setCustomProperty(GROUP_SCHEMA_PROPERTY, operator.schema)
     return group
 
@@ -720,6 +728,86 @@ def ensure_common_group(root):
         group = _insert_root_group(root, COMMON_ROOT, (2, 3))
         group.setCustomProperty(GROUP_KIND_PROPERTY, COMMON_ROOT)
     return group
+
+
+# =====================================================================
+# PROJETS METIER (2.1, spec § 7.4) — couches declarees du registre
+# `projet.projet_couches`, rangees dans un groupe racine marque par le code
+# du projet metier. Jamais d'identite ni de suffixe d'operateur, jamais de
+# relation du catalogue ; une couche deja presente n'est ni rechargee ni
+# restylee (T9-c2b).
+# =====================================================================
+
+PROJET_GROUP_PROPERTY = "constructel_bridge/projet"
+
+
+def projet_layer_key(table: str) -> str:
+    return f"projet:{table}"
+
+
+def existing_projet_tables(project) -> set[str]:
+    """Tables du schema `projet` deja chargees (couches PostgreSQL)."""
+    prefix = PROJET_SCHEMA + "."
+    return {table_id[len(prefix):] for table_id in _existing_layer_index(project) if table_id.startswith(prefix)}
+
+
+def ensure_projet_group(root, projet):
+    """Groupe racine du projet metier (propriete PROJET_GROUP_PROPERTY = son
+    code), sinon cree a son libelle apres les groupes d'operateur et avant
+    Commun / Basemaps / Reference (sinon en fin)."""
+    for child in root.children():
+        if _is_group(child) and child.customProperty(PROJET_GROUP_PROPERTY) == projet.code:
+            return child
+    group = _insert_root_group(root, projet.label, (1, 2, 3))
+    group.setCustomProperty(PROJET_GROUP_PROPERTY, projet.code)
+    return group
+
+
+def _projet_subgroup(group, name: str):
+    """Sous-groupe DIRECT *name* du groupe de projet metier (jamais findGroup,
+    recursif dans QGIS), cree a la demande."""
+    for child in group.children():
+        if _is_group(child) and child.name() == name:
+            return child
+    return group.addGroup(name)
+
+
+def load_projet_layers(conn_params: dict, password: str, projet, tables: Iterable[str],
+                       apply_styles: bool) -> int:
+    """Ajoute les couches de *projet* (ProjetInfo) dont la table est dans
+    *tables*, dans l'ordre du registre ; retourne le nombre ajoute. Une
+    couche invalide est journalisee et sautee. La version et le plugin sont
+    ecrits (projet Bridge reconnu) ; l'identite d'operateur jamais."""
+    project = QgsProject.instance()
+    _stamp_version(project)
+    wanted = set(tables)
+    present = existing_projet_tables(project)
+    root = project.layerTreeRoot()
+    group = None
+    added: dict = {}
+    style_names: dict = {}
+    for entry in projet.layers:
+        if entry.table not in wanted or entry.table in present:
+            continue
+        uri = _build_uri(conn_params, password, PROJET_SCHEMA, entry.table, entry.geom_column or "", "")
+        layer = QgsVectorLayer(uri.uri(False), entry.label, "postgres")
+        if not layer or not layer.isValid():
+            _log(f"Couche invalide: {PROJET_SCHEMA}.{entry.table} (projet metier {projet.code})",
+                 Qgis.MessageLevel.Warning)
+            continue
+        project.addMapLayer(layer, False)
+        if group is None:
+            group = ensure_projet_group(root, projet)
+        target = _projet_subgroup(group, entry.layer_group) if entry.layer_group else group
+        target.addLayer(layer)
+        key = projet_layer_key(entry.table)
+        added[key] = layer
+        style_names[key] = entry.style_name or "default"
+        present.add(entry.table)
+    _log(f"Projet metier {projet.code} : {len(added)} couche(s) chargee(s)")
+    if apply_styles and added:
+        _apply_styles_from_db(conn_params, password, added, style_names=style_names)
+    return len(added)
 
 
 def _layer_group(root, operator: OperatorInfo, group_name: str):
@@ -745,7 +833,7 @@ def _legacy_kind(node) -> str | None:
     « Chantier » pour « Chantier » (les groupes communs gardent leur nom).
     None pour une couche, un groupe Bridge 1.9 ou un groupe hors catalogue."""
     if (not _is_group(node) or node.customProperty(GROUP_SCHEMA_PROPERTY)
-            or node.customProperty(GROUP_KIND_PROPERTY)):
+            or node.customProperty(GROUP_KIND_PROPERTY) or node.customProperty(PROJET_GROUP_PROPERTY)):
         return None
     kind = canonical_group(node.name(), GROUP_NAMES) or node.name()
     return kind if kind in _LEGACY_KINDS else None
@@ -1262,8 +1350,12 @@ def _add_basemaps(root, selected_keys: set[str]):
 
 
 
-def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set[str]:
+def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict,
+                          style_names: Optional[Mapping[str, str]] = None) -> set[str]:
     """Charge les styles QML par defaut depuis public.layer_styles.
+
+    *style_names* (2.1, couches de projet metier) : stylename par cle de
+    couche (``projet_couches.style_name``) ; a defaut ``default``.
 
     Sources essayees dans l'ordre de style_sources : le style de la table
     dans le schema de la couche, puis, pour une table operateur d'un autre
@@ -1312,15 +1404,27 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict) -> set
             geom_col = src_uri.geometryColumn() or ""
 
             row = None
+            style_name = (style_names or {}).get(key) or "default"
             try:
                 for style_schema, style_table in style_sources(schema, table):
-                    cur.execute(
-                        'SELECT styleqml::text FROM public.layer_styles '
-                        "WHERE f_table_schema = %s AND f_table_name = %s "
-                        "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
-                        "AND stylename = 'default' LIMIT 1",
-                        (style_schema, style_table, geom_col),
-                    )
+                    if style_name == "default":
+                        cur.execute(
+                            'SELECT styleqml::text FROM public.layer_styles '
+                            "WHERE f_table_schema = %s AND f_table_name = %s "
+                            "AND COALESCE(f_geometry_column, '') = %s AND useasdefault = true "
+                            "AND stylename = 'default' LIMIT 1",
+                            (style_schema, style_table, geom_col),
+                        )
+                    else:
+                        # Style nomme du registre (projet metier) : pas
+                        # d'exigence useasdefault, le nom designe le style.
+                        cur.execute(
+                            'SELECT styleqml::text FROM public.layer_styles '
+                            "WHERE f_table_schema = %s AND f_table_name = %s "
+                            "AND COALESCE(f_geometry_column, '') = %s "
+                            "AND stylename = %s ORDER BY useasdefault DESC LIMIT 1",
+                            (style_schema, style_table, geom_col, style_name),
+                        )
                     row = cur.fetchone()
                     if row and row[0]:
                         break
