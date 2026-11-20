@@ -157,8 +157,15 @@ def search_people(prefix, exclude):
 
 
 def smoke_21(dialog) -> None:
+    """Scenario de la Task 21 du plan 2.1 : chaque nouvel ecran construit,
+    affiche hors ecran, pilote puis ferme, sans exec() ; les boites
+    QMessageBox repondent tout de suite (Yes / Ok)."""
     global MINE
     MINE = _mine_row()
+    box = QtWidgets.QMessageBox
+    for name in ("question", "information", "warning", "critical"):
+        answer = box.StandardButton.Yes if name == "question" else box.StandardButton.Ok
+        setattr(box, name, staticmethod(lambda *a, _answer=answer, **k: _answer))
     """Ecrans 2.1 (Task 21) : rangee Projets metier, selecteur de personnes."""
     from constructel_bridge.bridge_people_picker import PeoplePicker
 
@@ -250,6 +257,8 @@ def smoke_21(dialog) -> None:
     share.show()
     app.processEvents()
     assert share.objectName() == "bridgeHome" and share.who.topLevelItemCount() == 2
+    assert share.width() <= 640 and share.height() <= 560, (share.width(), share.height())
+    assert share.who.topLevelItem(1).font(0).italic()          # ligne inoperante
     share.who.itemWidget(share.who.topLevelItem(0), 1).setCurrentIndex(0)
     share.who.itemWidget(share.who.topLevelItem(1), 2).click()
     share.projet_box.setChecked(True)
@@ -259,8 +268,9 @@ def smoke_21(dialog) -> None:
     share.apply()
     app.processEvents()
 
-    # 6. Confirmation de suppression (reponse factice).
+    # 6. Confirmation de suppression (reponse factice, puis QMessageBox.question remplacee).
     assert qd.confirm_delete(None, "Vue", ask=lambda title, text: LOG.append(("ask", title)) or True)
+    assert qd.confirm_delete(None, "Vue")
 
     # 2. Page Projets QGIS 2.1 : trois sections, selection de « mien », recherche.
     from constructel_bridge.bridge_home import HomeDialog
