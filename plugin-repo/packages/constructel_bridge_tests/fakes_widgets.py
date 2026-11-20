@@ -414,6 +414,7 @@ class _Item:
 
     def __init__(self, parent, texts):
         self._text = texts[0]
+        self._texts = list(texts)     # 2.1 : colonnes suivantes (page Projets QGIS)
         self.children = []
         self.parent = parent
         self.tree = parent if isinstance(parent, _Tree) else parent.tree
@@ -464,11 +465,17 @@ class _Item:
     def isExpanded(self):
         return self.expanded
 
-    def setText(self, _column, text):
-        self._text = text
+    def setText(self, column, text):
+        if column == 0:
+            self._text = text
+        else:
+            self._texts += [""] * (column + 1 - len(self._texts))
+            self._texts[column] = text
 
-    def text(self, _column):
-        return self._text
+    def text(self, column):
+        if column == 0:
+            return self._text
+        return self._texts[column] if column < len(self._texts) else ""
 
     def font(self, _column=0):
         return _Font()

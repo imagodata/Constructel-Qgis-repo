@@ -3950,8 +3950,22 @@ class ConstructelBridgePlugin:
         self._on_home("checkin", start_wizard=True)
 
     def _home_actions(self):
-        from .bridge_home_model import HomeActions
+        from .bridge_home_model import HomeActions, QgisProjectActions
 
+        qgis = None
+        if self._connected:
+            qgis = QgisProjectActions(
+                list_visible=self._list_qgis_projects,
+                open=self._open_qgis_project,
+                save=self._save_qgis_project,
+                overwrite=self._overwrite_qgis_project,
+                delete=self._delete_qgis_project,
+                shares_list=self._qgis_shares_list,
+                apply_shares=self._apply_qgis_shares,
+                eligible_users=self._eligible_users,
+                current_state=self._current_project_state,
+                opened=lambda: self._opened_qgis_project,
+            )
         return HomeActions(
             snapshot=self.home_snapshot,
             connect=self._on_connect,
@@ -3964,7 +3978,48 @@ class ConstructelBridgePlugin:
             make_wizard=self._make_onboarding_wizard,
             set_language=self._set_language,
             save_presets=self._save_user_presets,
+            qgis=qgis,
         )
+
+    # -- projets QGIS (2.1) : actions de la page Projets QGIS -----------------------------
+
+    def _qgis_conn(self):
+        """Connexion utilisable pour les fonctions projet.*, sinon None."""
+        conn = self._conn
+        if not self._connected or conn is None or getattr(conn, "closed", False):
+            return None
+        return conn
+
+    def _list_qgis_projects(self):
+        """``fn_qgis_projects_visible`` : jamais en login partage ni hors connexion."""
+        conn = self._qgis_conn()
+        if conn is None or not self._is_nominative_session() or not self._projet_caps.qgis_projects:
+            return None
+        return qgis_store.list_visible(conn, log=self._log)
+
+    def _delete_qgis_project(self, name: str):
+        conn = self._qgis_conn()
+        if conn is None:
+            return qgis_store.StoreOutcome(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        outcome = qgis_store.delete(conn, name, log=self._log)
+        opened = self._opened_qgis_project
+        if outcome.status == qgis_store.STATUS_OK and opened is not None and opened.name == name:
+            self._opened_qgis_project = None   # les couches restent a l'ecran
+        return outcome
+
+    def _qgis_shares_list(self, name: str):
+        conn = self._qgis_conn()
+        return None if conn is None else qgis_store.shares_list(conn, name, log=self._log)
+
+    def _apply_qgis_shares(self, name: str, plan):
+        conn = self._qgis_conn()
+        if conn is None or plan is None:
+            return qgis_store.StoreOutcome(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        return qgis_store.apply_share_plan(conn, name, plan, log=self._log)
+
+    def _eligible_users(self, projet_code, prefix: str, exclude):
+        conn = self._qgis_conn()
+        return None if conn is None else qgis_store.eligible_users(conn, projet_code, prefix, exclude, log=self._log)
 
     def _save_user_presets(self, presets) -> None:
         """Presets utilisateur du poste (QgsSettings, JSON)."""
@@ -4642,6 +4697,8 @@ class ConstructelBridgePlugin:
             results: list[dict] = []
             errors: list[Exception] = []
             for schema in self._project_schemas():
+                if schema == PROJET_SCHEMA and self._projet_caps.qgis_projects:
+                    continue  # 2.1 : projets QGIS du schema projet lus par fn_qgis_projects_visible
                 try:
                     cur.execute(
                         """

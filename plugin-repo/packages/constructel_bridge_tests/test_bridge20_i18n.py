@@ -37,7 +37,7 @@ KEYS_20 = [
     "home.load_summary", "home.my_presets", "home.nav_checkin", "home.nav_diagnostic", "home.nav_load",
     "home.nav_projects", "home.none_operator", "home.options",
     "home.projects_common", "home.projects_error", "home.projects_offline", "home.projects_open",
-    "home.projects_projets", "home.projects_search", "home.projects_title",
+    "home.projects_search", "home.projects_title",   # 2.1 : home.projects_projets retiree (REMOVED_20)
     "home.row_all", "home.row_common", "home.row_none", "home.row_operator",
     "home.rs_configured", "home.rs_missing", "home.save_preset", "home.save_preset_prompt",
     "home.sharing_na", "home.show_expert", "home.step_layers", "home.step_perimeter", "home.step_presets",
@@ -54,7 +54,8 @@ MODULES_20 = ["bridge_presets.py", "bridge_layer_selection.py", "bridge_home_loa
 
 # Cles de l'ecran 1.9 retirees avant (revue 1.9) ou pendant la 2.0 (taches 9 et 10).
 REMOVED_20 = ["home.common_tag", "init.custom_desc", "init.custom_select", "init.group_layers",
-              "init.group_template", "init.select_all", "init.select_none"]
+              "init.group_template", "init.select_all", "init.select_none",
+              "home.projects_projets"]   # 2.1 : « Projets » nu ambigu, remplace par qgis.legacy_projet_group
 
 # Heritees d'avant le chantier 1.9 (test_bridge19_i18n.LEGACY_ORPHANS), seules orphelines admises.
 LEGACY_ORPHANS = {

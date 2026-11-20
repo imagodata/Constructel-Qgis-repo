@@ -122,6 +122,7 @@ class QgisProjectActions:
     apply_shares: Callable[[str, SharePlan], StoreOutcome]
     eligible_users: Callable[[Optional[str], str, Sequence[str]], Optional[list]]
     current_state: Callable[[], CurrentProjectState]
+    opened: Optional[Callable[[], Optional[OpenedQgisProject]]] = None   # projet QGIS ouvert (relu)
 
 
 @dataclass(frozen=True)

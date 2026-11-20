@@ -262,6 +262,46 @@ def smoke_21(dialog) -> None:
     # 6. Confirmation de suppression (reponse factice).
     assert qd.confirm_delete(None, "Vue", ask=lambda title, text: LOG.append(("ask", title)) or True)
 
+    # 2. Page Projets QGIS 2.1 : trois sections, selection de « mien », recherche.
+    from constructel_bridge.bridge_home import HomeDialog
+    import dataclasses
+
+    STATE["snap"] = snapshot21()
+    home = HomeDialog(dataclasses.replace(actions(), qgis=qgis_actions()), None)
+    home.show()
+    home.show_page("projects")
+    app.processEvents()
+    page = home._pages["projects"]
+    assert page._mode == "qgis", page._mode
+    assert page._tree.topLevelItemCount() == 3
+    mine_section = page._tree.topLevelItem(0)
+    page._tree.setCurrentItem(mine_section.child(0))
+    app.processEvents()
+    assert page._share_button.isEnabled() and page._delete_button.isEnabled()
+    page._search.setText("gofib")
+    app.processEvents()
+    page._search.setText("")
+    page._delete_selected(ask=lambda title, text: True) if page._selected_own_row() else None
+    app.processEvents()
+
+    # 7. Login partage puis base sans capacites : rendu et page Projets.
+    for snap21 in (snapshot21(nominative=False), snapshot21(capabilities=pj.NO_CAPABILITIES)):
+        STATE["snap"] = snap21
+        home.render()
+        home.show_page("projects")
+        app.processEvents()
+        LOG.append(("mode", home._pages["projects"]._mode))
+
+    # 8. Changement de langue EN puis PT, page Projets affichee.
+    STATE["snap"] = snapshot21()
+    home.render()
+    home.show_page("projects")
+    for code in ("en", "pt"):
+        home._lang_buttons[code].click()
+        app.processEvents()
+    home.reject()
+    app.processEvents()
+
 
 def actions():
     return hm.HomeActions(
@@ -323,7 +363,8 @@ def main() -> int:
 
     dialog.reject()
     app.processEvents()
-    print("SMOKE OK", [entry for entry in LOG if isinstance(entry, tuple)][:6])
+    print("SMOKE OK", [entry for entry in LOG if isinstance(entry, tuple)][:6],
+          [entry for entry in LOG if isinstance(entry, tuple) and entry[0] == "mode"])
     return 0
 
 

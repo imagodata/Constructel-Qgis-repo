@@ -298,7 +298,7 @@ def test_navigation_texts_in_three_languages():
                     "home.projects_error"):
             assert TRANSLATIONS[lang][key].strip(), (lang, key)
     assert TRANSLATIONS["fr"]["home.nav_load"] == "Charger les couches"
-    assert TRANSLATIONS["fr"]["home.nav_projects"] == "Projet enregistré"
+    assert TRANSLATIONS["fr"]["home.nav_projects"] == "Projets QGIS"   # 2.1 (spec § 5 bis)
 
 
 # --- bas de barre : connexion et langue ------------------------------------------------------
