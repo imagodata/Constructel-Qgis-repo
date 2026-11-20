@@ -166,6 +166,48 @@ def smoke_21(dialog) -> None:
     assert picker.chosen() == (("a.leroy", True),)
     picker.close()
 
+    # 3. Dialogue « Enregistrer le projet courant… ».
+    from constructel_bridge import bridge_qgis_dialogs as qd
+    from constructel_bridge import bridge_qgis_store as qs
+    from constructel_bridge.bridge_project_safety import Finding
+
+    state = hm.CurrentProjectState("Ixelles", 4, "a.leroy")
+    save = qd.SaveDialog((GOFIBER, LIBRE), None, state, FULL_CAPS,
+                         lambda code, prefix, exclude: search_people(prefix, exclude), None)
+    save.show()
+    app.processEvents()
+    assert save.objectName() == "bridgeHome"
+    width, height = save.width(), save.height()
+    assert width <= 640 and height <= 560, (width, height)
+    save.name_edit.setText("Vue Ixelles / GoFiber")
+    save.projet_combo.setCurrentIndex(1)
+    save.people_radio.setChecked(True)
+    app.processEvents()
+    save.picker.input.setText("ale")
+    save.picker.timer.timeout.emit()
+    save.picker.choose(PEOPLE[0])
+    save.picker.choose(PEOPLE[2])
+    save.picker.list.itemWidget(save.picker.list.topLevelItem(1), 1).setCurrentIndex(1)
+    request = save.request()
+    assert request.visibility == hm.VISIBILITY_PEOPLE and request.projet_code == "GOFIBER", request
+    assert request.people == (("a.leroy", False), ("b.alex", True)), request.people
+    save.show_outcome(qs.StoreOutcome(qs.STATUS_NAME_TAKEN), "a.leroy")
+    save.show_outcome(qs.StoreOutcome("unsafe", value=(Finding("macros"), Finding("action", "Points", "Py (type=1)"))),
+                      "a.leroy")
+    app.processEvents()
+    save.reject()
+
+    # 4. Dialogue de conflit (creation puis mise a jour) : chacun des trois boutons.
+    for creating in (True, False):
+        for button in ("rename_button", "overwrite_button", "cancel_button"):
+            conflict = qd.ConflictDialog("Vue", creating, "version courante 5, modifiee le 2026-11-19 par bob")
+            conflict.show()
+            app.processEvents()
+            assert conflict.cancel_button.isDefault()
+            getattr(conflict, button).click()
+            app.processEvents()
+            LOG.append(("conflict", creating, conflict.choice()))
+
 
 def actions():
     return hm.HomeActions(
