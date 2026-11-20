@@ -3328,7 +3328,10 @@ class ConstructelBridgePlugin:
             "qgis/connections-wms",
             "WMTS UrbIS Bruxelles",
             {
-                "url": "https://geoservices-urbis.irisnet.be/geowebcache/service/wmts",
+                # Service "basemap" (2026-11-20) : l'ancien geoservices-urbis
+                # ne publie plus que urbisFR et est fige depuis 2025-01-01.
+                # URL differente -> la connexion existante est reecrite.
+                "url": "https://geoservices-basemap.irisnet.be/geowebcache/service/wmts",
                 "ignoreGetMapURI": False,
                 "ignoreGetFeatureInfoURI": False,
                 "ignoreAxisOrientation": False,

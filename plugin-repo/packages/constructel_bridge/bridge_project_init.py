@@ -354,34 +354,56 @@ RELATION_DEFS = [
 # BASEMAPS & OVERLAYS
 # =====================================================================
 
+# UrbIS Bruxelles (WMTS) -- service GeoWebCache "basemap" du CIRB.
+#
+# Verifie le 2026-11-20 (GetCapabilities + GetTile EPSG:31370 en HTTP 200) :
+#   https://geoservices-basemap.irisnet.be/geowebcache/service/wmts
+# 8 couches = 4 etiquetages x {Color, Gray} : UrbISFrenchLabeled*,
+# UrbISDutchLabeled*, UrbISFrenchDutchLabeled*, UrbISNotLabeled*. Style vide,
+# TileMatrixSet EPSG:31370 (niveaux 0 a 15), aussi EPSG:900913 et EPSG:4326.
+#
+# PIEGE : l'ancien hote geoservices-urbis.irisnet.be/geowebcache ne publie
+# plus que `urbisFR` (couleur) ; `urbisFRGray` a ete retiree (GetTile ->
+# HTTP 400 "LAYER urbisFRGray is not known") et le service est fige depuis le
+# 2025-01-01. Ne pas y revenir pour les fonds de plan.
+#
+# Les `name` servent a reconnaitre un fond deja charge dans le projet
+# (_detect_existing_basemaps) : ne pas renommer les entrees existantes.
+URBIS_WMTS_URL = "https://geoservices-basemap.irisnet.be/geowebcache/service/wmts"
+
+
+def _urbis_source(layer: str) -> str:
+    return (
+        "crs=EPSG:31370&dpiMode=7&featureCount=10&format=image/png"
+        f"&layers={layer}&styles=&tileMatrixSet=EPSG:31370&tilePixelRatio=0"
+        f"&url={URBIS_WMTS_URL}"
+        "?service%3DWMTS%26request%3DGetCapabilities%26version%3D1.0.0"
+    )
+
+
+def _urbis_basemap(key: str, name: str, layer: str, default: bool = False) -> dict:
+    return {
+        "key": key,
+        "name": name,
+        "group": "UrbIS Brussels",
+        "source": _urbis_source(layer),
+        "provider": "wms",
+        "default": default,
+    }
+
+
 BASEMAPS = [
     # -- UrbIS Brussels WMTS --
-    {
-        "key": "urbis_fr",
-        "name": "UrbIS FR",
-        "group": "UrbIS Brussels",
-        "source": (
-            "crs=EPSG:31370&dpiMode=7&featureCount=10&format=image/png"
-            "&layers=urbisFR&styles=&tileMatrixSet=EPSG:31370&tilePixelRatio=0"
-            "&url=https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
-            "?service%3DWMTS%26request%3DGetCapabilities%26version%3D1.0.0"
-        ),
-        "provider": "wms",
-        "default": True,
-    },
-    {
-        "key": "urbis_fr_gray",
-        "name": "UrbIS FR Gray",
-        "group": "UrbIS Brussels",
-        "source": (
-            "crs=EPSG:31370&dpiMode=7&featureCount=10&format=image/png"
-            "&layers=urbisFRGray&styles=&tileMatrixSet=EPSG:31370&tilePixelRatio=0"
-            "&url=https://geoservices-urbis.irisnet.be/geowebcache/service/wmts"
-            "?service%3DWMTS%26request%3DGetCapabilities%26version%3D1.0.0"
-        ),
-        "provider": "wms",
-        "default": True,
-    },
+    # Seules les deux entrees FR historiques sont cochees par defaut dans
+    # l'ecran de choix (`default` ne fait que pre-cocher la case).
+    _urbis_basemap("urbis_fr", "UrbIS FR", "UrbISFrenchLabeledColor", default=True),
+    _urbis_basemap("urbis_fr_gray", "UrbIS FR Gray", "UrbISFrenchLabeledGray", default=True),
+    _urbis_basemap("urbis_nl", "UrbIS NL", "UrbISDutchLabeledColor"),
+    _urbis_basemap("urbis_nl_gray", "UrbIS NL Gray", "UrbISDutchLabeledGray"),
+    _urbis_basemap("urbis_fr_nl", "UrbIS FR-NL", "UrbISFrenchDutchLabeledColor"),
+    _urbis_basemap("urbis_fr_nl_gray", "UrbIS FR-NL Gray", "UrbISFrenchDutchLabeledGray"),
+    _urbis_basemap("urbis_none", "UrbIS No Labels", "UrbISNotLabeledColor"),
+    _urbis_basemap("urbis_none_gray", "UrbIS No Labels Gray", "UrbISNotLabeledGray"),
     # -- OpenStreetMap --
     {
         "key": "osm",
