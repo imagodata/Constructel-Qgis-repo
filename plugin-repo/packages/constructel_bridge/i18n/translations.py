@@ -403,6 +403,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.unsafe_refused": "The QGIS project “{name}” was not opened: its content is unreadable or unsafe.",
         "project.qgis_not_found": "The QGIS project “{name}” cannot be found: it was deleted, or you no longer have access to it.",
         "save.done": "QGIS project “{name}” saved (version {version})",
+        "people.placeholder": "Search for a person (3 characters minimum)",
+        "people.min_chars": "3 characters minimum",
+        "people.search_error": "Search unavailable",
+        "people.max_reached": "{count} people at most",
+        "people.right_open": "can open",
+        "people.right_edit": "can edit",
+        "people.remove": "Remove",
     },
 
     # =====================================================================
@@ -801,6 +808,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.unsafe_refused": "Le projet QGIS « {name} » n'a pas été ouvert : son contenu est illisible ou dangereux.",
         "project.qgis_not_found": "Le projet QGIS « {name} » est introuvable : il a été supprimé, ou vous n'y avez plus accès.",
         "save.done": "Projet QGIS « {name} » enregistré (version {version})",
+        "people.placeholder": "Rechercher une personne (3 caractères minimum)",
+        "people.min_chars": "3 caractères minimum",
+        "people.search_error": "Recherche impossible",
+        "people.max_reached": "{count} personnes au plus",
+        "people.right_open": "peut ouvrir",
+        "people.right_edit": "peut modifier",
+        "people.remove": "Retirer",
     },
 
     # =====================================================================
@@ -1199,5 +1213,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.unsafe_refused": "O projeto QGIS «{name}» não foi aberto: o seu conteúdo é ilegível ou perigoso.",
         "project.qgis_not_found": "O projeto QGIS «{name}» não foi encontrado: foi eliminado ou já não tem acesso a ele.",
         "save.done": "Projeto QGIS «{name}» guardado (versão {version})",
+        "people.placeholder": "Procurar uma pessoa (mínimo 3 caracteres)",
+        "people.min_chars": "Mínimo 3 caracteres",
+        "people.search_error": "Pesquisa impossível",
+        "people.max_reached": "{count} pessoas no máximo",
+        "people.right_open": "pode abrir",
+        "people.right_edit": "pode modificar",
+        "people.remove": "Retirar",
     },
 }

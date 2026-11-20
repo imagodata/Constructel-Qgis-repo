@@ -78,6 +78,8 @@ from constructel_bridge import bridge_presets as bp  # noqa: E402
 from constructel_bridge.bridge_diagnostic import PluginSummary  # noqa: E402
 from constructel_bridge.bridge_operators import OperatorInfo  # noqa: E402
 from constructel_bridge.bridge_project_init import LoadedCounts  # noqa: E402
+from constructel_bridge import bridge_projets as pj  # noqa: E402
+from constructel_bridge.bridge_qgis_projects import EligibleUser  # noqa: E402
 
 WYRE = OperatorInfo("WYRE", "Wyre", "wyre")
 ORANGE = OperatorInfo("ORANGE", "Orange", "orange")
@@ -96,6 +98,73 @@ def snapshot(connected=True, operators=(WYRE, ORANGE)):
 
 
 STATE = {"snap": snapshot()}
+
+# --- Bridge 2.1 -------------------------------------------------------------------------------
+FULL_CAPS = pj.ProjetCapabilities(True, True, True, True, True, True, True)
+GOFIBER = pj.ProjetInfo("b3f1", "GOFIBER", "GoFiber", "WYRE", (
+    pj.ProjetLayer("geofiber_asbuilt_depth_connectors", "Connecteurs", "Profondeur As-Built", "default", "geom", 10),
+    pj.ProjetLayer("geofiber_asbuilt_depth_points", "Points", "Profondeur As-Built", "default", "geom", 20),
+    pj.ProjetLayer("geofiber_meta", "Métadonnées", None, "default", None, 30),
+))
+LIBRE = pj.ProjetInfo("c4", "LIBRE", "Libre", None, (pj.ProjetLayer("t", "T", None, "default", None, 0),))
+PEOPLE = [EligibleUser("a.leroy", "Alice Leroy", "BE"), EligibleUser("a.lemaire", None, "ADMIN"),
+          EligibleUser("b.alex", "Bernard Alex", None)]
+
+
+def snapshot21(nominative=True, capabilities=FULL_CAPS):
+    import dataclasses
+
+    return dataclasses.replace(snapshot(), projets=(GOFIBER, LIBRE), capabilities=capabilities,
+                               nominative=nominative, operator_code_labels=(("WYRE", "Wyre"), ("ORANGE", "Orange")),
+                               counts=LoadedCounts({}, 0, 0, 2))
+
+
+def search_people(prefix, exclude):
+    LOG.append(("search", prefix, tuple(exclude)))
+    return [p for p in PEOPLE if p.username not in exclude]
+
+
+def smoke_21(dialog) -> None:
+    """Ecrans 2.1 (Task 21) : rangee Projets metier, selecteur de personnes."""
+    from constructel_bridge.bridge_people_picker import PeoplePicker
+
+    # 1. Page Charger : GoFiber avec « Aucun », puis avec Wyre et Orange.
+    STATE["snap"] = snapshot21()
+    dialog.render()
+    dialog.show_page("load")
+    app.processEvents()
+    load = dialog._pages["load"]
+    load._none_button.click()
+    load._projet_buttons["GOFIBER"].click()
+    app.processEvents()
+    tree = load._selection._tree
+    captions = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
+    assert any(c.startswith("GoFiber") for c in captions), captions
+    load._operator_buttons["wyre"].click()
+    load._operator_buttons["orange"].click()
+    load._projet_buttons["LIBRE"].click()
+    app.processEvents()
+    assert set(load._selection.selection().projet) == {"GOFIBER", "LIBRE"}
+    load._load_button.click()            # load factice rend 0
+    app.processEvents()
+
+    # Selecteur de personnes (enregistrer / partager).
+    picker = PeoplePicker(search_people, None, excluded=("x.deja",))
+    picker.show()
+    picker.input.setText("ale")
+    picker.timer.timeout.emit()
+    app.processEvents()
+    assert picker._model.stringList(), "modele du completer vide"
+    picker.choose(PEOPLE[0])
+    picker.choose(PEOPLE[1])
+    app.processEvents()
+    combo = picker.list.itemWidget(picker.list.topLevelItem(0), 1)
+    combo.setCurrentIndex(1)
+    assert picker.chosen() == (("a.leroy", True), ("a.lemaire", False)), picker.chosen()
+    picker.list.itemWidget(picker.list.topLevelItem(1), 2).click()
+    app.processEvents()
+    assert picker.chosen() == (("a.leroy", True),)
+    picker.close()
 
 
 def actions():
@@ -149,6 +218,8 @@ def main() -> int:
 
     dialog._lang_buttons["en"].click()   # changement de langue : redessin complet
     app.processEvents()
+
+    smoke_21(dialog)
 
     STATE["snap"] = snapshot(connected=False, operators=())
     dialog.render()
