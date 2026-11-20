@@ -13,10 +13,20 @@ l'execution : teste sans QGIS (test_bridge20_presets.py).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Optional, Sequence
 
 from .bridge_operators import is_safe_schema
+
+# Code d'un projet metier (registre Farois `projet.projets`, chk_projets_code)
+# et nom de table du schema `projet` (identifiant simple).
+_PROJET_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,47}$")
+_TABLE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+
+
+def is_projet_code(code) -> bool:
+    return isinstance(code, str) and _PROJET_CODE_RE.fullmatch(code) is not None
 
 # Tuiles lues dans le schema de chaque operateur, puis tuiles communes
 # (chargees une fois, dans « Commun »).
@@ -68,24 +78,32 @@ class LayerSelection:
     """Couches a charger : cles operateur par schema, cles communes. Normalise
     a la construction (frozensets, schemas sans couche ecartes) pour que deux
     selections equivalentes soient egales ; l'ordre des schemas est conserve
-    (le premier recoit les couches communes dans load_plan)."""
+    (le premier recoit les couches communes dans load_plan).
+
+    2.1 : ``projet`` (code de projet metier -> tables du schema ``projet``)
+    compte dans is_empty / layer_count mais n'entre JAMAIS dans load_plan : les
+    couches d'un projet metier suivent leur propre chargement."""
     per_operator: Mapping[str, frozenset]
     common: frozenset
+    projet: Mapping[str, frozenset] = field(default_factory=dict)
 
     def __post_init__(self):
         per_operator = {s: frozenset(keys) for s, keys in dict(self.per_operator).items() if keys}
         object.__setattr__(self, "per_operator", per_operator)
         object.__setattr__(self, "common", frozenset(self.common))
+        projet = {c: frozenset(tables) for c, tables in dict(self.projet or {}).items() if tables}
+        object.__setattr__(self, "projet", projet)
 
     def is_empty(self) -> bool:
-        return not self.per_operator and not self.common
+        return not self.per_operator and not self.common and not self.projet
 
     def layer_count(self) -> int:
         """Couches choisies, hors ALWAYS_KEYS / OPERATOR_AUTO_KEYS (jamais
         montrees a l'utilisateur comme un choix)."""
         hidden = ALWAYS_KEYS | OPERATOR_AUTO_KEYS
         return (sum(len(keys - hidden) for keys in self.per_operator.values())
-                + len(self.common - hidden))
+                + len(self.common - hidden)
+                + sum(len(tables) for tables in self.projet.values()))
 
     def load_plan(self) -> list:
         """[(schema ou None, cles)] dans l'ordre de chargement. Les couches
@@ -149,14 +167,20 @@ class UserPreset:
     selection: LayerSelection
 
 
+def _preset_entry(p: UserPreset) -> dict:
+    entry = {"name": p.name,
+             "schemas": list(p.schemas),
+             "per_operator": {s: sorted(keys) for s, keys in p.selection.per_operator.items()},
+             "common": sorted(p.selection.common)}
+    # 2.1 : cle facultative, ecrite seulement si des projets metier sont
+    # retenus (JSON 2.0 inchange sinon ; un Bridge 2.0 l'ignore).
+    if p.selection.projet:
+        entry["projets"] = {c: sorted(tables) for c, tables in p.selection.projet.items()}
+    return entry
+
+
 def presets_to_json(presets: Sequence[UserPreset]) -> str:
-    return json.dumps([
-        {"name": p.name,
-         "schemas": list(p.schemas),
-         "per_operator": {s: sorted(keys) for s, keys in p.selection.per_operator.items()},
-         "common": sorted(p.selection.common)}
-        for p in presets
-    ], ensure_ascii=False)
+    return json.dumps([_preset_entry(p) for p in presets], ensure_ascii=False)
 
 
 def _str_list(value) -> Optional[list]:
@@ -184,7 +208,16 @@ def _preset_from_entry(entry) -> Optional[UserPreset]:
         if keys is None:
             return None
         parsed[schema] = frozenset(keys)
-    return UserPreset(name, tuple(schemas), LayerSelection(parsed, frozenset(common)))
+    projets = entry.get("projets", {})
+    if not isinstance(projets, dict):
+        return None
+    parsed_projets = {}
+    for code, tables in projets.items():
+        tables = _str_list(tables)
+        if not is_projet_code(code) or tables is None or not all(_TABLE_RE.fullmatch(t) for t in tables):
+            return None
+        parsed_projets[code] = frozenset(tables)
+    return UserPreset(name, tuple(schemas), LayerSelection(parsed, frozenset(common), parsed_projets))
 
 
 def presets_from_json(raw) -> list:
@@ -206,10 +239,16 @@ def presets_from_json(raw) -> list:
     return [p for p in (_preset_from_entry(e) for e in data) if p is not None]
 
 
-def restrict_preset(preset: UserPreset, usable: Iterable[str]) -> UserPreset:
+def restrict_preset(preset: UserPreset, usable: Iterable[str],
+                    visible_projets: Optional[Iterable[str]] = None) -> UserPreset:
     """Preset limite aux operateurs utilisables (perimetre de la session) ; la
-    part commune est conservee."""
+    part commune est conservee. ``visible_projets`` (codes) : projets metier
+    gardes ; None les garde tous."""
     usable = set(usable)
     per_operator = {s: keys for s, keys in preset.selection.per_operator.items() if s in usable}
+    projet = dict(preset.selection.projet)
+    if visible_projets is not None:
+        visible = set(visible_projets)
+        projet = {c: tables for c, tables in projet.items() if c in visible}
     return UserPreset(preset.name, tuple(s for s in preset.schemas if s in usable),
-                      LayerSelection(per_operator, preset.selection.common))
+                      LayerSelection(per_operator, preset.selection.common, projet))
