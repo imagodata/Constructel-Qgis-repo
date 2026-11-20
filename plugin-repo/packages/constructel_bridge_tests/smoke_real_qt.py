@@ -331,6 +331,67 @@ def actions():
     )
 
 
+def smoke_211_projet_only() -> None:
+    """2.1.1 : login « projet seul » (aucun operateur, scope PROJET, groupe
+    ftth_reader_communs) : GoFiber coche avec la tuile OSIRIS ; la couche des
+    zones gelees est servie par la vue osiris.v_frozen_zones_communs, puis
+    reconnue « deja chargee » (grisee) par le vrai arbre Qt."""
+    import dataclasses
+
+    from _pytest.monkeypatch import MonkeyPatch
+
+    from constructel_bridge import bridge_project_init as bpi
+    from constructel_bridge.bridge_home import HomeDialog
+    from constructel_bridge_tests.fakes19 import install_fake_project
+
+    patch = MonkeyPatch()
+    try:
+        project = install_fake_project(bpi, patch)
+        fallback = frozenset({"osiris_frozen"})          # decision de connexion : table illisible, vue lisible
+        loads = []
+
+        def load(operators, selection, basemaps, styles, suffix):
+            count = 0
+            for schema, keys in selection.load_plan() or [(None, frozenset(bp.ALWAYS_KEYS))]:
+                count += bpi.init_project({}, "", set(keys), add_basemap=False, apply_styles=False,
+                                          operator=None, fallback_keys=fallback)
+            for code, tables in selection.projet.items():
+                count += bpi.load_projet_layers({}, "", GOFIBER, tables, False)
+            loads.append((tuple(operators), count))
+            return count
+
+        STATE["snap"] = dataclasses.replace(snapshot21(), operators=(), header="ext.user · projet GOFIBER",
+                                            counts=LoadedCounts({}, 0, 0))
+        home = HomeDialog(dataclasses.replace(actions(), load=load, qgis=qgis_actions()), None)
+        home.show()
+        home.show_page("load")
+        app.processEvents()
+        page = home._pages["load"]
+        assert page._operator_buttons == {} and page._none_button.isChecked()
+        page._projet_buttons["GOFIBER"].click()
+        page._selection.toggle_tile("osiris")
+        app.processEvents()
+        assert ("osiris_frozen" in page._selection.selection().common), page._selection.selection()
+        page._load_button.click()
+        app.processEvents()
+        assert loads and loads[0][0] == () and loads[0][1] >= 1, loads
+        assert project.count_pg("osiris", "v_frozen_zones_communs") == 1, "zones gelees non servies par la vue"
+        assert project.count_pg("osiris", "frozen_zones") == 0
+        # Fenetre rouverte : la couche chargee depuis la vue est grisee (T9-c2b).
+        home = HomeDialog(dataclasses.replace(actions(), load=load, qgis=qgis_actions()), None)
+        home.show()
+        home.show_page("load")
+        app.processEvents()
+        item = home._pages["load"]._selection._items[(None, "osiris_frozen")]
+        assert item.isDisabled() and item.checkState(0) == QtCore.Qt.CheckState.Unchecked
+        assert "osiris_frozen" not in home._pages["load"]._selection.selection().common
+        home.reject()
+        app.processEvents()
+        LOG.append(("projet_only", loads[0][1]))
+    finally:
+        patch.undo()
+
+
 def main() -> int:
     from constructel_bridge.bridge_home import HomeDialog
 
@@ -366,6 +427,7 @@ def main() -> int:
     app.processEvents()
 
     smoke_21(dialog)
+    smoke_211_projet_only()
 
     STATE["snap"] = snapshot(connected=False, operators=())
     dialog.render()
@@ -374,7 +436,7 @@ def main() -> int:
     dialog.reject()
     app.processEvents()
     print("SMOKE OK", [entry for entry in LOG if isinstance(entry, tuple)][:6],
-          [entry for entry in LOG if isinstance(entry, tuple) and entry[0] == "mode"])
+          [entry for entry in LOG if isinstance(entry, tuple) and entry[0] in ("mode", "projet_only")])
     return 0
 
 

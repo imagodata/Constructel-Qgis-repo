@@ -122,21 +122,29 @@ def test_portuguese_common_only_text_is_accented():
         "Nenhum operador disponível: só as camadas comuns podem ser carregadas.")
 
 
-def test_metadata_is_210():
-    # 2.1 : la version courante est 2.1.0 ; les entrees 2.0.x restent en retrait.
+def test_metadata_is_211():
+    # 2.1.1 : version courante ; les entrees precedentes restent en retrait.
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    assert "\nversion=2.1.0\n" in meta and "\nchangelog=v2.1.0 - " in meta
-    # Les entrees precedentes restent dans l'historique, en retrait comme les autres.
-    assert (meta.index("\nchangelog=v2.1.0 - ") < meta.index("\n    v2.0.4 - ") < meta.index("\n    v2.0.3 - ")
-            < meta.index("\n    v2.0.2 - ") < meta.index("\n    v2.0.1 - ")
+    assert "\nversion=2.1.1\n" in meta and "\nchangelog=v2.1.1 - " in meta
+    assert (meta.index("\nchangelog=v2.1.1 - ") < meta.index("\n    v2.1.0 - ") < meta.index("\n    v2.0.4 - ")
+            < meta.index("\n    v2.0.3 - ") < meta.index("\n    v2.0.2 - ") < meta.index("\n    v2.0.1 - ")
             < meta.index("\n    v2.0.0 - ") < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - "))
+
+
+def test_211_changelog_is_ascii_and_names_the_fix():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    entry = meta[meta.index("changelog=v2.1.1 - "):meta.index("\n    v2.1.0 - ")]
+    assert entry.isascii() and "\n" not in entry
+    assert entry.startswith("changelog=v2.1.1 - fix(plugin): zones gelees OSIRIS")
+    for word in ("v_frozen_zones_communs", "frozen_zones", "ogc_fid", "ftth_reader_communs", "573", "sans la vue"):
+        assert word in entry, word
 
 
 def test_210_changelog_is_ascii_and_names_the_features():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    entry = meta[meta.index("changelog=v2.1.0 - "):meta.index("\n    v2.0.4 - ")]
+    entry = meta[meta.index("v2.1.0 - "):meta.index("\n    v2.0.4 - ")]
     assert entry.isascii() and "\n" not in entry
-    assert entry.startswith("changelog=v2.1.0 - feat(plugin): projets metier et projets QGIS")
+    assert entry.startswith("v2.1.0 - feat(plugin): projets metier et projets QGIS")
     lowered = entry.lower()
     for word in ("projets metier", "mes projets", "partages avec moi", "publies", "autocompletion", "nominatif",
                  "conflit de version", "neutralise", "le sien compris", "sans schema projet", "macros",
