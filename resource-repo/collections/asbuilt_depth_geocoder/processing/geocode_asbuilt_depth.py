@@ -22,7 +22,13 @@ Dépendances runtime (auto-installées via pip au besoin) : ``extract-msg``
 que la stdlib. Politique Nominatim : 1 req/s max + User-Agent identifiant ;
 renseigner ``CONTACT_EMAIL`` est fortement recommandé.
 
-Segments d'axe de rue : localisation via ``public.fn_asbuilt_locate_on_road``
+Schéma des tables et fonctions As-Built : ``public`` avant la migration Farois
+574, ``projet`` après ; détecté au début de chaque exécution, jamais mélangé
+(:class:`AsbuiltSchema`, :func:`detect_asbuilt_schema`). En ``projet``, les
+segments et connecteurs (lecture seule) s'écrivent par les fonctions
+SECURITY DEFINER ``fn_asbuilt_segments_*`` / ``fn_asbuilt_connectors_*``.
+
+Segments d'axe de rue : localisation via ``fn_asbuilt_locate_on_road``
 (table ``ref.osm_roads``) puis, en repli pour les points non couverts,
 extraction OSM via l'API Overpass (stdlib ``urllib``, lecture seule) et
 localisation en Python pur (:func:`locate_on_ways`). Chaque point est rangé
@@ -1561,7 +1567,7 @@ def _build_attribute_values(rec, query, status, hit):
     """Valeurs d'attributs pures dérivées d'une intervention géocodée.
 
     Aucune dépendance PyQGIS — valeurs de l'upsert vers
-    ``public.geofiber_asbuilt_depth_points`` (connexion ``be``).
+    ``geofiber_asbuilt_depth_points`` (connexion ``be``, schéma du run).
     """
     depth_cm = parse_depth_cm(rec.depth_raw)
     return {
@@ -1758,7 +1764,7 @@ DEPTH_SEVERITY = {"rouge": 0, "orange": 1, "vert": 2}
 class RoadLocation:
     """Un point de profondeur localise sur son axe de rue.
 
-    Source : public.fn_asbuilt_locate_on_road (base 'be') ou, en repli, la
+    Source : fn_asbuilt_locate_on_road (base 'be') ou, en repli, la
     localisation Python sur les voies extraites d'Overpass
     (:func:`locate_on_ways`). ``x``/``y`` = point PROJETE sur l'axe.
     ``side`` = cote de la route du point geocode (cf. SIDE_LEFT/SIDE_RIGHT),
@@ -5436,18 +5442,9 @@ if HAS_QGIS:
         _ADVANCED_PARAMETER_FLAG = QgsProcessingParameterDefinition.Flag.FlagAdvanced
 
     BE_CONNECTION_NAME = "be"
-    BE_TABLE_SCHEMA = "public"
-    BE_TABLE_NAME = "geofiber_asbuilt_depth_points"
     BE_GEOM_COLUMN = "geom"
-
-    UNGEOCODED_TABLE_SCHEMA = "public"
-    UNGEOCODED_TABLE_NAME = "geofiber_asbuilt_ungeocoded"
-
-    SEGMENTS_TABLE_SCHEMA = "public"
-    SEGMENTS_TABLE_NAME = "geofiber_asbuilt_depth_segments"
-
-    CONNECTORS_TABLE_SCHEMA = "public"
-    CONNECTORS_TABLE_NAME = "geofiber_asbuilt_depth_connectors"
+    # Schéma et noms qualifiés des tables / fonctions As-Built : détectés au
+    # début de chaque exécution (AsbuiltSchema, cf. _require_be), jamais ici.
 
     # Noms lisibles des deux couches de la base 'be' ajoutées au projet en fin
     # d'exécution (cf. _load_be_layers_in_project) — seulement si absentes.
@@ -5859,10 +5856,10 @@ if HAS_QGIS:
                 "BASE 'be' (connexion QGIS du plugin Constructel Bridge, "
                 "OBLIGATOIRE : absente ou inutilisable -> échec immédiat, avant "
                 "tout géocodage). Ordre garanti : 1) chaque intervention géocodée "
-                "est upsertée dans public.geofiber_asbuilt_depth_points (écrasement "
-                "complet sur même intervention : un rapport rejoué avec une "
-                "adresse dégradée écrase une géométrie correcte) ; les non "
-                "géocodées vont dans public.geofiber_asbuilt_ungeocoded, une "
+                "est upsertée dans la table des points geofiber_asbuilt_depth_points "
+                "(écrasement complet sur même intervention : un rapport rejoué avec "
+                "une adresse dégradée écrase une géométrie correcte) ; les non "
+                "géocodées vont dans la table geofiber_asbuilt_ungeocoded, une "
                 "ligne par intervention. Règle « si géocodé, garder que "
                 "géocodé » : une intervention présente dans les points n'est "
                 "JAMAIS dans les non géocodées (nettoyage en début d'étape ; un "
@@ -5877,15 +5874,28 @@ if HAS_QGIS:
                 "un projet qui les contient déjà n'est pas modifié). Un échec "
                 "partiel en cours de route (une étape, Overpass, une couche) est "
                 "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
+                "SCHÉMA — les tables et fonctions As-Built sont dans le schéma "
+                "« public » avant la migration Farois 574 et dans le schéma "
+                "« projet » après. Le script le détecte au début de chaque "
+                "exécution (le journal indique le schéma retenu) et ne mélange "
+                "jamais les deux. Schéma projet : points et non géocodées sont "
+                "écrits directement ; segments et connecteurs sont en lecture "
+                "seule et écrits par les fonctions fn_asbuilt_segments_* et "
+                "fn_asbuilt_connectors_* de la base ; il faut un login nominatif "
+                "avec le scope PROJET GOFIBER coché en écriture dans Farois "
+                "(onglet Périmètre), sinon le script s'arrête avant tout géocodage "
+                "avec un message indiquant quoi demander à l'administrateur. Base "
+                "à moitié migrée (fonction manquante) : arrêt explicite, jamais "
+                "d'écriture directe des segments.\n\n"
                 "MODE SEUL « RE-GÉOCODER LES NON GÉOCODÉES » — case décochée par "
                 "défaut. Cochée : le dossier est ignoré (facultatif), aucun fichier "
-                "n'est lu ; seules les adresses de public.geofiber_asbuilt_ungeocoded "
+                "n'est lu ; seules les adresses de la table geofiber_asbuilt_ungeocoded "
                 "sont re-soumises à Nominatim. Celles trouvées suivent le flux "
                 "normal (point, retrait de la table, segments), les autres "
                 "restent dans la table.\n\n"
                 "ADRESSES DÉJÀ EN BASE — par défaut (case avancée « Recalculer » décochée), "
                 "une intervention déjà présente avec un point géocodé dans "
-                "public.geofiber_asbuilt_depth_points (même intervention, ou même "
+                "la table des points (même intervention, ou même "
                 "WorkOrder avec la même adresse) n'est NI géocodée (Nominatim), NI "
                 "relocalisée (ref.osm_roads, Overpass) : le point garde sa position. "
                 "Sa PROFONDEUR est mise à jour si le rapport est PLUS RÉCENT que la "
@@ -5941,14 +5951,14 @@ if HAS_QGIS:
                 f"{LONG_SEGMENT_THRESHOLD_M:g} m (mesurés sur l'axe) en pointillé "
                 "(interpolation peu fiable) ; longueur mesurée le long de l'axe. "
                 "Routes de ref.osm_roads : axe ET type de voie via la fonction "
-                "public.fn_asbuilt_road_geometry (migration road_geom, requêtes par "
+                "fn_asbuilt_road_geometry (migration road_geom, requêtes par "
                 "lots) ; absente -> localisation de TOUTES les routes via Overpass "
                 "(axe suivi) pour le run ; axe non retenu pour une route -> repli "
                 "Overpass, sinon cordes droites (compteur). Colonne geom encore "
                 "LineString -> première partie seulement (migration MultiLineString "
                 "recommandée). Après ces migrations, cochez une fois « Reconstruire "
-                "tous les segments ». Écriture dans "
-                "public.geofiber_asbuilt_depth_segments : insertion / mise à jour "
+                "tous les segments ». Écriture dans la table "
+                "geofiber_asbuilt_depth_segments : insertion / mise à jour "
                 "des segments changés, purge des segments obsolètes des seules "
                 "routes recalculées (suspendue si la localisation ou la lecture "
                 "est incomplète).\n"
@@ -5991,7 +6001,7 @@ if HAS_QGIS:
                 "donne le nombre et 5 exemples ; un code postal d'adresse différent "
                 "de celui du point géocodé est signalé. Voies Overpass : envoyées "
                 "au fil de l'eau vers ref.osm_roads (types de voie Farois, jamais "
-                "d'écrasement) si la fonction public.fn_asbuilt_store_osm_ways "
+                "d'écrasement) si la fonction fn_asbuilt_store_osm_ways "
                 "existe — sinon simple information ; après la première "
                 "alimentation, cochez « Reconstruire tous les segments ». Overpass : "
                 f"accès Internet requis ; au plus {OVERPASS_MAX_NAMES_PER_QUERY} rues par "
@@ -6011,12 +6021,12 @@ if HAS_QGIS:
                 "CONNECTEURS — pour chaque point localisé, une ligne fine en "
                 "pointillé relie le point géocodé à l'extrémité de son segment "
                 "(point projeté sur l'axe décalé) ; table "
-                "public.geofiber_asbuilt_depth_connectors (migration_connectors : "
+                "geofiber_asbuilt_depth_connectors (migration_connectors : "
                 "absente -> simple information), même logique incrémentale que les "
                 "segments, couche « Profondeur As-Built — connecteurs » ajoutée au "
                 "projet si absente (sous les segments et les points).\n"
                 "PRÉREQUIS : colonne « side » sur "
-                "public.geofiber_asbuilt_depth_segments (clé primaire point_a, "
+                "geofiber_asbuilt_depth_segments (clé primaire point_a, "
                 "point_b, half, side). Absente -> avertissement « migration "
                 "requise », segments ni recalculés ni modifiés.\n\n"
                 "SCR — toutes les coordonnées sont reprojetées en Lambert belge 72 "
@@ -6092,7 +6102,7 @@ if HAS_QGIS:
             recompute.setFlags(recompute.flags() | _ADVANCED_PARAMETER_FLAG)
             self.addParameter(recompute)
             # Parametre AVANCE (defaut : coche). Les adresses deja presentes dans
-            # public.geofiber_asbuilt_ungeocoded sont re-soumises au geocodage a
+            # geofiber_asbuilt_ungeocoded sont re-soumises au geocodage a
             # chaque run ; en cas de succes elles suivent le flux normal (point,
             # retrait des non geocodees, segments). Decoche : 1 req/s economisee
             # par adresse toujours introuvable.
@@ -6133,6 +6143,10 @@ if HAS_QGIS:
             folder_error = input_folder_error(folder, retry_only)
             if folder_error:
                 raise QgsProcessingException(folder_error)
+            # Schéma As-Built (public / projet) : détecté par _require_be, UNE
+            # fois, puis figé pour tout le run (jamais de mélange des modes).
+            self._asbuilt_schema = None
+            self._write_denied_reported = False
             self._segments_multi = None  # sonde du type de colonne, une fois par run
             self._connectors_available = None  # sonde de la table connecteurs
             # Metadonnees Nominatim/OSM des points geocodes A CE RUN (en memoire
@@ -6156,7 +6170,7 @@ if HAS_QGIS:
             if retry_only:
                 feedback.pushInfo(
                     "Mode seul : re-géocodage des adresses de "
-                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} "
+                    f"{self._names.ungeocoded} "
                     "(dossier ignoré)."
                 )
             elif not input_paths:
@@ -6204,14 +6218,14 @@ if HAS_QGIS:
                 retry_records = self._load_ungeocoded_records(feedback)
                 if retry_only and not retry_records:
                     feedback.pushInfo(
-                        f"Aucune adresse dans {UNGEOCODED_TABLE_SCHEMA}."
-                        f"{UNGEOCODED_TABLE_NAME} : rien à re-géocoder."
+                        f"Aucune adresse dans {self._names.ungeocoded} : "
+                        "rien à re-géocoder."
                     )
                 deduped, n_retry = merge_retry_records(deduped, retry_records)
                 if retry_records:
                     feedback.pushInfo(
-                        f"{n_retry} adresse(s) de {UNGEOCODED_TABLE_SCHEMA}."
-                        f"{UNGEOCODED_TABLE_NAME} relancée(s) "
+                        f"{n_retry} adresse(s) de {self._names.ungeocoded} "
+                        "relancée(s) "
                         f"({len(retry_records) - n_retry} déjà dans les fichiers lus)."
                     )
 
@@ -6262,7 +6276,7 @@ if HAS_QGIS:
             total = max(len(deduped), 1)
             # Adresses non géocodées de ce run : (InterventionRecord, requête en
             # échec) — message/email copiables du journal et upsert dans
-            # public.geofiber_asbuilt_ungeocoded.
+            # geofiber_asbuilt_ungeocoded.
             ungeocoded: list[tuple[InterventionRecord, str]] = []
 
             # Cadence Nominatim (1 req/s) en respectant l'annulation utilisateur.
@@ -6416,9 +6430,9 @@ if HAS_QGIS:
                 feedback.pushInfo(
                     f"Étape 1/3 — points : {len(depth_updates)} profondeur(s) plus "
                     f"récente(s) puis upsert de {len(geocoded_for_db)} "
-                    f"intervention(s) géocodée(s) dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} "
+                    f"intervention(s) géocodée(s) dans {self._names.points} "
                     f"et de {len(ungeocoded)} non géocodée(s) dans "
-                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
+                    f"{self._names.ungeocoded}."
                 )
                 # Regle « si geocode, garder que geocode » : aucune intervention
                 # presente dans les points ne reste dans les non geocodees
@@ -6469,7 +6483,7 @@ if HAS_QGIS:
 
                 feedback.pushInfo(
                     f"Étape 2/3 — segments : régénération de "
-                    f"{SEGMENTS_TABLE_SCHEMA}.{SEGMENTS_TABLE_NAME} ("
+                    f"{self._names.segments} ("
                     + ("reconstruction complète demandée" if full_rebuild
                        else "incrémentale : routes impactées seulement")
                     + ")."
@@ -6510,15 +6524,41 @@ if HAS_QGIS:
             return {}
 
         # -- helpers d'instance ------------------------------------------
+        @property
+        def _names(self):
+            """Noms qualifiés As-Built du run (:class:`AsbuiltSchema`), détectés par _require_be."""
+            names = self.__dict__.get("_asbuilt_schema")
+            if names is None:
+                raise QgsProcessingException(
+                    "Schéma As-Built non détecté (erreur interne) : arrêt sans écriture."
+                )
+            return names
+
+        def _note_write_denied(self, feedback, error_text) -> bool:
+            """Mode projet : refus d'écriture (42501) -> message clair, UNE fois par run.
+
+            Mode public : sans effet (messages de la version 1.3.0 inchangés).
+            Retourne vrai si ``error_text`` est un refus signalé en mode projet.
+            """
+            names = self.__dict__.get("_asbuilt_schema")
+            if names is None or not names.uses_writers or not is_write_denied(error_text):
+                return False
+            if not self.__dict__.get("_write_denied_reported"):
+                self._write_denied_reported = True
+                feedback.reportError(write_denied_message(str(error_text)), fatalError=False)
+            return True
+
         def _require_be(self, feedback):
             """Verifie au DEMARRAGE que la base 'be' est utilisable, sinon echec net.
 
             La base 'be' est l'unique destination de l'algorithme (aucune autre
-            sortie) : connexion QGIS 'be' introuvable, ou table
-            public.geofiber_asbuilt_depth_points non ouvrable (invalide, non
-            spatiale, sans cle primaire) -> QgsProcessingException, AVANT toute
-            lecture de fichier ou requete Nominatim. Les echecs partiels
-            ulterieurs (segments, Overpass, couches du projet) restent des avertissements.
+            sortie) : connexion QGIS 'be' introuvable, schéma As-Built
+            indétectable ou base à moitié migrée (:func:`detect_asbuilt_schema`,
+            mode figé pour tout le run), droit d'écriture refusé (mode projet),
+            ou table des points non ouvrable (invalide, non spatiale, sans cle
+            primaire) -> QgsProcessingException, AVANT toute lecture de fichier
+            ou requete Nominatim. Les echecs partiels ulterieurs (segments,
+            Overpass, couches du projet) restent des avertissements.
             """
             md = QgsProviderRegistry.instance().providerMetadata("postgres")
             if md is None or md.findConnection(BE_CONNECTION_NAME) is None:
@@ -6527,12 +6567,25 @@ if HAS_QGIS:
                     "Constructel Bridge (connexion PostgreSQL « be »). La base "
                     "'be' est l'unique destination de cet algorithme : arrêt."
                 )
+            be_connection = self._be_connection()
+            try:
+                names = detect_asbuilt_schema(be_connection.executeSql, feedback.pushWarning)
+            except AsbuiltSchemaError as exc:
+                raise QgsProcessingException(str(exc)) from exc
+            self._asbuilt_schema = names
+            feedback.pushInfo(names.describe())
             layer = self._open_be_points_layer(feedback)
             if layer is None or not layer.primaryKeyAttributes():
                 raise QgsProcessingException(
-                    f"Table {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} inutilisable via la "
+                    f"Table {self._names.points} inutilisable via la "
                     "connexion 'be' (injoignable, invalide, non spatiale ou sans clé "
                     "primaire — cf. journal). Rien n'a été géocodé ni écrit : arrêt."
+                    + (
+                        " Schéma projet : la table n'est lisible qu'avec le scope "
+                        "PROJET GOFIBER (Farois, onglet Périmètre) ; demandez-le à "
+                        "l'administrateur Farois."
+                        if names.uses_writers else ""
+                    )
                 )
 
         def _open_be_layer(self, schema: str, table: str, geom_column: str, wkb_type, feedback):
@@ -6584,7 +6637,7 @@ if HAS_QGIS:
 
         def _open_be_points_layer(self, feedback):
             return self._open_be_layer(
-                BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Type.Point, feedback
+                self._names.schema, POINTS_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Type.Point, feedback
             )
 
         def _open_be_nonspatial_layer(self, schema: str, table: str, feedback):
@@ -6606,7 +6659,7 @@ if HAS_QGIS:
             return layer
 
         def _upsert_geocoded_records(self, records, feedback):
-            """Upsert les interventions geocodees dans public.geofiber_asbuilt_depth_points via be.
+            """Upsert les interventions geocodees dans geofiber_asbuilt_depth_points via be.
 
             Best-effort ligne par ligne : la connexion be indisponible ou l'echec
             d'une ligne individuelle degradent (avertissement) sans jamais faire
@@ -6633,13 +6686,13 @@ if HAS_QGIS:
                 feedback.pushInfo("Points : aucune intervention geocodee a pousser.")
                 return written_ids, changed_ids
             layer = self._open_be_layer(
-                BE_TABLE_SCHEMA, BE_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Type.Point, feedback
+                self._names.schema, POINTS_TABLE_NAME, BE_GEOM_COLUMN, QgsWkbTypes.Type.Point, feedback
             )
             if layer is None:
                 return written_ids, changed_ids
             if not layer.primaryKeyAttributes():
                 feedback.pushWarning(
-                    f"Couche {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} sans cle primaire "
+                    f"Couche {self._names.points} sans cle primaire "
                     "exploitable — ecriture impossible, rien n'a ete ecrit en base."
                 )
                 return written_ids, changed_ids
@@ -6706,6 +6759,7 @@ if HAS_QGIS:
                         f"Echec upsert intervention {intervention_id} : {exc}",
                         fatalError=False,
                     )
+                    self._note_write_denied(feedback, str(exc))
                     ok = False
 
                 if ok:
@@ -6732,6 +6786,7 @@ if HAS_QGIS:
                             f"Intervention {intervention_id} : {err}",
                             fatalError=False,
                         )
+                        self._note_write_denied(feedback, err)
                     layer.rollBack()
 
             feedback.pushInfo(
@@ -6757,8 +6812,8 @@ if HAS_QGIS:
             if be_connection is None:
                 return
             sql = (
-                f"DELETE FROM {UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} u "
-                f"USING {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} p "
+                f"DELETE FROM {self._names.ungeocoded} u "
+                f"USING {self._names.points} p "
                 "WHERE u.intervention_id = p.intervention_id "
                 "RETURNING u.intervention_id"
             )
@@ -6769,16 +6824,17 @@ if HAS_QGIS:
                     f"Non géocodées : nettoyage des interventions déjà géocodées "
                     f"impossible ({exc})."
                 )
+                self._note_write_denied(feedback, str(exc))
                 return
             if deleted:
                 feedback.pushInfo(
                     f"Non géocodées : {len(deleted)} intervention(s) déjà présente(s) "
-                    f"dans {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} retirée(s) de "
-                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
+                    f"dans {self._names.points} retirée(s) de "
+                    f"{self._names.ungeocoded}."
                 )
 
         def _load_ungeocoded_records(self, feedback):
-            """Lit public.geofiber_asbuilt_ungeocoded -> ``InterventionRecord`` à relancer.
+            """Lit geofiber_asbuilt_ungeocoded -> ``InterventionRecord`` à relancer.
 
             Best-effort : lecture impossible -> liste vide (avertissement), le
             run continue avec les seuls fichiers lus.
@@ -6790,7 +6846,7 @@ if HAS_QGIS:
                 "intervention_id, work_order, address_raw, postal_code, "
                 "place, depth_raw, source_message"
             )
-            table = f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}"
+            table = f"{self._names.ungeocoded}"
             try:
                 rows = be_connection.executeSql(
                     f"SELECT {columns}, EXTRACT(EPOCH FROM measured_at)::float8 "
@@ -6822,7 +6878,7 @@ if HAS_QGIS:
             try:
                 rows = be_connection.executeSql(
                     "SELECT intervention_id, work_order, address_raw, postal_code "
-                    f"FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} WHERE geom IS NOT NULL"
+                    f"FROM {self._names.points} WHERE geom IS NOT NULL"
                 ) or []
             except Exception as exc:
                 feedback.pushWarning(
@@ -6848,7 +6904,7 @@ if HAS_QGIS:
                     "SELECT intervention_id, work_order, address_raw, postal_code, "
                     "depth_category, EXTRACT(EPOCH FROM measured_at)::float8, "
                     "EXTRACT(EPOCH FROM updated_at)::float8, geom IS NOT NULL "
-                    f"FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME}"
+                    f"FROM {self._names.points}"
                 ) or []
             except Exception as exc:
                 feedback.pushWarning(
@@ -6918,7 +6974,7 @@ if HAS_QGIS:
                     "— aucune mise à jour écrite."
                 )
                 return written, dirty
-            table = f"{BE_TABLE_SCHEMA}.{BE_TABLE_NAME}"
+            table = f"{self._names.points}"
             n_renamed = n_unchanged = n_failed = 0
             for update in updates:
                 if feedback.isCanceled():
@@ -6933,6 +6989,7 @@ if HAS_QGIS:
                         f"{rec.intervention} ({exc}).",
                         fatalError=False,
                     )
+                    self._note_write_denied(feedback, str(exc))
                     continue
                 if not rows:
                     n_unchanged += 1
@@ -6971,7 +7028,7 @@ if HAS_QGIS:
                         QgsExpression.quotedValue(v) for v in ids[start:start + 500]
                     )
                     rows = be_connection.executeSql(
-                        f"SELECT intervention_id FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} "
+                        f"SELECT intervention_id FROM {self._names.points} "
                         f"WHERE intervention_id IN ({chunk})"
                     ) or []
                     found.update(str(row[0]) for row in rows)
@@ -6983,7 +7040,7 @@ if HAS_QGIS:
             return found
 
         def _remove_resolved_ungeocoded(self, intervention_ids, feedback):
-            """Retire de public.geofiber_asbuilt_ungeocoded les interventions desormais geocodees.
+            """Retire de geofiber_asbuilt_ungeocoded les interventions desormais geocodees.
 
             CIBLE : uniquement les ``intervention_ids`` ecrits AVEC SUCCES dans
             les points par CE run (retour de _upsert_geocoded_records) — jamais
@@ -6994,7 +7051,7 @@ if HAS_QGIS:
             if not intervention_ids:
                 return
             layer = self._open_be_nonspatial_layer(
-                UNGEOCODED_TABLE_SCHEMA, UNGEOCODED_TABLE_NAME, feedback
+                self._names.schema, UNGEOCODED_TABLE_NAME, feedback
             )
             if layer is None or not layer.primaryKeyAttributes():
                 return
@@ -7014,11 +7071,12 @@ if HAS_QGIS:
             if layer.deleteFeatures(fids) and layer.commitChanges():
                 feedback.pushInfo(
                     f"Non geocodees : {len(fids)} intervention(s) desormais geocodee(s) "
-                    f"retiree(s) de {UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME}."
+                    f"retiree(s) de {self._names.ungeocoded}."
                 )
             else:
                 for err in layer.commitErrors():
                     feedback.reportError(f"Non geocodees : {err}", fatalError=False)
+                    self._note_write_denied(feedback, err)
                 layer.rollBack()
                 feedback.pushWarning(
                     "Non geocodees : retrait des interventions desormais geocodees "
@@ -7068,7 +7126,7 @@ if HAS_QGIS:
             return ungeocoded
 
         def _upsert_ungeocoded_records(self, entries, feedback):
-            """Upsert les adresses non geocodees dans public.geofiber_asbuilt_ungeocoded.
+            """Upsert les adresses non geocodees dans geofiber_asbuilt_ungeocoded.
 
             ``entries`` : (InterventionRecord, query) — meme forme que
             build_ungeocoded_message. Best-effort, meme politique que
@@ -7078,19 +7136,19 @@ if HAS_QGIS:
                 feedback.pushInfo("Non geocodees : aucune adresse a pousser.")
                 return
             layer = self._open_be_nonspatial_layer(
-                UNGEOCODED_TABLE_SCHEMA, UNGEOCODED_TABLE_NAME, feedback
+                self._names.schema, UNGEOCODED_TABLE_NAME, feedback
             )
             if layer is None:
                 feedback.reportError(
                     f"{len(entries)} adresse(s) non geocodee(s) NON enregistree(s) : "
-                    f"{UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} inaccessible "
+                    f"{self._names.ungeocoded} inaccessible "
                     "(voir avertissement ci-dessus).",
                     fatalError=False,
                 )
                 return
             if not layer.primaryKeyAttributes():
                 feedback.reportError(
-                    f"Couche {UNGEOCODED_TABLE_SCHEMA}.{UNGEOCODED_TABLE_NAME} sans cle primaire "
+                    f"Couche {self._names.ungeocoded} sans cle primaire "
                     f"exploitable — ecriture impossible, {len(entries)} adresse(s) "
                     "NON enregistree(s) en base.",
                     fatalError=False,
@@ -7147,6 +7205,7 @@ if HAS_QGIS:
                         f"Echec upsert non-geocode {values['intervention_id']} : {exc}",
                         fatalError=False,
                     )
+                    self._note_write_denied(feedback, str(exc))
                     ok = False
 
                 if ok:
@@ -7159,6 +7218,7 @@ if HAS_QGIS:
                             f"Non-geocode {values['intervention_id']} : {err}",
                             fatalError=False,
                         )
+                        self._note_write_denied(feedback, err)
                     layer.rollBack()
 
             feedback.pushInfo(
@@ -7166,15 +7226,14 @@ if HAS_QGIS:
                 f"{failed} echec(s) sur {len(entries)}."
             )
 
-        @staticmethod
-        def _locate_sql(x, y, street_literal):
-            """Appel SQL de public.fn_asbuilt_locate_on_road pour un point EPSG:31370."""
+        def _locate_sql(self, x, y, street_literal):
+            """Appel SQL de fn_asbuilt_locate_on_road (schéma du run) pour un point EPSG:31370."""
             return (
                 "SELECT road_key, position_m, "
                 "ST_X(projected_point), ST_Y(projected_point), "
                 "road_length_m, ST_X(road_start), ST_Y(road_start), "
                 "ST_X(road_end), ST_Y(road_end) "
-                "FROM public.fn_asbuilt_locate_on_road("
+                f"FROM {self._names.function('fn_asbuilt_locate_on_road')}("
                 f"ST_SetSRID(ST_MakePoint({x!r}, {y!r}), 31370), "
                 f"{street_literal}, {LOCATE_RADIUS_M!r})"
             )
@@ -7519,7 +7578,7 @@ if HAS_QGIS:
             """Localise chaque ligne (dict avec intervention_id/depth_category/address_raw/x/y)
             sur son axe de rue, côté de la route compris.
 
-            Source 1 : public.fn_asbuilt_locate_on_road (connexion 'be', table
+            Source 1 : fn_asbuilt_locate_on_road (connexion 'be', table
             ref.osm_roads) ; côté par sondes (:meth:`_probe_side_in_db`) ; axe ET
             type de voie via fn_asbuilt_road_geometry, par lots
             (:meth:`_db_road_geometries`) — fonction absente : localisation en
@@ -7623,7 +7682,7 @@ if HAS_QGIS:
                         try:
                             rows_by_tag = first_rows_by_tag(
                                 be_connection.executeSql(
-                                    batch_locate_sql(items, LOCATE_RADIUS_M)
+                                    batch_locate_sql(items, LOCATE_RADIUS_M, self._names.schema)
                                 ) or []
                             )
                             for k, _x, _y, literal in items:
@@ -7681,8 +7740,9 @@ if HAS_QGIS:
                     for start in range(0, len(probe_items), SQL_BATCH_SIZE):
                         chunk = probe_items[start:start + SQL_BATCH_SIZE]
                         rows_by_tag = first_rows_by_tag(
-                            be_connection.executeSql(batch_locate_sql(chunk, LOCATE_RADIUS_M))
-                            or []
+                            be_connection.executeSql(
+                                batch_locate_sql(chunk, LOCATE_RADIUS_M, self._names.schema)
+                            ) or []
                         )
                         for tag, *_rest in chunk:
                             if tag in rows_by_tag:
@@ -7863,7 +7923,7 @@ if HAS_QGIS:
                 try:
                     rows = be_connection.executeSql(
                         "SELECT type FROM geometry_columns WHERE "
-                        f"f_table_schema = '{SEGMENTS_TABLE_SCHEMA}' AND "
+                        f"f_table_schema = '{self._names.schema}' AND "
                         f"f_table_name = '{SEGMENTS_TABLE_NAME}' AND "
                         f"f_geometry_column = '{BE_GEOM_COLUMN}'"
                     ) or []
@@ -7891,7 +7951,7 @@ if HAS_QGIS:
                 try:
                     probe = be_connection.executeSql(
                         "SELECT count(*) FROM pg_proc p JOIN pg_namespace n "
-                        "ON n.oid = p.pronamespace WHERE n.nspname = 'public' "
+                        f"ON n.oid = p.pronamespace WHERE n.nspname = '{self._names.schema}' "
                         "AND p.proname = 'fn_asbuilt_road_geometry'"
                     )
                     state["available"] = bool(probe and int(probe[0][0]) > 0)
@@ -7932,7 +7992,7 @@ if HAS_QGIS:
                         for n, key in enumerate(chunk)
                     ]
                     rows_by_tag = first_rows_by_tag(
-                        be_connection.executeSql(batch_road_geometry_sql(items, LOCATE_RADIUS_M))
+                        be_connection.executeSql(batch_road_geometry_sql(items, LOCATE_RADIUS_M, self._names.schema))
                         or []
                     )
                     for n, key in enumerate(chunk):
@@ -8023,7 +8083,7 @@ if HAS_QGIS:
                     try:
                         rows = be_connection.executeSql(
                             "SELECT count(*) FROM information_schema.tables WHERE "
-                            f"table_schema = '{CONNECTORS_TABLE_SCHEMA}' AND "
+                            f"table_schema = '{self._names.schema}' AND "
                             f"table_name = '{CONNECTORS_TABLE_NAME}'"
                         )
                         available = bool(rows and int(rows[0][0]) > 0)
@@ -8038,7 +8098,7 @@ if HAS_QGIS:
             if not available:
                 return None
             layer = self._open_be_layer(
-                CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, BE_GEOM_COLUMN,
+                self._names.schema, CONNECTORS_TABLE_NAME, BE_GEOM_COLUMN,
                 QgsWkbTypes.Type.LineString, feedback,
             )
             if layer is None or not layer.primaryKeyAttributes():
@@ -8084,61 +8144,76 @@ if HAS_QGIS:
             to_delete = [i for i in plan.to_delete if i not in protected_ids]
             if not deletions_allowed:
                 to_delete = [i for i in to_delete if i not in points]  # gris/supprimés seulement
-            fields = layer.fields()
-            inserted = updated = deleted = failed = 0
-            for connector in plan.to_insert + plan.to_update:
-                if feedback.isCanceled():
-                    break
-                fid = fids.get(connector.intervention_id)
-                geom = QgsGeometry.fromPolylineXY([
-                    QgsPointXY(connector.start_x, connector.start_y),
-                    QgsPointXY(connector.end_x, connector.end_y),
-                ])
-                values = {
-                    "intervention_id": connector.intervention_id,
-                    "depth_category": connector.depth_category,
-                    "side": connector.side,
-                    "road_key": connector.road_key,
-                    "length_m": connector.length_m,
-                }
-                layer.startEditing()
-                try:
-                    if fid is not None:
-                        ok = layer.changeAttributeValues(fid, {
-                            fields.indexOf(k): v for k, v in values.items()
-                            if k != "intervention_id"
-                        })
-                        ok = layer.changeGeometry(fid, geom) and ok
+            if self._names.uses_writers:
+                # Schéma projet (mig 574) : table en lecture seule pour les
+                # logins -> écrivains SECURITY DEFINER uniquement, jamais de DML
+                # direct. Mêmes compteurs que l'écriture directe.
+                outcome = write_connectors_with_writers(
+                    self._be_connection().executeSql, self._names,
+                    [(c, c.intervention_id in fids) for c in plan.to_insert + plan.to_update],
+                    to_delete, feedback,
+                )
+                inserted, updated = outcome.inserted, outcome.updated
+                deleted, failed = outcome.deleted, outcome.failed
+                if outcome.denied:
+                    self._note_write_denied(feedback, outcome.denied)
+            else:
+                # Schéma public : écriture directe (version 1.3.0).
+                fields = layer.fields()
+                inserted = updated = deleted = failed = 0
+                for connector in plan.to_insert + plan.to_update:
+                    if feedback.isCanceled():
+                        break
+                    fid = fids.get(connector.intervention_id)
+                    geom = QgsGeometry.fromPolylineXY([
+                        QgsPointXY(connector.start_x, connector.start_y),
+                        QgsPointXY(connector.end_x, connector.end_y),
+                    ])
+                    values = {
+                        "intervention_id": connector.intervention_id,
+                        "depth_category": connector.depth_category,
+                        "side": connector.side,
+                        "road_key": connector.road_key,
+                        "length_m": connector.length_m,
+                    }
+                    layer.startEditing()
+                    try:
+                        if fid is not None:
+                            ok = layer.changeAttributeValues(fid, {
+                                fields.indexOf(k): v for k, v in values.items()
+                                if k != "intervention_id"
+                            })
+                            ok = layer.changeGeometry(fid, geom) and ok
+                        else:
+                            feat = QgsFeature(fields)
+                            for k, v in values.items():
+                                feat.setAttribute(k, v)
+                            now = QDateTime.currentDateTimeUtc()
+                            for ts_col in ("created_at", "updated_at"):
+                                idx = fields.indexOf(ts_col)
+                                if idx >= 0:
+                                    feat.setAttribute(idx, now)
+                            feat.setGeometry(geom)
+                            ok = layer.addFeature(feat)
+                        ok = ok and layer.commitChanges()
+                    except Exception as exc:
+                        feedback.reportError(
+                            f"Connecteur {connector.intervention_id} : {exc}", fatalError=False
+                        )
+                        ok = False
+                    if ok:
+                        updated += 1 if fid is not None else 0
+                        inserted += 0 if fid is not None else 1
                     else:
-                        feat = QgsFeature(fields)
-                        for k, v in values.items():
-                            feat.setAttribute(k, v)
-                        now = QDateTime.currentDateTimeUtc()
-                        for ts_col in ("created_at", "updated_at"):
-                            idx = fields.indexOf(ts_col)
-                            if idx >= 0:
-                                feat.setAttribute(idx, now)
-                        feat.setGeometry(geom)
-                        ok = layer.addFeature(feat)
-                    ok = ok and layer.commitChanges()
-                except Exception as exc:
-                    feedback.reportError(
-                        f"Connecteur {connector.intervention_id} : {exc}", fatalError=False
-                    )
-                    ok = False
-                if ok:
-                    updated += 1 if fid is not None else 0
-                    inserted += 0 if fid is not None else 1
-                else:
-                    failed += 1
-                    layer.rollBack()
-            if to_delete and not feedback.isCanceled():
-                layer.startEditing()
-                if layer.deleteFeatures([fids[i] for i in to_delete]) and layer.commitChanges():
-                    deleted = len(to_delete)
-                else:
-                    failed += len(to_delete)
-                    layer.rollBack()
+                        failed += 1
+                        layer.rollBack()
+                if to_delete and not feedback.isCanceled():
+                    layer.startEditing()
+                    if layer.deleteFeatures([fids[i] for i in to_delete]) and layer.commitChanges():
+                        deleted = len(to_delete)
+                    else:
+                        failed += len(to_delete)
+                        layer.rollBack()
             feedback.pushInfo(
                 f"Connecteurs : {inserted} inséré(s) / {updated} mis à jour / {deleted} "
                 f"supprimé(s) / {plan.unchanged} inchangé(s) ; {failed} échec(s)."
@@ -8152,7 +8227,7 @@ if HAS_QGIS:
         def _store_osm_ways(self, ways, feedback):
             """Envoie les voies Overpass NOUVELLES du run a ref.osm_roads (best-effort).
 
-            Via ``public.fn_asbuilt_store_osm_ways(jsonb)`` (SECURITY DEFINER,
+            Via ``fn_asbuilt_store_osm_ways(jsonb)`` (SECURITY DEFINER,
             ON CONFLICT DO NOTHING, types Farois seulement) — le compte 'be' n'a
             aucun droit direct sur ref. Sa presence est sondee UNE fois par run
             (pg_proc) ; absente -> une ligne d'info, rien d'autre. Lots de
@@ -8172,7 +8247,7 @@ if HAS_QGIS:
                 try:
                     probe = be_connection.executeSql(
                         "SELECT count(*) FROM pg_proc p JOIN pg_namespace n "
-                        "ON n.oid = p.pronamespace WHERE n.nspname = 'public' "
+                        f"ON n.oid = p.pronamespace WHERE n.nspname = '{self._names.schema}' "
                         "AND p.proname = 'fn_asbuilt_store_osm_ways'"
                     )
                     state["available"] = bool(probe and int(probe[0][0]) > 0)
@@ -8190,7 +8265,7 @@ if HAS_QGIS:
             for start in range(0, len(payload), OSM_STORE_BATCH_SIZE):
                 batch = payload[start:start + OSM_STORE_BATCH_SIZE]
                 try:
-                    rows = be_connection.executeSql(store_osm_ways_sql(batch)) or []
+                    rows = be_connection.executeSql(store_osm_ways_sql(batch, self._names.schema)) or []
                     inserted = int(rows[0][0]) if rows and rows[0][0] is not None else 0
                 except Exception as exc:
                     state["failed"] += len(batch)
@@ -8265,7 +8340,7 @@ if HAS_QGIS:
                            recompute_existing=True):
             """Regenere les segments d'axe de rue — INCREMENTAL par defaut.
 
-            Relit TOUT public.geofiber_asbuilt_depth_points et TOUTE la table des
+            Relit TOUT geofiber_asbuilt_depth_points et TOUTE la table des
             segments, puis :
 
             * mode INCREMENTAL (defaut) : ne relocalise et ne recalcule que les
@@ -8343,7 +8418,7 @@ if HAS_QGIS:
             # reelle (MultiLineString, ou LineString avant migration).
             multi_column = self._segments_is_multi(feedback)
             segments_layer = self._open_be_layer(
-                SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME, BE_GEOM_COLUMN,
+                self._names.schema, SEGMENTS_TABLE_NAME, BE_GEOM_COLUMN,
                 QgsWkbTypes.Type.MultiLineString if multi_column else QgsWkbTypes.Type.LineString,
                 feedback,
             )
@@ -8351,7 +8426,7 @@ if HAS_QGIS:
                 return
             if not segments_layer.primaryKeyAttributes():
                 feedback.pushWarning(
-                    f"Couche {SEGMENTS_TABLE_SCHEMA}.{SEGMENTS_TABLE_NAME} sans cle "
+                    f"Couche {self._names.segments} sans cle "
                     "primaire exploitable — ecriture impossible, rien n'a ete ecrit "
                     "en base."
                 )
@@ -8359,8 +8434,8 @@ if HAS_QGIS:
             fields = segments_layer.fields()
             if fields.indexOf("side") < 0:
                 feedback.pushWarning(
-                    f"Colonne 'side' absente de {SEGMENTS_TABLE_SCHEMA}."
-                    f"{SEGMENTS_TABLE_NAME} — MIGRATION REQUISE (ajout de la colonne "
+                    f"Colonne 'side' absente de {self._names.segments}"
+                    " — MIGRATION REQUISE (ajout de la colonne "
                     "side 'L'/'R' et cle primaire (point_a_intervention_id, "
                     "point_b_intervention_id, half, side)). Segments non recalcules : "
                     "rien n'a ete ecrit ni supprime pour ce run."
@@ -8412,7 +8487,7 @@ if HAS_QGIS:
             be_connection = md.findConnection(BE_CONNECTION_NAME) if md else None
             try:
                 count_result = be_connection.executeSql(
-                    f"SELECT count(*) FROM {BE_TABLE_SCHEMA}.{BE_TABLE_NAME}"
+                    f"SELECT count(*) FROM {self._names.points}"
                 )
                 expected_count = int(count_result[0][0]) if count_result else None
             except Exception:
@@ -8422,12 +8497,12 @@ if HAS_QGIS:
             )
             if expected_count is None:
                 feedback.pushWarning(
-                    f"Comptage exact de {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} impossible "
+                    f"Comptage exact de {self._names.points} impossible "
                     "— lecture des points non verifiable."
                 )
             elif partial_read:
                 feedback.pushWarning(
-                    f"Lecture de {BE_TABLE_SCHEMA}.{BE_TABLE_NAME} suspectee "
+                    f"Lecture de {self._names.points} suspectee "
                     f"incomplete ({total_features_seen}/{expected_count} entite(s) "
                     "lue(s) — echec silencieux de getFeatures() possible)."
                 )
@@ -8490,8 +8565,8 @@ if HAS_QGIS:
                 )
                 feedback.pushInfo(
                     f"Segments : reconstruction complète ({reason}) sur "
-                    f"{total_features_seen} point(s) de {BE_TABLE_SCHEMA}."
-                    f"{BE_TABLE_NAME} ({len(rows)} de profondeur connue)…"
+                    f"{total_features_seen} point(s) de {self._names.points} "
+                    f"({len(rows)} de profondeur connue)…"
                 )
                 (locations, road_extents, had_connection_error,
                  unavailable_ids, road_lines) = self._locate_points_on_road(
@@ -8709,88 +8784,106 @@ if HAS_QGIS:
                     f"Segments : {n_implausible} géométrie(s) à écrire hors de la plage "
                     f"Lambert 72 ({BELGIAN_LAMBERT_AUTHID}) — SCR suspect."
                 )
-            inserted = updated = failed = 0
-            n_writes = max(len(writes), 1)
-            for i, (half, existing_fid) in enumerate(writes):
-                if feedback.isCanceled():
-                    break
-                feedback.setProgress(int(100 * i / n_writes))
-                key = segment_key(half)
-                key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
-                is_update = existing_fid is not None
-                parts, dropped = geometry_for_column(geometries[key], multi_column)
-                n_dropped_parts += dropped
-                if multi_column:
-                    geom = QgsGeometry.fromMultiPolylineXY([
-                        [QgsPointXY(x, y) for x, y in part] for part in parts
-                    ])
-                else:
-                    geom = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in parts[0]])
-                values = {
-                    "point_a_intervention_id": half.point_a_intervention_id,
-                    "point_b_intervention_id": half.point_b_intervention_id,
-                    "half": half.half,
-                    "side": half.side,
-                    "depth_category": half.depth_category,
-                    "is_long": half.is_long,
-                    "length_m": half.length_m,
-                    "road_key": half.road_key,
-                }
-                segments_layer.startEditing()
-                ok = False
-                try:
-                    if is_update:
-                        attr_map = {
-                            fields.indexOf(name): val for name, val in values.items()
-                        }
-                        ok = segments_layer.changeAttributeValues(existing_fid, attr_map)
-                        ok = segments_layer.changeGeometry(existing_fid, geom) and ok
+            write_denied = False
+            if self._names.uses_writers:
+                # Schéma projet (mig 574) : table segments en LECTURE SEULE pour
+                # les logins -> écrivains SECURITY DEFINER uniquement, jamais de
+                # DML direct (ni repli). Mêmes compteurs que l'écriture directe.
+                outcome = write_segments_with_writers(
+                    be_connection.executeSql, self._names,
+                    [(half, existing_fid is not None) for half, existing_fid in writes],
+                    to_delete, geometries, multi_column, feedback,
+                )
+                inserted, updated, failed = outcome.inserted, outcome.updated, outcome.failed
+                deleted, failed_delete = outcome.deleted, outcome.failed_delete
+                n_dropped_parts += outcome.dropped_parts
+                if outcome.denied:
+                    write_denied = True
+                    self._note_write_denied(feedback, outcome.denied)
+            else:
+                # Schéma public : écriture directe ligne à ligne (version 1.3.0).
+                inserted = updated = failed = 0
+                n_writes = max(len(writes), 1)
+                for i, (half, existing_fid) in enumerate(writes):
+                    if feedback.isCanceled():
+                        break
+                    feedback.setProgress(int(100 * i / n_writes))
+                    key = segment_key(half)
+                    key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
+                    is_update = existing_fid is not None
+                    parts, dropped = geometry_for_column(geometries[key], multi_column)
+                    n_dropped_parts += dropped
+                    if multi_column:
+                        geom = QgsGeometry.fromMultiPolylineXY([
+                            [QgsPointXY(x, y) for x, y in part] for part in parts
+                        ])
                     else:
-                        feat = QgsFeature(fields)
-                        for name, val in values.items():
-                            feat.setAttribute(name, val)
-                        now = QDateTime.currentDateTimeUtc()
-                        for ts_col in ("created_at", "updated_at"):
-                            idx = fields.indexOf(ts_col)
-                            if idx >= 0:
-                                feat.setAttribute(idx, now)
-                        feat.setGeometry(geom)
-                        ok = segments_layer.addFeature(feat)
-                    ok = ok and segments_layer.commitChanges()
-                except Exception as exc:
-                    feedback.reportError(
-                        f"Echec upsert segment {key_label} : {exc}", fatalError=False
-                    )
+                        geom = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in parts[0]])
+                    values = {
+                        "point_a_intervention_id": half.point_a_intervention_id,
+                        "point_b_intervention_id": half.point_b_intervention_id,
+                        "half": half.half,
+                        "side": half.side,
+                        "depth_category": half.depth_category,
+                        "is_long": half.is_long,
+                        "length_m": half.length_m,
+                        "road_key": half.road_key,
+                    }
+                    segments_layer.startEditing()
                     ok = False
-                if ok:
-                    updated += 1 if is_update else 0
-                    inserted += 0 if is_update else 1
-                else:
-                    failed += 1
-                    for err in segments_layer.commitErrors():
+                    try:
+                        if is_update:
+                            attr_map = {
+                                fields.indexOf(name): val for name, val in values.items()
+                            }
+                            ok = segments_layer.changeAttributeValues(existing_fid, attr_map)
+                            ok = segments_layer.changeGeometry(existing_fid, geom) and ok
+                        else:
+                            feat = QgsFeature(fields)
+                            for name, val in values.items():
+                                feat.setAttribute(name, val)
+                            now = QDateTime.currentDateTimeUtc()
+                            for ts_col in ("created_at", "updated_at"):
+                                idx = fields.indexOf(ts_col)
+                                if idx >= 0:
+                                    feat.setAttribute(idx, now)
+                            feat.setGeometry(geom)
+                            ok = segments_layer.addFeature(feat)
+                        ok = ok and segments_layer.commitChanges()
+                    except Exception as exc:
                         feedback.reportError(
-                            f"Segment {key_label} : {err}", fatalError=False
+                            f"Echec upsert segment {key_label} : {exc}", fatalError=False
                         )
-                    segments_layer.rollBack()
+                        ok = False
+                    if ok:
+                        updated += 1 if is_update else 0
+                        inserted += 0 if is_update else 1
+                    else:
+                        failed += 1
+                        for err in segments_layer.commitErrors():
+                            feedback.reportError(
+                                f"Segment {key_label} : {err}", fatalError=False
+                            )
+                        segments_layer.rollBack()
 
-            deleted = failed_delete = 0
-            for key in to_delete:
-                if feedback.isCanceled():
-                    break
-                key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
-                segments_layer.startEditing()
-                if (
-                    segments_layer.deleteFeatures([existing_fids[key]])
-                    and segments_layer.commitChanges()
-                ):
-                    deleted += 1
-                else:
-                    failed_delete += 1
-                    for err in segments_layer.commitErrors():
-                        feedback.reportError(
-                            f"Suppression segment {key_label} : {err}", fatalError=False
-                        )
-                    segments_layer.rollBack()
+                deleted = failed_delete = 0
+                for key in to_delete:
+                    if feedback.isCanceled():
+                        break
+                    key_label = f"({key[0]}, {key[1]}, {key[2]}, {key[3]})"
+                    segments_layer.startEditing()
+                    if (
+                        segments_layer.deleteFeatures([existing_fids[key]])
+                        and segments_layer.commitChanges()
+                    ):
+                        deleted += 1
+                    else:
+                        failed_delete += 1
+                        for err in segments_layer.commitErrors():
+                            feedback.reportError(
+                                f"Suppression segment {key_label} : {err}", fatalError=False
+                            )
+                        segments_layer.rollBack()
 
             if n_dropped_parts:
                 feedback.pushWarning(
@@ -8814,7 +8907,8 @@ if HAS_QGIS:
             )
 
             # --- etape 2b : connecteurs point -> extremite du segment ---------
-            if connectors is not None and not feedback.isCanceled():
+            # (Écriture refusée par la base : inutile d'essayer les connecteurs.)
+            if connectors is not None and not feedback.isCanceled() and not write_denied:
                 self._sync_connectors(
                     feedback, connectors,
                     points={r["intervention_id"]: (r["x"], r["y"], r["depth_category"])
@@ -8877,16 +8971,16 @@ if HAS_QGIS:
             # Ordre d'empilement : connecteurs SOUS les segments, SOUS les points
             # (cle de tri : plus grande = au-dessus).
             specs = [
-                (BE_TABLE_SCHEMA, BE_TABLE_NAME, QgsWkbTypes.Type.Point,
+                (self._names.schema, POINTS_TABLE_NAME, QgsWkbTypes.Type.Point,
                  BE_POINTS_LAYER_NAME, 3),
-                (SEGMENTS_TABLE_SCHEMA, SEGMENTS_TABLE_NAME,
+                (self._names.schema, SEGMENTS_TABLE_NAME,
                  QgsWkbTypes.Type.MultiLineString if self._segments_is_multi(feedback)
                  else QgsWkbTypes.Type.LineString,
                  BE_SEGMENTS_LAYER_NAME, 2),
             ]
             if self._read_connectors(feedback) is not None:
                 specs.append(
-                    (CONNECTORS_TABLE_SCHEMA, CONNECTORS_TABLE_NAME, QgsWkbTypes.Type.LineString,
+                    (self._names.schema, CONNECTORS_TABLE_NAME, QgsWkbTypes.Type.LineString,
                      BE_CONNECTORS_LAYER_NAME, 1)
                 )
             # Références conservées sur l'instance : setPostProcessor ne prend
