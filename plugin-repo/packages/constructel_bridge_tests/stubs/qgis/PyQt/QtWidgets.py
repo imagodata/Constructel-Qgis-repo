@@ -325,6 +325,14 @@ class QFrame(_Widget):
     pass
 
 
+class QHeaderView(_Widget):
+    class ResizeMode:
+        Interactive = 0
+        Stretch = 1
+        Fixed = 2
+        ResizeToContents = 3
+
+
 class QSizePolicy:
     class Policy:
         Fixed = 0
