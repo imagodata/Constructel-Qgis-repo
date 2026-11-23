@@ -395,14 +395,55 @@ def _texts(root):
     return [w.text() for w in _widgets(root) if isinstance(w, _Label)]
 
 
+class _Header:
+    """QHeaderView de l'arbre : modes de redimensionnement et reglages notes."""
+
+    def __init__(self):
+        self.modes = {}
+        self.minimum = None
+        self.stretch_last = None
+
+    def setSectionResizeMode(self, column, mode):
+        self.modes[column] = mode
+
+    def setMinimumSectionSize(self, size):
+        self.minimum = size
+
+    def setStretchLastSection(self, stretch):
+        self.stretch_last = stretch
+
+
 class _Tree(_W):
     def __init__(self, *args):
         super().__init__(*args)
         self.children = []
         self.itemChanged = _Sig()
+        self.column_count = 1
+        self.header_labels = []
+        self.header_hidden = False
+        self.hidden_columns = set()
+        self._header = _Header()
 
     def clear(self):
         self.children = []
+
+    def header(self):
+        return self._header
+
+    def setColumnCount(self, count):
+        self.column_count = count
+
+    def setHeaderLabels(self, labels):
+        self.header_labels = list(labels)
+
+    def setHeaderHidden(self, hidden):
+        self.header_hidden = hidden
+
+    def setColumnHidden(self, column, hidden):
+        if hidden:
+            self.hidden_columns.add(column)
+        else:
+            self.hidden_columns.discard(column)
 
 
 class _Item:

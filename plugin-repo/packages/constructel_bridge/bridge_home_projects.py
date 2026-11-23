@@ -28,6 +28,7 @@ from typing import Callable, Optional
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -49,6 +50,19 @@ MODE_OFFLINE = "offline"
 MODE_LEGACY = "legacy"          # page 2.0
 MODE_QGIS = "qgis"              # page 2.1 complete
 MODE_NOMINATIVE = "nominative"  # login partage : projets de reference seuls
+
+# Largeur minimale (px) des colonnes de l'arbre ; la colonne des noms s'elargit
+# a son contenu au-dela (2.1.2).
+MIN_COLUMN_WIDTH = 160
+
+
+def column_headers(mode: str) -> list:
+    """En-tetes de l'arbre selon le mode : nom · projet metier · detail
+    (partage, proprietaire et droits, ou description d'un projet de
+    reference) en 2.1, nom · description en page 2.0."""
+    if mode in (MODE_QGIS, MODE_NOMINATIVE):
+        return [tr("home.projects_col_name"), tr("qgis.col_projet"), tr("qgis.col_detail")]
+    return [tr("home.projects_col_name"), tr("home.projects_col_description")]
 
 
 def normalize(text) -> str:
@@ -130,8 +144,7 @@ class ProjectsPage(QWidget):
         layout.addWidget(self._message)
 
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(3 if self._mode in (MODE_QGIS, MODE_NOMINATIVE) else 2)
-        self._tree.setHeaderHidden(True)
+        self._setup_columns()
         layout.addWidget(self._tree)
 
         self._feedback = QLabel("")      # resultat d'un enregistrement, partage, suppression
@@ -160,6 +173,24 @@ class ProjectsPage(QWidget):
         if self._mode != MODE_OFFLINE:
             self._load()
         self._refresh()
+
+    def _setup_columns(self) -> None:
+        """En-tetes visibles ; les noms (sections, groupes, projets) ne sont
+        jamais tronques : colonne 0 (et projet metier) a la largeur de leur
+        contenu, recalculee par Qt a chaque remplissage, recherche, depli ou
+        repli ; la derniere colonne prend le reste."""
+        headers = column_headers(self._mode)
+        self._tree.setColumnCount(len(headers))
+        self._tree.setHeaderLabels(headers)
+        self._tree.setHeaderHidden(False)
+        header = self._tree.header()
+        header.setMinimumSectionSize(MIN_COLUMN_WIDTH)
+        header.setStretchLastSection(True)
+        for column in range(len(headers) - 1):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        if self._mode == MODE_NOMINATIVE:
+            # Login partage : projets de reference seuls, jamais de projet metier.
+            self._tree.setColumnHidden(1, True)
 
     # -- donnees -----------------------------------------------------------------------------
 

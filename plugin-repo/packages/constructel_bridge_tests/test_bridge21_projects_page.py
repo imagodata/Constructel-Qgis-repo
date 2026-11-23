@@ -233,6 +233,71 @@ def test_visible_list_error_shows_the_error_message(page_mod):
     assert page._message.text() == page_mod.tr("home.projects_error")
 
 
+# -- colonnes : en-tetes traduits, noms jamais tronques (correctif 2.1.x) --------------------
+
+def _resize_to_contents():
+    from qgis.PyQt.QtWidgets import QHeaderView
+
+    return QHeaderView.ResizeMode.ResizeToContents
+
+
+def test_qgis_page_headers_name_projet_and_detail_columns(page_mod):
+    tr = page_mod.tr
+    page = _page(page_mod)
+    tree = page._tree
+    assert not tree.header_hidden and tree.column_count == 3
+    assert tree.header_labels == [tr("home.projects_col_name"), tr("qgis.col_projet"), tr("qgis.col_detail")]
+    # La colonne 1 porte le projet metier, la 2 le detail (partage, proprietaire et droits).
+    mine = tree.children[0].children[1]
+    assert mine.text(1) == "GoFiber" and tr("qgis.badge_published") in mine.text(2)
+    assert tree.hidden_columns == set()
+
+
+def test_name_column_fits_its_content_and_last_column_stretches(page_mod):
+    page = _page(page_mod)
+    header = page._tree.header()
+    # Nom et projet metier a la largeur de leur contenu (recalculee par Qt a chaque
+    # remplissage, recherche, depli ou repli), le detail prend le reste.
+    assert header.modes == {0: _resize_to_contents(), 1: _resize_to_contents()}
+    assert header.stretch_last is True
+    assert header.minimum == page_mod.MIN_COLUMN_WIDTH > 0
+
+
+def test_shared_login_hides_the_always_empty_projet_column(page_mod):
+    tr = page_mod.tr
+    page = _page(page_mod, nominative=False)
+    assert page._tree.header_labels == [tr("home.projects_col_name"), tr("qgis.col_projet"), tr("qgis.col_detail")]
+    assert page._tree.hidden_columns == {1}
+    ref = page._tree.children[0].children[0].children[0]
+    assert ref.text(0) == "Ixelles" and ref.text(1) == "" and ref.text(2) == "Réseau"
+
+
+@pytest.mark.parametrize("kwargs", [dict(caps=pj.ProjetCapabilities(registry=True, qgis_table=True)),
+                                    dict(with_qgis=False), dict(connected=False)])
+def test_2_0_and_offline_pages_have_name_and_description_headers(page_mod, kwargs):
+    tr = page_mod.tr
+    page = _page(page_mod, **kwargs)
+    tree = page._tree
+    assert not tree.header_hidden and tree.column_count == 2
+    assert tree.header_labels == [tr("home.projects_col_name"), tr("home.projects_col_description")]
+    assert tree.header().modes == {0: _resize_to_contents()} and tree.header().stretch_last is True
+    assert tree.hidden_columns == set()
+
+
+@pytest.mark.parametrize("lang, expected", [
+    ("fr", (["Nom", "Projet métier", "Détail"], ["Nom", "Description"])),
+    ("en", (["Name", "Business project", "Details"], ["Name", "Description"])),
+    ("pt", (["Nome", "Projeto de negócio", "Detalhe"], ["Nome", "Descrição"])),
+])
+def test_column_headers_are_translated(page_mod, monkeypatch, lang, expected):
+    i18n = sys.modules[page_mod.tr.__module__]
+    monkeypatch.setattr(i18n, "_current_lang", lang)
+    assert page_mod.column_headers(page_mod.MODE_QGIS) == expected[0]
+    assert page_mod.column_headers(page_mod.MODE_NOMINATIVE) == expected[0]
+    assert page_mod.column_headers(page_mod.MODE_LEGACY) == expected[1]
+    assert page_mod.column_headers(page_mod.MODE_OFFLINE) == expected[1]
+
+
 def test_search_matches_projet_label(page_mod):
     page = _page(page_mod)
     page._search.setText("gofib")

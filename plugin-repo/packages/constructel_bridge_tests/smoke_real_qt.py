@@ -278,19 +278,24 @@ def smoke_21(dialog) -> None:
 
     STATE["snap"] = snapshot21()
     home = HomeDialog(dataclasses.replace(actions(), qgis=qgis_actions()), None)
+    home.resize(1100, 700)
     home.show()
     home.show_page("projects")
     app.processEvents()
     page = home._pages["projects"]
     assert page._mode == "qgis", page._mode
     assert page._tree.topLevelItemCount() == 3
+    assert_names_fit(page._tree, 3)
     mine_section = page._tree.topLevelItem(0)
     page._tree.setCurrentItem(mine_section.child(0))
     app.processEvents()
     assert page._share_button.isEnabled() and page._delete_button.isEnabled()
     page._search.setText("gofib")
     app.processEvents()
+    assert_names_fit(page._tree, 3)
     page._search.setText("")
+    app.processEvents()
+    assert_names_fit(page._tree, 3)
     page._delete_selected(ask=lambda title, text: True) if page._selected_own_row() else None
     app.processEvents()
 
@@ -301,6 +306,8 @@ def smoke_21(dialog) -> None:
         home.show_page("projects")
         app.processEvents()
         LOG.append(("mode", home._pages["projects"]._mode))
+        tree = home._pages["projects"]._tree
+        assert_names_fit(tree, 3 if home._pages["projects"]._mode == "nominative" else 2)
 
     # 8. Changement de langue EN puis PT, page Projets affichee.
     STATE["snap"] = snapshot21()
@@ -311,6 +318,34 @@ def smoke_21(dialog) -> None:
         app.processEvents()
     home.reject()
     app.processEvents()
+
+
+def assert_names_fit(tree, columns: int) -> None:
+    """En-tetes visibles et colonne 0 assez large pour chaque nom affiche
+    (sections, groupes, projets) : aucun nom tronque."""
+    assert not tree.isHeaderHidden() and tree.columnCount() == columns, (tree.isHeaderHidden(), tree.columnCount())
+    labels = [tree.headerItem().text(c) for c in range(columns)]
+    assert all(labels), labels
+    metrics = tree.fontMetrics()
+    iterator = QtWidgets.QTreeWidgetItemIterator(tree)
+    while iterator.value() is not None:
+        item = iterator.value()
+        depth, parent = 1, item.parent()
+        while parent is not None:
+            depth, parent = depth + 1, parent.parent()
+        visible = all(p.isExpanded() for p in _ancestors(item))
+        need = metrics.horizontalAdvance(item.text(0)) + depth * tree.indentation()
+        if visible:
+            assert tree.columnWidth(0) >= need, (item.text(0), tree.columnWidth(0), need)
+        iterator += 1
+    LOG.append(("columns", labels, tree.columnWidth(0)))
+
+
+def _ancestors(item):
+    parent = item.parent()
+    while parent is not None:
+        yield parent
+        parent = parent.parent()
 
 
 def actions():
