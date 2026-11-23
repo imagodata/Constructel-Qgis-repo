@@ -191,6 +191,36 @@ class QgsApplication:
     def userProfileManager(self):
         return _StubUserProfileManager()
 
+    @staticmethod
+    def projectStorageRegistry():
+        return _PROJECT_STORAGE_REGISTRY
+
+
+class QgsProjectStorage:
+    """Base de stockage de projet (QGIS >= 3.2) : rien a appeler."""
+
+    def __init__(self):
+        pass
+
+
+class _StubProjectStorageRegistry:
+    """Comme QGIS : un stockage par type ; le retrait le detruit."""
+
+    def __init__(self):
+        self.backends = {}
+
+    def projectStorageFromType(self, type):
+        return self.backends.get(type)
+
+    def registerProjectStorage(self, storage):
+        self.backends[storage.type()] = storage
+
+    def unregisterProjectStorage(self, storage):
+        self.backends.pop(storage.type(), None)
+
+
+_PROJECT_STORAGE_REGISTRY = _StubProjectStorageRegistry()
+
 
 class QgsAuthMethodConfig:
     def __init__(self, method_name=""):
