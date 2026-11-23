@@ -201,6 +201,12 @@ def _build_windows(name, plugin):
         from constructel_bridge.bridge_layer_selection import LayerSelectionWidget
 
         wizard = OnboardingWizard(None, "smoke", "00000000-0000-0000-0000-000000000000", True)
+        # Aucune installation d'extension depuis le depot pendant la fumee : un
+        # QGIS sans interface n'a pas le noeud de reglages du gestionnaire
+        # d'extensions (cree par l'application de bureau), pyplugin_installer y
+        # echoue ('NoneType' ... 'childSetting') et le Bridge le journalise.
+        for box in wizard._page_plugins._checkboxes.values():
+            box.setChecked(False)
         widgets = [ConstructelConnectDialog(), wizard, LayerSelectionWidget()]
         wizard.show()
         for _ in wizard.pageIds():
