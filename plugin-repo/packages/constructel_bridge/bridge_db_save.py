@@ -13,9 +13,11 @@ les octets au plugin (``projet.fn_qgis_project_save``, version attendue).
 « Enregistrer sous » reste natif : il donne un chemin local au projet, qui
 quitte ce stockage. ``unload`` retire le stockage et l'URI du projet courant.
 
-La lecture par ce stockage (projets recents, « Revenir ») est refusee avec un
-message : un projet en base ne s'ouvre que par le Bridge, qui neutralise le
-code embarque et les identifiants avant ``project.read``.
+Un projet en base ne s'ouvre que par le Bridge, qui neutralise le code
+embarque et les identifiants avant ``project.read`` : les URI ouvertes par
+QGIS (projets recents, « Revenir ») passent par un gestionnaire d'ouverture
+(``QgsCustomProjectOpenHandler``) qui les confie au Bridge ; la lecture par le
+stockage, dernier recours, est refusee avec un message.
 
 Aucun import QGIS au niveau du module (tests sans QGIS).
 """
@@ -82,6 +84,27 @@ def _push(context, message: str) -> None:
             pass
 
 
+def _keep_work(device) -> None:
+    """Refus ou echec de l'ecriture : ``zip()`` a deja marque le projet
+    « non modifie » ; il le redevient (la fermeture redemandera), et la copie
+    temporaire que QGIS laisserait dans le dossier temporaire est supprimee."""
+    try:
+        from qgis.core import QgsProject  # noqa: PLC0415
+
+        QgsProject.instance().setDirty(True)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        path = device.fileName() if callable(getattr(device, "fileName", None)) else ""
+        if path:
+            device.close()
+            import os  # noqa: PLC0415
+
+            os.remove(path)
+    except Exception:  # noqa: BLE001 - QGIS gardera son temporaire
+        pass
+
+
 def storage_class():
     """Classe ``QgsProjectStorage`` du Bridge (construite a l'appel : la
     base vient de ``qgis.core``). Aucune methode ne laisse passer
@@ -107,21 +130,72 @@ def storage_class():
 
         def writeProject(self, uri, device, context):  # noqa: N802
             writer = self.writer
-            if writer is None:
-                _push(context, tr("disquette.unavailable"))
-                return False
             try:
-                saved, message = writer(uri, _bytes(device.readAll()))
+                if writer is None:
+                    saved, message = False, tr("disquette.unavailable")
+                else:
+                    saved, message = writer(uri, _bytes(device.readAll()))
             except Exception as exc:  # noqa: BLE001
-                saved, message = False, tr("save.error", message=str(exc))
+                saved, message = False, tr("disquette.refused", reason=tr("save.error", message=str(exc)))
             if not saved:
                 _push(context, message)
+                _keep_work(device)
             return bool(saved)
 
         def removeProject(self, uri):  # noqa: N802
             return False
 
     return BridgeProjectStorage
+
+
+def open_handler_class():
+    """Ouverture des URI ``constructel-bridge:`` par QGIS (projets recents,
+    « Revenir », Fichier > Ouvrir) : confiee au Bridge, qui neutralise le
+    projet avant de le lire. Sans Bridge charge (opener None), QGIS se replie
+    sur le stockage, qui refuse avec un message."""
+    from qgis.gui import QgsCustomProjectOpenHandler  # noqa: PLC0415
+
+    class BridgeProjectOpenHandler(QgsCustomProjectOpenHandler):
+        def __init__(self, opener):
+            super().__init__()
+            self.opener = opener
+
+        def handleProjectOpen(self, file):  # noqa: N802
+            opener = self.opener
+            if opener is None or not is_bridge_uri(file):
+                return False
+            try:
+                opener(file)
+            except Exception:  # noqa: BLE001 - jamais d'exception vers QGIS
+                pass
+            return True
+
+        def filters(self):
+            return []
+
+    return BridgeProjectOpenHandler
+
+
+def register_open_handler(iface, opener, log: Optional[Callable[[str], None]] = None):
+    """Gestionnaire d'ouverture (QGIS >= 3.14) ; None si l'API manque."""
+    try:
+        handler = open_handler_class()(opener)
+        iface.registerCustomProjectOpenHandler(handler)
+        return handler
+    except Exception as exc:  # noqa: BLE001
+        if log is not None:
+            log(f"Ouverture des projets en base par QGIS non geree : {exc}")
+        return None
+
+
+def unregister_open_handler(iface, handler) -> None:
+    if handler is None:
+        return
+    handler.opener = None
+    try:
+        iface.unregisterCustomProjectOpenHandler(handler)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _registry():
@@ -153,6 +227,9 @@ def unregister_storage(storage) -> None:
         return
     storage.writer = None
     try:
-        _registry().unregisterProjectStorage(storage)
+        registry = _registry()
+        # Retrait par type : ne jamais detruire un stockage plus recent.
+        if registry.projectStorageFromType(STORAGE_TYPE) is storage:
+            registry.unregisterProjectStorage(storage)
     except Exception:  # noqa: BLE001 - dechargement best effort
         pass

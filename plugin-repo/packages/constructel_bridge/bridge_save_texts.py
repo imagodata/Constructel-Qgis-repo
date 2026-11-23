@@ -13,6 +13,7 @@ from .bridge_project_safety import (
     Finding,
 )
 from .bridge_qgis_store import (
+    STATUS_DENIED,
     STATUS_GONE,
     STATUS_INVALID,
     STATUS_NAME_TAKEN,
@@ -47,7 +48,7 @@ def save_outcome_text(outcome) -> str:
     status = outcome.status
     if status == STATUS_NAME_TAKEN:
         return tr("save.name_taken")
-    if status == STATUS_GONE:
+    if status in (STATUS_GONE, STATUS_DENIED):   # droit retire en cours de session
         return tr("save.gone")
     if status == "unsafe":
         lines = [tr("save.unsafe_intro")] + ["• " + format_finding(f) for f in (outcome.value or ())]

@@ -66,7 +66,9 @@ from .bridge_db_save import (
     clear_file_name,
     is_bridge_uri,
     name_from_uri,
+    register_open_handler,
     register_storage,
+    unregister_open_handler,
     unregister_storage,
 )
 from .bridge_project_safety import MAX_CONTENT_BYTES, MAX_QGS_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
@@ -1021,6 +1023,7 @@ class ConstructelBridgePlugin:
         # Stockage de projet « constructel-bridge: » (disquette d'un projet
         # QGIS en base) ; None tant que non declare ou si l'API manque.
         self._db_storage = None
+        self._db_open_handler = None
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -1218,6 +1221,9 @@ class ConstructelBridgePlugin:
         # le Bridge : stockage de projet QGIS (bridge_db_save), jamais un
         # detournement de l'action « Enregistrer ».
         self._db_storage = register_storage(self._save_from_storage, log=self._log)
+        # Projets recents / « Revenir » sur une URI en base : ouverture par le
+        # Bridge (neutralisation, droits), jamais par QGIS seul.
+        self._db_open_handler = register_open_handler(self.iface, self._open_bridge_uri, log=self._log)
 
         # Revue 29/10 (M8) : toute couche ajoutee au projet courant (Bridge
         # ou non, navigateur compris) suit le perimetre de la session.
@@ -1250,6 +1256,8 @@ class ConstructelBridgePlugin:
         # Projet en base : sans le stockage, son URI serait prise pour un
         # chemin de fichier ; la disquette redevient « Enregistrer sous ».
         self._detach_db_location()
+        unregister_open_handler(self.iface, self._db_open_handler)
+        self._db_open_handler = None
         unregister_storage(self._db_storage)
         self._db_storage = None
         try:
@@ -4423,6 +4431,24 @@ class ConstructelBridgePlugin:
         clear_file_name(project)
         project.setDirty(dirty)
 
+    def _open_bridge_uri(self, uri: str) -> None:
+        """URI ``constructel-bridge:`` ouverte par QGIS (projets recents,
+        « Revenir ») : QGIS a deja ferme le projet precedent ; le projet QGIS
+        est rouvert comme depuis la page Projets QGIS (droits relus), sinon un
+        message dit pourquoi et le projet reste vide, sans emplacement."""
+        name = name_from_uri(uri) or ""
+        rows = self._list_qgis_projects()
+        if rows is None:
+            self.iface.messageBar().pushMessage(
+                "Constructel Bridge", tr("disquette.open_offline", name=name),
+                level=Qgis.MessageLevel.Warning, duration=10)
+            return
+        row = next((r for r in rows if r.name == name), None)
+        if row is None:
+            QMessageBox.warning(self.iface.mainWindow(), tr("project.title"), tr("project.qgis_not_found", name=name))
+            return
+        self._open_qgis_project(row)
+
     def _refuse_db_save(self, message: str):
         """Rien n'est ecrit : le projet reste « modifie » (zip() de QGIS l'a
         deja marque enregistre), la fermeture redemandera."""
@@ -4452,7 +4478,8 @@ class ConstructelBridgePlugin:
             outcome, report = self._check_archive(content)
         if outcome is None:
             metadata = build_metadata(str(opened.metadata.get("description") or ""), report.saved_by,
-                                      report.saved_at, "", opened.metadata)
+                                      report.saved_at, str(opened.metadata.get("source_file") or ""),
+                                      opened.metadata)
             outcome = qgis_store.save(self._conn, name, content, metadata, opened.version, None, log=self._log)
         if outcome.status == qgis_store.STATUS_CONFLICT:
             return self._refuse_db_save(tr("disquette.conflict", name=name))
@@ -4462,9 +4489,13 @@ class ConstructelBridgePlugin:
         self._opened_qgis_project = OpenedQgisProject(
             name, version, opened.projet_id, opened.projet_code, opened.is_owner, opened.can_edit, metadata)
         project.setDirty(False)
-        message = tr("save.done", name=name, version=version)
-        self._log(message)
-        self.iface.messageBar().pushMessage("Constructel Bridge", message, level=Qgis.MessageLevel.Success, duration=5)
+        try:   # enregistre en base : un message rate ne doit pas dire l'inverse
+            message = tr("save.done", name=name, version=version)
+            self._log(message)
+            self.iface.messageBar().pushMessage("Constructel Bridge", message, level=Qgis.MessageLevel.Success,
+                                                duration=5)
+        except Exception:  # noqa: BLE001
+            pass
         return True, ""
 
     # =====================================================================
@@ -4479,8 +4510,10 @@ class ConstructelBridgePlugin:
         project = QgsProject.instance()
         title = project.title() or ""
         file_name = project.fileName() or ""
-        if not title and file_name:
-            title = name_from_uri(file_name) or os.path.splitext(os.path.basename(file_name))[0]
+        # Jamais de nom tire d'une URI en base : seul le projet ouvert retenu
+        # (_opened_qgis_project) fait d'un enregistrement une mise a jour.
+        if not title and file_name and not is_bridge_uri(file_name):
+            title = os.path.splitext(os.path.basename(file_name))[0]
         login = self._pg_login if self._is_nominative_session() else ""
         return CurrentProjectState(title, len(project.mapLayers()), login)
 
@@ -4510,8 +4543,10 @@ class ConstructelBridgePlugin:
         if refused is not None:
             return refused
         source_file = project.fileName() or ""
-        if is_bridge_uri(source_file):   # projet en base : aucun fichier source
-            source_file = ""
+        if is_bridge_uri(source_file):   # projet en base : fichier source d'origine garde
+            opened = self._opened_qgis_project
+            same_project = opened is not None and opened.name == request.name
+            source_file = str(opened.metadata.get("source_file") or "") if same_project else ""
         import tempfile
         try:
             with tempfile.TemporaryDirectory(prefix="bridge_qgis_") as directory:

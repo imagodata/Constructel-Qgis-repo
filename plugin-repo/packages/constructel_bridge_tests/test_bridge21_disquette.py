@@ -375,3 +375,144 @@ def test_unload_leaves_a_local_project_alone(bp18, monkeypatch):
     QgsProject.instance().setFileName("C:/x/p.qgz")
     plugin.unload()
     assert QgsProject.instance().fileName() == "C:/x/p.qgz"
+
+
+# --- revue : etat « modifie », URI perimee, ouverture par QGIS ----------------------------------
+
+def test_writer_exception_keeps_the_project_modified(bp18):
+    from qgis.core import QgsProject
+
+    def boom(uri, data):
+        raise MemoryError("archive")
+
+    QgsProject.instance().setDirty(False)          # zip() l'a deja remis a « non modifie »
+    assert _storage(bp18, boom).writeProject("u", Device(b"PK"), Context()) is False
+    assert QgsProject.instance().isDirty() is True
+
+
+def test_refused_write_removes_the_temporary_copy(bp18, tmp_path):
+    copy = tmp_path / "uuid"
+    copy.write_bytes(b"PK")
+    device = Device(b"PK")
+    device.fileName = lambda: str(copy)
+    device.close = lambda: None
+    assert _storage(bp18, lambda uri, data: (False, "non")).writeProject("u", device, Context()) is False
+    assert not copy.exists()
+
+
+def test_unregister_never_removes_a_newer_storage(bp18):
+    from qgis.core import QgsApplication
+
+    old = dbs.register_storage(lambda *a: (True, ""))
+    new = dbs.register_storage(lambda *a: (True, ""))
+    dbs.unregister_storage(old)
+    assert QgsApplication.projectStorageRegistry().projectStorageFromType("constructel-bridge") is new
+
+
+def test_stale_bridge_uri_never_names_the_project_to_save(plugin):
+    from qgis.core import QgsProject
+
+    project = QgsProject.instance()
+    project.setTitle("")
+    project.setFileName(dbs.bridge_uri("Vue"))      # URI restee sans projet ouvert retenu
+    assert plugin._current_project_state().title == ""
+
+
+def test_disquette_and_button_keep_the_original_source_file(plugin, monkeypatch):
+    def fake_read(conn, name):
+        return store.OpenRow(qgz(), {"description": "d", "source_file": "C:/x/vue.qgz"}, 4, "a0b1")
+
+    monkeypatch.setattr(store, "read_for_open", fake_read)
+    plugin._open_qgis_project(row())
+    _disquette(plugin)
+    assert plugin.calls[-1][4]["source_file"] == "C:/x/vue.qgz"
+    plugin._save_qgis_project(hm.SaveRequest("Vue", "d", None, None, hm.VISIBILITY_PRIVATE, ()))
+    assert plugin.calls[-1][4]["source_file"] == "C:/x/vue.qgz"
+
+
+def test_rights_withdrawn_during_the_session_say_so(bp18, plugin):
+    plugin._open_qgis_project(row())
+    plugin.save_outcome = store.StoreOutcome(store.STATUS_DENIED, message="QGISP_NOT_OWNER")
+    saved, messages = _disquette(plugin)
+    assert saved is False and bp18.tr("save.gone") in messages[0]
+
+
+def test_success_notification_failure_still_reports_the_save(plugin, monkeypatch):
+    plugin._open_qgis_project(row())
+
+    def broken_bar():
+        raise RuntimeError("barre")
+
+    monkeypatch.setattr(plugin.iface, "messageBar", broken_bar)
+    assert _disquette(plugin)[0] is True
+
+
+class OpenIface:
+    def __init__(self):
+        self.handlers = []
+
+    def registerCustomProjectOpenHandler(self, handler):  # noqa: N802
+        self.handlers.append(handler)
+
+    def unregisterCustomProjectOpenHandler(self, handler):  # noqa: N802
+        self.handlers.remove(handler)
+
+
+def test_open_handler_only_takes_bridge_uris(bp18):
+    opened = []
+    iface = OpenIface()
+    handler = dbs.register_open_handler(iface, opened.append)
+    assert iface.handlers == [handler] and handler.filters() == []
+    assert handler.handleProjectOpen("C:/x/p.qgz") is False
+    assert handler.handleProjectOpen(dbs.bridge_uri("Vue")) is True and opened == [dbs.bridge_uri("Vue")]
+    dbs.unregister_open_handler(iface, handler)
+    assert iface.handlers == [] and handler.handleProjectOpen(dbs.bridge_uri("Vue")) is False
+
+
+def test_open_handler_without_api_returns_none(bp18):
+    assert dbs.register_open_handler(SimpleNamespace(), lambda uri: None) is None
+
+
+def test_recent_project_uri_reopens_through_the_bridge(plugin, monkeypatch):
+    from qgis.core import QgsProject
+
+    monkeypatch.setattr(plugin, "_list_qgis_projects", lambda: [row(name="Autre"), row(can_edit=False, is_owner=False)])
+    plugin._open_bridge_uri(dbs.bridge_uri("Vue"))
+    opened = plugin._opened_qgis_project
+    assert opened.name == "Vue" and not opened.can_edit           # droits relus, pas devines
+    assert QgsProject.instance().fileName() == dbs.bridge_uri("Vue")
+
+
+def test_recent_project_uri_offline_leaves_an_empty_project_without_location(bp18, plugin, monkeypatch):
+    from qgis.core import QgsProject
+
+    QgsProject.instance().setFileName(None)          # QGIS a ferme le projet avant le gestionnaire
+    monkeypatch.setattr(plugin, "_list_qgis_projects", lambda: None)
+    plugin._open_bridge_uri(dbs.bridge_uri("Vue"))
+    assert plugin._opened_qgis_project is None and QgsProject.instance().fileName() is None
+    assert bp18.tr("disquette.open_offline", name="Vue") in _bar(plugin)
+
+
+def test_recent_project_uri_no_longer_visible_is_reported(bp18, plugin, monkeypatch):
+    from qgis.PyQt.QtWidgets import QMessageBox
+
+    boxes = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: boxes.append(a[2])), raising=False)
+    monkeypatch.setattr(plugin, "_list_qgis_projects", lambda: [])
+    plugin._open_bridge_uri(dbs.bridge_uri("Vue"))
+    assert plugin._opened_qgis_project is None and boxes == [bp18.tr("project.qgis_not_found", name="Vue")]
+
+
+def test_initgui_registers_the_open_handler_and_unload_removes_it(bp18, monkeypatch):
+    from constructel_bridge_tests.test_bridge18_connect import _FakeCursor, _initgui_ready, _install_psycopg2
+
+    iface = _initgui_ready(bp18, monkeypatch)
+    open_iface = OpenIface()
+    iface.registerCustomProjectOpenHandler = open_iface.registerCustomProjectOpenHandler
+    iface.unregisterCustomProjectOpenHandler = open_iface.unregisterCustomProjectOpenHandler
+    _install_psycopg2(monkeypatch, [None], _FakeCursor())
+    plugin = bp18.ConstructelBridgePlugin(iface)
+    plugin.initGui()
+    assert open_iface.handlers == [plugin._db_open_handler]
+    plugin.unload()
+    assert open_iface.handlers == [] and plugin._db_open_handler is None

@@ -496,6 +496,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "disquette.detached": "The current project is no longer linked to the QGIS project “{name}” in the database: nothing was saved. Reopen it from the Bridge, or use “Save As…” or the Bridge's “Save the current project…”.",
         "disquette.refused": "{reason}\nNothing was saved in the database; your changes are still in QGIS.",
         "disquette.open_via_bridge": "This QGIS project is stored in the database: open it from Constructel Bridge (QGIS projects page).",
+        "disquette.open_offline": "Connect to the Bridge with your personal login, then reopen the QGIS project “{name}” from the QGIS projects page.",
         "disquette.unavailable": "Constructel Bridge is not loaded: nothing was saved. Use “Save As…” for a local copy.",
     },
 
@@ -988,6 +989,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "disquette.detached": "Le projet courant n'est plus rattaché au projet QGIS « {name} » en base : rien n'a été enregistré. Rouvrez-le depuis le Bridge, ou utilisez « Enregistrer sous… » ou « Enregistrer le projet courant… » du Bridge.",
         "disquette.refused": "{reason}\nRien n'a été enregistré en base ; vos modifications restent dans QGIS.",
         "disquette.open_via_bridge": "Ce projet QGIS est enregistré en base : ouvrez-le depuis Constructel Bridge (page Projets QGIS).",
+        "disquette.open_offline": "Connectez-vous au Bridge avec votre login personnel, puis rouvrez le projet QGIS « {name} » depuis la page Projets QGIS.",
         "disquette.unavailable": "Constructel Bridge n'est pas chargé : rien n'a été enregistré. Utilisez « Enregistrer sous… » pour une copie locale.",
     },
 
@@ -1480,6 +1482,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "disquette.detached": "O projeto atual já não está ligado ao projeto QGIS «{name}» na base de dados: nada foi guardado. Volte a abri-lo a partir do Bridge, ou use «Guardar como…» ou «Guardar o projeto atual…» do Bridge.",
         "disquette.refused": "{reason}\nNada foi guardado na base de dados; as suas alterações continuam no QGIS.",
         "disquette.open_via_bridge": "Este projeto QGIS está guardado na base de dados: abra-o a partir do Constructel Bridge (página Projetos QGIS).",
+        "disquette.open_offline": "Ligue-se ao Bridge com o seu login pessoal e volte a abrir o projeto QGIS «{name}» a partir da página Projetos QGIS.",
         "disquette.unavailable": "O Constructel Bridge não está carregado: nada foi guardado. Use «Guardar como…» para uma cópia local.",
     },
 }
