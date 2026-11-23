@@ -325,6 +325,72 @@ def check_bridge_tls():
         mgr.removeAuthenticationConfig(config.id())
 
 
+def check_bridge_disquette():
+    """Disquette d'un projet en base (Bridge 2.1.x) dans un vrai QGIS : le
+    stockage Python ``constructel-bridge:`` recoit l'archive de
+    ``QgsProject.write()``, un refus laisse le projet modifie et passe son
+    message a project.error(), le retrait du stockage rend la main ; le
+    gestionnaire d'ouverture Python se construit et filtre les URI."""
+    import io
+    import zipfile
+
+    from qgis.core import QgsApplication
+
+    dbs = importlib.import_module("constructel_bridge.bridge_db_save")
+    registry = QgsApplication.projectStorageRegistry()
+    project = QgsProject.instance()
+    if not project.mapLayers():
+        project.addMapLayer(QgsVectorLayer("Point?crs=EPSG:31370", "disquette", "memory"))
+    received = []
+    answer = {"saved": True}
+
+    def writer(uri, data):
+        received.append((uri, data))
+        return (True, "") if answer["saved"] else (False, "refus smoke")
+
+    storage = dbs.register_storage(writer, log=print)
+    if storage is None or registry.projectStorageFromType(dbs.STORAGE_TYPE) is not storage:
+        fail("disquette", "stockage non enregistre")
+        return
+    uri = dbs.bridge_uri("Smoke / disquette")
+    try:
+        project.setFileName(uri)
+        if project.projectStorage() is None:
+            fail("disquette", "URI non rattachee au stockage")
+        project.setDirty(True)
+        if not project.write() or len(received) != 1 or received[0][0] != uri:
+            fail("disquette", f"ecriture non transmise : {project.error()} {[r[0] for r in received]}")
+        else:
+            with zipfile.ZipFile(io.BytesIO(received[0][1])) as zf:
+                names = zf.namelist()
+            if not any(n.endswith(".qgs") for n in names) or project.isDirty():
+                fail("disquette", f"archive {names} / modifie={project.isDirty()}")
+            else:
+                print(f"  ok disquette -> stockage ({len(received[0][1])} octets, {names})")
+        answer["saved"] = False
+        if project.write():
+            fail("disquette", "refus ignore par QgsProject.write()")
+        elif "refus smoke" not in project.error() or not project.isDirty():
+            fail("disquette", f"refus : erreur={project.error()!r} modifie={project.isDirty()}")
+        else:
+            print("  ok refus : message dans project.error(), projet toujours modifie")
+        handler = dbs.open_handler_class()(lambda file: None)
+        if handler.handleProjectOpen("/tmp/x.qgz") or not handler.handleProjectOpen(uri):
+            fail("disquette", "gestionnaire d'ouverture : filtrage des URI")
+    finally:
+        dbs.clear_file_name(project)
+        project.setDirty(False)
+        dbs.unregister_storage(storage)
+    if registry.projectStorageFromType(dbs.STORAGE_TYPE) is not None:
+        fail("disquette", "stockage toujours enregistre apres retrait")
+
+
+print("== disquette d'un projet en base (Bridge 2.1.x)")
+try:
+    check_bridge_disquette()
+except Exception:
+    fail("disquette", traceback.format_exc())
+
 print("== TLS nominatif (Bridge 1.8)")
 try:
     check_bridge_tls()
