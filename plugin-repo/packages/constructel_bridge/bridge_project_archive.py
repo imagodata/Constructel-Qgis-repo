@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 
+from .bridge_db_save import clear_file_name
+
 ARCHIVE_NAME = "bridge_save.qgz"
 
 
@@ -73,7 +75,10 @@ def write_project_archive(project, directory: str) -> bytes:
             return handle.read()
     finally:
         try:
-            project.setFileName(file_name)
+            if file_name:
+                project.setFileName(file_name)
+            else:   # projet sans emplacement : chemin NUL, pas "" (disquette native)
+                clear_file_name(project)
         finally:
             try:
                 _restore_storage(project, storage)

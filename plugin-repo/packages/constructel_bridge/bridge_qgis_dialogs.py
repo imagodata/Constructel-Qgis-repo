@@ -37,23 +37,13 @@ from .bridge_home_model import (
 )
 from .bridge_home_style import home_style_sheet, set_role
 from .bridge_people_picker import PeoplePicker
-from .bridge_project_safety import (
-    FINDING_ACTION,
-    FINDING_EXPRESSION_FUNCTIONS,
-    FINDING_FORM_INIT,
-    FINDING_MACROS,
-    FINDING_PASSWORD,
-    FINDING_EMBEDDED_PROJECT,
-    FINDING_PYTHON_FILE,
-    Finding,
-)
+from .bridge_save_texts import format_finding, save_outcome_text  # noqa: F401 - reexport (tests, 2.1)
 from .bridge_qgis_projects import EligibleUser, name_error, save_target, share_plan, suggest_name
 from .bridge_qgis_store import (
     STATUS_CONFLICT,
     STATUS_DENIED,
     STATUS_GONE,
     STATUS_INELIGIBLE,
-    STATUS_INVALID,
     STATUS_MISSING,
     STATUS_NAME_TAKEN,
     STATUS_NOMINATIVE,
@@ -72,15 +62,6 @@ _NAME_ERRORS = {
     "too_long": lambda: tr("save.name_too_long"),
     "control": lambda: tr("save.name_control"),
     "spaces": lambda: tr("save.name_spaces"),
-}
-_FINDINGS = {
-    FINDING_MACROS: lambda f: tr("save.finding_macros"),
-    FINDING_EXPRESSION_FUNCTIONS: lambda f: tr("save.finding_expression_functions"),
-    FINDING_ACTION: lambda f: tr("save.finding_action", detail=f.detail),
-    FINDING_FORM_INIT: lambda f: tr("save.finding_form_init", detail=f.detail),
-    FINDING_PASSWORD: lambda f: tr("save.finding_password"),
-    FINDING_PYTHON_FILE: lambda f: tr("save.finding_python_file", detail=f.detail),
-    FINDING_EMBEDDED_PROJECT: lambda f: tr("save.finding_embedded_project", detail=f.detail),
 }
 
 
@@ -123,15 +104,6 @@ def style_dialog(dialog, title: str) -> None:
     dialog.setStyleSheet(home_style_sheet(dialog.palette()))
     dialog.setWindowTitle(title)
     dialog.resize(*fitted_size(dialog))
-
-
-def format_finding(finding: Finding) -> str:
-    """Constat du controle a l'enregistrement, lisible (« couche « Points » :
-    action de type Python… »)."""
-    text = _FINDINGS.get(finding.kind, lambda f: f.kind)(finding)
-    if finding.layer:
-        return tr("save.finding_layer", layer=finding.layer) + " " + text
-    return text
 
 
 def _accepted(code) -> bool:
@@ -347,29 +319,10 @@ class SaveDialog(QDialog):
     def show_outcome(self, outcome, login: str) -> None:
         """Refus d'un enregistrement : message dedie ; le dialogue reste
         ouvert (nom remplace par une suggestion si le nom est en cause)."""
-        status = outcome.status
-        if status == STATUS_NAME_TAKEN:
-            text = tr("save.name_taken")
+        if outcome.status in (STATUS_NAME_TAKEN, STATUS_GONE):
             self.suggest_rename(login)
-        elif status == STATUS_GONE:
-            text = tr("save.gone")
-            self.suggest_rename(login)
-        elif status == "unsafe":
-            lines = [tr("save.unsafe_intro")] + ["• " + format_finding(f) for f in (outcome.value or ())]
-            text = "\n".join(lines)
-        elif status == STATUS_NOMINATIVE:
-            text = tr("save.nominative")
-        elif status == STATUS_PROJET_DENIED:
-            text = tr("save.projet_denied")
-        elif status == STATUS_INVALID:
-            text = tr("save.invalid", message=outcome.message or "")
-        elif status == "too_large":
-            text = tr("save.too_large")
-        elif status == "empty":
-            text = tr("save.empty_project")
-        else:
-            text = tr("save.error", message=outcome.message or "")
-        self.outcome_label.setText(text)
+        self.outcome_label.setText(save_outcome_text(outcome))
+
 
 
 # =====================================================================

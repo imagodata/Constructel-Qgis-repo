@@ -427,6 +427,42 @@ def smoke_211_projet_only() -> None:
         patch.undo()
 
 
+def smoke_disquette() -> None:
+    """Disquette d'un projet en base : writeProject du stockage avec un VRAI
+    QIODevice (QBuffer) et un vrai QByteArray (conversion en octets) ; la base
+    QgsProjectStorage reste une doublure (pas de QGIS ici)."""
+    import io
+    import zipfile
+
+    from constructel_bridge import bridge_db_save as dbs
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Vue.qgs", "<qgis/>")
+    archive = buf.getvalue()
+    device = QtCore.QBuffer()
+    device.setData(QtCore.QByteArray(archive))
+    assert device.open(QtCore.QIODevice.OpenModeFlag.ReadOnly)
+    received = []
+
+    class _Context:
+        def __init__(self):
+            self.messages = []
+
+        def pushMessage(self, message, level=None):  # noqa: N802
+            self.messages.append(message)
+
+    storage = dbs.storage_class()(lambda uri, data: received.append((uri, data)) or (True, ""))
+    uri = dbs.bridge_uri("Vue Ixelles / lot 2")
+    assert storage.writeProject(uri, device, _Context()) is True
+    assert received == [(uri, archive)] and isinstance(received[0][1], bytes)
+    refused = dbs.storage_class()(lambda uri, data: (False, "conflit"))
+    device.seek(0)
+    context = _Context()
+    assert refused.writeProject(uri, device, context) is False and context.messages == ["conflit"]
+    LOG.append(("disquette", len(archive)))
+
+
 def main() -> int:
     from constructel_bridge.bridge_home import HomeDialog
 
@@ -463,6 +499,7 @@ def main() -> int:
 
     smoke_21(dialog)
     smoke_211_projet_only()
+    smoke_disquette()
 
     STATE["snap"] = snapshot(connected=False, operators=())
     dialog.render()
@@ -471,7 +508,7 @@ def main() -> int:
     dialog.reject()
     app.processEvents()
     print("SMOKE OK", [entry for entry in LOG if isinstance(entry, tuple)][:6],
-          [entry for entry in LOG if isinstance(entry, tuple) and entry[0] in ("mode", "projet_only")])
+          [entry for entry in LOG if isinstance(entry, tuple) and entry[0] in ("mode", "projet_only", "disquette")])
     return 0
 
 

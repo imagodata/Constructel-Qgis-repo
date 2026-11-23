@@ -11,3 +11,10 @@ class QgsMessageBarItem:
         self.text = text
         self.level = level
         self.duration = duration
+
+
+class QgsCustomProjectOpenHandler:
+    """Base des gestionnaires d'ouverture de projet (QGIS >= 3.14)."""
+
+    def __init__(self):
+        pass

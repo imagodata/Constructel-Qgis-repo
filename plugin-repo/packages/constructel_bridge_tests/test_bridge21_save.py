@@ -94,7 +94,9 @@ def test_write_archive_restores_file_name_storage_and_dirty_flag(tmp_path):
 def test_write_archive_restores_clean_flag_too(tmp_path):
     project = SaveProject(file_name="", dirty=False)
     write_project_archive(project, str(tmp_path))
-    assert (project.fileName(), project.isDirty()) == ("", False)
+    # Sans emplacement : chemin NUL (None), jamais "" -- avec une chaine vide
+    # non nulle, la disquette de QGIS tenterait d'ecrire dans « ».
+    assert (project.fileName(), project.isDirty()) == (None, False)
 
 
 def test_write_archive_restores_even_when_write_fails(tmp_path):
