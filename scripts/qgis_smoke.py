@@ -196,10 +196,12 @@ def _build_windows(name, plugin):
     if name == "constructel_bridge":
         from constructel_bridge.bridge_dialog import ConstructelConnectDialog
         from constructel_bridge.bridge_onboarding import OnboardingWizard
-        from constructel_bridge.bridge_project_init import InitProjectDialog
+        # InitProjectDialog a disparu en 1.9.0 (e7a6230) : la selection des
+        # couches vit dans LayerSelectionWidget (ecran d'accueil, page Charger).
+        from constructel_bridge.bridge_layer_selection import LayerSelectionWidget
 
         wizard = OnboardingWizard(None, "smoke", "00000000-0000-0000-0000-000000000000", True)
-        widgets = [ConstructelConnectDialog(), wizard, InitProjectDialog()]
+        widgets = [ConstructelConnectDialog(), wizard, LayerSelectionWidget()]
         wizard.show()
         for _ in wizard.pageIds():
             wizard.next()
