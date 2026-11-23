@@ -61,6 +61,14 @@ from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
 from .bridge_projets import NO_CAPABILITIES
 from .bridge_project_archive import write_project_archive
+from .bridge_db_save import (
+    bridge_uri,
+    clear_file_name,
+    is_bridge_uri,
+    name_from_uri,
+    register_storage,
+    unregister_storage,
+)
 from .bridge_project_safety import MAX_CONTENT_BYTES, MAX_QGS_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
 from .bridge_qgis_projects import OpenedQgisProject, SharePlan, build_metadata, save_target
 from .bridge_identity import (
@@ -1010,6 +1018,9 @@ class ConstructelBridgePlugin:
         self._opened_qgis_project = None
         self._last_open_row = None
         self._open_refused = False
+        # Stockage de projet « constructel-bridge: » (disquette d'un projet
+        # QGIS en base) ; None tant que non declare ou si l'API manque.
+        self._db_storage = None
         self._last_connect_error = None
         # Revue 29/10 (I6) : _password = mot de passe PARTAGE seulement (lu
         # par les chemins 1.7.x) ; le mot de passe AD de la session
@@ -1203,6 +1214,11 @@ class ConstructelBridgePlugin:
         # pour que le projet ecrit soit portable (pas d'authcfg user-specific).
         QgsProject.instance().writeProject.connect(self._on_write_project)
 
+        # Disquette / Ctrl+S d'un projet QGIS ouvert ou enregistre en base par
+        # le Bridge : stockage de projet QGIS (bridge_db_save), jamais un
+        # detournement de l'action « Enregistrer ».
+        self._db_storage = register_storage(self._save_from_storage, log=self._log)
+
         # Revue 29/10 (M8) : toute couche ajoutee au projet courant (Bridge
         # ou non, navigateur compris) suit le perimetre de la session.
         QgsProject.instance().layersAdded.connect(self._on_layers_added_scope)
@@ -1231,6 +1247,11 @@ class ConstructelBridgePlugin:
     def unload(self):
         """Appele par QGIS a la desactivation du plugin."""
         unregister_expressions()
+        # Projet en base : sans le stockage, son URI serait prise pour un
+        # chemin de fichier ; la disquette redevient « Enregistrer sous ».
+        self._detach_db_location()
+        unregister_storage(self._db_storage)
+        self._db_storage = None
         try:
             QgsProject.instance().readProject.disconnect(self._on_project_read)
         except TypeError:
@@ -4050,6 +4071,7 @@ class ConstructelBridgePlugin:
         opened = self._opened_qgis_project
         if outcome.status == qgis_store.STATUS_OK and opened is not None and opened.name == name:
             self._opened_qgis_project = None   # les couches restent a l'ecran
+            self._detach_db_location()         # disquette : « Enregistrer sous » natif
         return outcome
 
     def _qgis_shares_list(self, name: str):
@@ -4373,7 +4395,77 @@ class ConstructelBridgePlugin:
             row.name, open_row.version, open_row.projet_id, row.projet_code,
             bool(row.is_owner), bool(row.can_edit), dict(open_row.metadata),
         )
+        # Lecture seule comprise : la disquette dira alors pourquoi elle
+        # n'enregistre pas (_save_from_storage).
+        self._attach_db_location(row.name)
         return True
+
+    # -- disquette d'un projet en base (bridge_db_save) -----------------------------------
+
+    def _attach_db_location(self, name: str) -> None:
+        """Le projet courant devient « projet en base » : la disquette et
+        Ctrl+S enregistrent dans `projet.qgis_projects` (sans stockage
+        declare : rien, la disquette reste native). Etat « modifie » garde."""
+        if self._db_storage is None:
+            return
+        project = QgsProject.instance()
+        dirty = project.isDirty()
+        project.setFileName(bridge_uri(name))
+        project.setDirty(dirty)
+
+    def _detach_db_location(self) -> None:
+        """Projet courant en base -> sans emplacement (« Enregistrer sous »
+        natif) ; un projet local ou d'une autre base n'est jamais touche."""
+        project = QgsProject.instance()
+        if not is_bridge_uri(project.fileName()):
+            return
+        dirty = project.isDirty()
+        clear_file_name(project)
+        project.setDirty(dirty)
+
+    def _refuse_db_save(self, message: str):
+        """Rien n'est ecrit : le projet reste « modifie » (zip() de QGIS l'a
+        deja marque enregistre), la fermeture redemandera."""
+        QgsProject.instance().setDirty(True)
+        self._log(f"Disquette : enregistrement en base refuse : {message}", Qgis.MessageLevel.Warning)
+        return False, message
+
+    def _save_from_storage(self, uri: str, content: bytes):
+        """Disquette / Ctrl+S d'un projet en base (``writeProject`` du
+        stockage) : *content* est l'archive .qgz ecrite par QGIS, identifiants
+        deja nettoyes par ``_on_write_project``. Meme chemin que « Enregistrer
+        le projet courant… » en mise a jour : controle de l'archive, version
+        lue a l'ouverture ou au dernier enregistrement, rattachement jamais
+        renvoye. Rend (enregistre, message de refus)."""
+        from .bridge_save_texts import save_outcome_text
+
+        name = name_from_uri(uri) or ""
+        opened = self._opened_qgis_project
+        if opened is None or opened.name != name:
+            return self._refuse_db_save(tr("disquette.detached", name=name))
+        if not (opened.can_edit or opened.is_owner):
+            return self._refuse_db_save(tr("disquette.read_only", name=name))
+        project = QgsProject.instance()
+        outcome = self._save_precheck(project)
+        metadata = None
+        if outcome is None:
+            outcome, report = self._check_archive(content)
+        if outcome is None:
+            metadata = build_metadata(str(opened.metadata.get("description") or ""), report.saved_by,
+                                      report.saved_at, "", opened.metadata)
+            outcome = qgis_store.save(self._conn, name, content, metadata, opened.version, None, log=self._log)
+        if outcome.status == qgis_store.STATUS_CONFLICT:
+            return self._refuse_db_save(tr("disquette.conflict", name=name))
+        if outcome.status != qgis_store.STATUS_OK:
+            return self._refuse_db_save(tr("disquette.refused", reason=save_outcome_text(outcome)))
+        version = int(outcome.value or 0)
+        self._opened_qgis_project = OpenedQgisProject(
+            name, version, opened.projet_id, opened.projet_code, opened.is_owner, opened.can_edit, metadata)
+        project.setDirty(False)
+        message = tr("save.done", name=name, version=version)
+        self._log(message)
+        self.iface.messageBar().pushMessage("Constructel Bridge", message, level=Qgis.MessageLevel.Success, duration=5)
+        return True, ""
 
     # =====================================================================
     # Projets QGIS (2.1) : enregistrer le projet courant
@@ -4386,8 +4478,9 @@ class ConstructelBridgePlugin:
 
         project = QgsProject.instance()
         title = project.title() or ""
-        if not title and project.fileName():
-            title = os.path.splitext(os.path.basename(project.fileName()))[0]
+        file_name = project.fileName() or ""
+        if not title and file_name:
+            title = name_from_uri(file_name) or os.path.splitext(os.path.basename(file_name))[0]
         login = self._pg_login if self._is_nominative_session() else ""
         return CurrentProjectState(title, len(project.mapLayers()), login)
 
@@ -4412,14 +4505,13 @@ class ConstructelBridgePlugin:
         from .bridge_home_model import VISIBILITY_PEOPLE, VISIBILITY_PROJET
 
         outcome_cls = qgis_store.StoreOutcome
-        if not self._is_nominative_session():
-            return outcome_cls(qgis_store.STATUS_NOMINATIVE)
-        if not self._conn or getattr(self._conn, "closed", False):
-            return outcome_cls(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
         project = QgsProject.instance()
-        if not project.mapLayers():
-            return outcome_cls("empty")
+        refused = self._save_precheck(project)
+        if refused is not None:
+            return refused
         source_file = project.fileName() or ""
+        if is_bridge_uri(source_file):   # projet en base : aucun fichier source
+            source_file = ""
         import tempfile
         try:
             with tempfile.TemporaryDirectory(prefix="bridge_qgis_") as directory:
@@ -4427,15 +4519,9 @@ class ConstructelBridgePlugin:
         except OSError as exc:
             self._log(f"Archive du projet courant impossible : {exc}", Qgis.MessageLevel.Warning)
             return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc))
-        if len(content) > MAX_CONTENT_BYTES:
-            return outcome_cls("too_large")
-        try:
-            report = inspect_qgz(content)
-        except ProjectFileError as exc:
-            self._log(f"Archive du projet courant illisible : {exc}", Qgis.MessageLevel.Warning)
-            return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc))
-        if report.findings:
-            return outcome_cls("unsafe", value=report.findings)
+        refused, report = self._check_archive(content)
+        if refused is not None:
+            return refused
 
         opened = self._opened_qgis_project
         same = opened is not None and opened.name == request.name
@@ -4463,6 +4549,9 @@ class ConstructelBridgePlugin:
         else:
             self._opened_qgis_project = OpenedQgisProject(request.name, version, None, None, False, True, metadata)
         project.setTitle(request.name)
+        # Le projet courant devient « projet en base » : la disquette suivante
+        # enregistre au meme endroit.
+        self._attach_db_location(request.name)
         project.setDirty(False)
         self._log(tr("save.done", name=request.name, version=version))
 
@@ -4480,6 +4569,33 @@ class ConstructelBridgePlugin:
                     return outcome_cls(qgis_store.STATUS_OK, value=version, message=shared.status,
                                        detail=shared.message, count=shared.count)
         return outcome_cls(qgis_store.STATUS_OK, value=version)
+
+    def _save_precheck(self, project):
+        """Refus commun avant toute archive : login personnel, connexion,
+        projet vide ; None si l'enregistrement peut continuer."""
+        outcome_cls = qgis_store.StoreOutcome
+        if not self._is_nominative_session():
+            return outcome_cls(qgis_store.STATUS_NOMINATIVE)
+        if not self._conn or getattr(self._conn, "closed", False):
+            return outcome_cls(qgis_store.STATUS_ERROR, message=tr("home.projects_offline"))
+        if not project.mapLayers():
+            return outcome_cls("empty")
+        return None
+
+    def _check_archive(self, content: bytes):
+        """(refus ou None, rapport) : taille, archive lisible, ni code ni
+        secret embarque (spec 2.1 § 7.5)."""
+        outcome_cls = qgis_store.StoreOutcome
+        if len(content) > MAX_CONTENT_BYTES:
+            return outcome_cls("too_large"), None
+        try:
+            report = inspect_qgz(content)
+        except ProjectFileError as exc:
+            self._log(f"Archive du projet courant illisible : {exc}", Qgis.MessageLevel.Warning)
+            return outcome_cls(qgis_store.STATUS_ERROR, message=str(exc)), None
+        if report.findings:
+            return outcome_cls("unsafe", value=report.findings), report
+        return None, report
 
     def _open_db_project(self, schema: str, name: str) -> bool:
         """Charge le projet *name* du schema *schema* (2.0, plan tache 8).
@@ -4731,10 +4847,13 @@ class ConstructelBridgePlugin:
                 pass
 
         if result:
-            # Restaurer le titre et vider le chemin fichier pour que
-            # QGIS affiche le nom du projet (pas le fichier temporaire).
+            # Restaurer le titre et retirer le chemin du temporaire pour que
+            # QGIS affiche le nom du projet. Chemin NUL, pas "" : avec "" la
+            # disquette tentait d'ecrire dans « » et echouait. Un projet de
+            # `projet.qgis_projects` recoit ensuite son URI en base
+            # (_open_qgis_project -> _attach_db_location).
             project.setTitle(name)
-            project.setFileName("")
+            clear_file_name(project)
             project.setDirty(False)
 
         return result
