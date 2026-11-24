@@ -1472,9 +1472,9 @@ def _apply_styles_from_db(conn_params: dict, password: str, loaded: dict,
             try:
                 doc = QDomDocument()
                 doc.setContent(row[0])
-                was_read_only = layer.isReadOnly()
+                was_read_only = layer.readOnly()
                 ok, _error = layer.importNamedStyle(doc)  # (succes, message)
-                if not was_read_only and layer.isReadOnly():
+                if not was_read_only and layer.readOnly():
                     # Bridge 1.8, revue 2 (I-2) : readOnly="1" d'un style par
                     # defaut n'est pas une regle de style (verrou de session
                     # enregistre par megarde) -> ignore.

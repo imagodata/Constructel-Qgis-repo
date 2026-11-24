@@ -104,7 +104,7 @@ def _layer(source, name="couche"):
         def isValid(self):
             return True
 
-        def isReadOnly(self):
+        def readOnly(self):
             return self.read_only
 
         def setReadOnly(self, ro):

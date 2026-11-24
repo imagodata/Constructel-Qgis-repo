@@ -3075,7 +3075,7 @@ class ConstructelBridgePlugin:
                 tmp = tempfile.NamedTemporaryFile(
                     suffix=".qml", delete=False, mode="w", encoding="utf-8"
                 )
-                was_read_only = layer.isReadOnly()
+                was_read_only = layer.readOnly()
                 try:
                     tmp.write(row[0])
                     tmp.close()
@@ -3085,7 +3085,7 @@ class ConstructelBridgePlugin:
                         os.unlink(tmp.name)
                     except OSError:
                         pass
-                if not was_read_only and layer.isReadOnly():
+                if not was_read_only and layer.readOnly():
                     # Revue 2 (I-2) : readOnly="1" d'un style par defaut
                     # (enregistre depuis une couche verrouillee) n'est pas
                     # une regle de style ; le verrou D2 est l'affaire du
@@ -3791,7 +3791,7 @@ class ConstructelBridgePlugin:
             try:
                 ours = _has_scope_lock(layer)
                 if uri.host() in known_hosts and should_lock_layer(uri.schema(), scope, operator_schemas):
-                    if layer.isReadOnly():
+                    if layer.readOnly():
                         continue  # deja verrouillee (par nous, ou par la personne)
                     if layer.setReadOnly(True):
                         layer.setCustomProperty(SCOPE_LOCK_PROPERTY, "1")
