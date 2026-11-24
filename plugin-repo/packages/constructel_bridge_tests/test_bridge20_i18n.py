@@ -137,8 +137,9 @@ def test_214_changelog_is_ascii_and_names_the_fix():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
     entry = meta[meta.index("changelog=v2.1.4 - "):meta.index("\n    v2.1.3 - ")]
     assert entry.isascii() and "\n" not in entry
-    assert entry.startswith("changelog=v2.1.4 - fix(plugin): styles par defaut de la base")
-    for word in ("readOnly", "Style loading error", "zones gelees", "unnest", "Cote serveur : aucune modification"):
+    assert entry.startswith("changelog=v2.1.4 - fix(plugin): carte vide et fonds UrbIS d un projet QGIS 4.2 ouvert en QGIS 3, styles par defaut de la base")
+    for word in ("readOnly", "Style loading error", "zones gelees", "unnest", "SCR du projet", "QGIS 4.2",
+                 "EPSG:31370", "UrbIS", "tile matrix set", "Cote serveur : aucune modification"):
         assert word in entry, word
 
 

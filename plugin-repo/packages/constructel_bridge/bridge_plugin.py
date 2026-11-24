@@ -71,6 +71,7 @@ from .bridge_db_save import (
     unregister_open_handler,
     unregister_storage,
 )
+from .bridge_project_compat import repair_wms_layers, restore_project_crs, saved_qgis_version
 from .bridge_project_safety import MAX_CONTENT_BYTES, MAX_QGS_BYTES, ProjectFileError, inspect_qgz, neutralize_qgs_xml
 from .bridge_qgis_projects import OpenedQgisProject, SharePlan, build_metadata, save_target
 from .bridge_identity import (
@@ -1300,6 +1301,40 @@ class ConstructelBridgePlugin:
     # Reaction au chargement d'un projet (explorateur PG, fichier, etc.)
     # =====================================================================
 
+    def _restore_project_crs(self, doc):
+        """2.1.4 : SCR du projet relu dans <projectCrs> s'il est invalide
+        apres lecture (projet enregistre par un QGIS plus recent) ; canevas
+        recadre sur l'emprise enregistree. Jamais bloquant."""
+        try:
+            restored = restore_project_crs(QgsProject.instance(), doc, self.iface.mapCanvas())
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"SCR du projet non verifie : {exc}", Qgis.MessageLevel.Warning)
+            return
+        if not restored:
+            return
+        text = tr("project.crs_restored", crs=restored, version=saved_qgis_version(doc) or "?")
+        self._log(text, Qgis.MessageLevel.Warning)
+        self.iface.messageBar().pushWarning("Constructel Bridge", text)
+
+    def _repair_wms_sources(self):
+        """2.1.4 : fonds WMTS d'un projet QGIS 4.x (tileMatrixSet=EPSG%3A31370)
+        invalides en QGIS 3.x : parametres decodes, couche rechargee. Une
+        couche valide n'est jamais touchee. Jamais bloquant."""
+        def set_source(layer, source):
+            layer.setDataSource(source, layer.name(), "wms", QgsDataProvider.ProviderOptions())
+
+        try:
+            repaired, still_bad = repair_wms_layers(QgsProject.instance().mapLayers().values(), set_source)
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Fonds de carte non verifies : {exc}", Qgis.MessageLevel.Warning)
+            return
+        if repaired:
+            self._log(f"{len(repaired)} fond(s) de carte repare(s) (source encodee par un QGIS plus recent) : "
+                      + ", ".join(repaired))
+        if still_bad:
+            self._log("Fond(s) de carte toujours indisponible(s) : " + ", ".join(still_bad),
+                      Qgis.MessageLevel.Warning)
+
     def _on_project_read(self, doc):
         """Appele par QgsProject.readProject apres tout chargement de projet.
 
@@ -1311,6 +1346,10 @@ class ConstructelBridgePlugin:
         # normalement deja tourne a layerLoaded(0, n), avant les couches.
         if self._startup_state == "pending":
             self._startup_silent()
+        # 2.1.4 : projet d'un QGIS plus recent ouvert en QGIS 3.x -> SCR
+        # perdu, echelle absurde, carte vide. Avant tout le reste.
+        self._restore_project_crs(doc)
+        self._repair_wms_sources()
         try:
             self._secure_current_project_uri()
         except Exception as exc:  # noqa: BLE001 -- jamais bloquant
