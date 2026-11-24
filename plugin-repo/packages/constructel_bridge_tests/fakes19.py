@@ -245,7 +245,7 @@ class FakeLayer(_Properties):
         return True
 
     # -- edition et styles ------------------------------------------------------
-    def isReadOnly(self):
+    def readOnly(self):
         return self._read_only
 
     def setReadOnly(self, read_only=True):

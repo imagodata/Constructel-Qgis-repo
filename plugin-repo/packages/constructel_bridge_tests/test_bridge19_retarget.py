@@ -169,7 +169,7 @@ def _plugin_with_pg_layer(bp, monkeypatch, schema, table, events):
         "dataProvider": lambda self: SimpleNamespace(uri=lambda: uri),
         "loadNamedStyle": lambda self, path: events.append("style") or ("", True),
         "triggerRepaint": lambda self: None,
-        "isReadOnly": lambda self: False,
+        "readOnly": lambda self: False,
     })()
     QgsProject.instance().addMapLayer(layer)
     monkeypatch.setattr(plugin, "_ensure_ref_layers", lambda: None)

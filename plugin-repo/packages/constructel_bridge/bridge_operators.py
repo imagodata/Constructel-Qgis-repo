@@ -346,11 +346,15 @@ CATALOG_FALLBACKS = {
 
 # Une ligne par entree : (cle, table lisible, repli lisible). to_regclass rend
 # NULL pour une relation absente (base sans la migration) : COALESCE -> false.
+# ROWS FROM aligne trois unnest a un tableau : l'unnest a plusieurs tableaux
+# n'est developpe par PostgreSQL que pour le nom NON qualifie, et
+# pg_catalog.unnest(a, b, c) n'existe pas (2.1.4).
 CATALOG_SOURCES_QUERY = (
     "SELECT v.k, "
     "COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass(v.t), 'SELECT'), false), "
     "COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass(v.f), 'SELECT'), false) "
-    "FROM pg_catalog.unnest(%s::text[], %s::text[], %s::text[]) AS v(k, t, f)"
+    "FROM ROWS FROM (pg_catalog.unnest(%s::text[]), pg_catalog.unnest(%s::text[]), "
+    "pg_catalog.unnest(%s::text[])) AS v(k, t, f)"
 )
 
 
