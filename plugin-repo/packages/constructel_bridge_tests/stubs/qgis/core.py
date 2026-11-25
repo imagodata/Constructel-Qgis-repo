@@ -369,6 +369,12 @@ class QgsDataSourceUri:
     def geometryColumn(self):
         return self._params.get("geom", "")
 
+    def setSchema(self, schema):
+        # Bridge 2.2 (repointage projet -> data) : comme le vrai setSchema,
+        # seul le schema de la table change.
+        table = self.table()
+        self._params["table"] = f'"{schema}"."{table}"' if schema else f'"{table}"'
+
     def host(self):
         return self._params.get("host", "")
 

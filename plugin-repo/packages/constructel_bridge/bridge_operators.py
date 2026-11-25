@@ -60,7 +60,10 @@ FALLBACK_OPERATOR = OperatorInfo("WYRE", "Wyre", OPERATOR_TEMPLATE_SCHEMA)
 BROWSER_EXTRA_SCHEMAS = ("osiris",)
 PROJECT_EXTRA_SCHEMAS = ("public",)
 # Schema transverse des projets partages (2.0 R7) : liste seulement s'il existe en base.
-PROJET_SCHEMA = "projet"
+# 2.2 : depot des projets QGIS et registre des projets metier seulement ; les
+# tables de donnees des projets metier vivent dans le schema du registre
+# (projet.projet_tables.schema_name, `data` apres la mig Farois 596).
+PROJET_STORE_SCHEMA = "projet"
 
 
 def browser_schemas(operators: Sequence[OperatorInfo]) -> str:

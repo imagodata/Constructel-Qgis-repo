@@ -20,7 +20,7 @@ def _snapshot(plugin_):
     plugin_._home_checkin_state = lambda _summary: None
     return plugin_.home_snapshot()
 
-ALL_CAPS = ([("r", "projets", True), ("r", "projet_couches", True), ("r", "qgis_projects", True)]
+ALL_CAPS = ([("r", "projets", True), ("r", "projet_couches", True), ("r", "projet_tables", True), ("r", "qgis_projects", True)]
             + [("f", n, True) for n in pj.CAPABILITY_FUNCTIONS])
 GOFIBER_ROWS = [("b3", "GOFIBER", "GoFiber", "WYRE", "geofiber_points", "Points", None, None, "geom", 1)]
 

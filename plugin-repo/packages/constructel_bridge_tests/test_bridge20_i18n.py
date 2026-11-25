@@ -122,22 +122,32 @@ def test_portuguese_common_only_text_is_accented():
         "Nenhum operador disponível: só as camadas comuns podem ser carregadas.")
 
 
-def test_metadata_is_214():
-    # 2.1.4 : version courante ; les entrees precedentes restent en retrait.
+def test_metadata_is_220():
+    # 2.2.0 : version courante ; les entrees precedentes restent en retrait.
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    assert "\nversion=2.1.4\n" in meta and "\nchangelog=v2.1.4 - " in meta
-    assert (meta.index("\nchangelog=v2.1.4 - ") < meta.index("\n    v2.1.3 - ")
+    assert "\nversion=2.2.0\n" in meta and "\nchangelog=v2.2.0 - " in meta
+    assert (meta.index("\nchangelog=v2.2.0 - ") < meta.index("\n    v2.1.4 - ") < meta.index("\n    v2.1.3 - ")
             < meta.index("\n    v2.1.2 - ") < meta.index("\n    v2.1.1 - ") < meta.index("\n    v2.1.0 - ")
             < meta.index("\n    v2.0.4 - ")
             < meta.index("\n    v2.0.3 - ") < meta.index("\n    v2.0.2 - ") < meta.index("\n    v2.0.1 - ")
             < meta.index("\n    v2.0.0 - ") < meta.index("\n    v1.9.0 - ") < meta.index("\n    v1.8.4 - "))
 
 
+def test_220_changelog_is_ascii_and_names_the_change():
+    meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
+    entry = meta[meta.index("changelog=v2.2.0 - "):meta.index("\n    v2.1.4 - ")]
+    assert entry.isascii() and "\n" not in entry
+    assert entry.startswith("changelog=v2.2.0 - feat(plugin): schema des couches de projet lu dans le registre")
+    for word in ("projet_tables", "schema_name", "data", "596", "repointe", "en memoire",
+                 "avant comme apres", "relocate-sources"):
+        assert word in entry, word
+
+
 def test_214_changelog_is_ascii_and_names_the_fix():
     meta = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
-    entry = meta[meta.index("changelog=v2.1.4 - "):meta.index("\n    v2.1.3 - ")]
+    entry = meta[meta.index("v2.1.4 - "):meta.index("\n    v2.1.3 - ")]
     assert entry.isascii() and "\n" not in entry
-    assert entry.startswith("changelog=v2.1.4 - fix(plugin): carte vide et fonds UrbIS d un projet QGIS 4.2 ouvert en QGIS 3, styles par defaut de la base")
+    assert entry.startswith("v2.1.4 - fix(plugin): carte vide et fonds UrbIS d un projet QGIS 4.2 ouvert en QGIS 3, styles par defaut de la base")
     for word in ("readOnly", "Style loading error", "zones gelees", "unnest", "SCR du projet", "QGIS 4.2",
                  "EPSG:31370", "UrbIS", "tile matrix set", "Cote serveur : aucune modification"):
         assert word in entry, word

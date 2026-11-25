@@ -1223,20 +1223,25 @@ STYLES_MISSING_HINT = (
 
 
 # ===========================================================================
-# Schéma des objets As-Built : ``public`` (avant la migration Farois 574) ou
-# ``projet`` (après). Détecté UNE fois au début de chaque exécution, sur la
-# connexion 'be' (:func:`detect_asbuilt_schema`), puis figé : une exécution ne
-# mélange jamais les deux. Tous les noms qualifiés (tables, fonctions) passent
-# par :class:`AsbuiltSchema` ; aucun ``public.`` / ``projet.`` en dur ailleurs.
+# Schéma des objets As-Built : ``public`` (avant la migration Farois 574),
+# ``projet`` (après), ``data`` (après la migration Farois 596 : TABLES dans
+# ``data``, FONCTIONS restées dans ``projet``). Détecté UNE fois au début de
+# chaque exécution, sur la connexion 'be' (:func:`detect_asbuilt_schema`), puis
+# figé : une exécution ne mélange jamais deux modes. Tous les noms qualifiés
+# (tables, fonctions) passent par :class:`AsbuiltSchema` ; aucun ``public.`` /
+# ``projet.`` / ``data.`` en dur ailleurs.
 #
 # Mode ``public`` : comportement de la version 1.3.0 (tables écrites
-# directement). Mode ``projet`` : points et non géocodées restent éditables ;
-# segments et connecteurs sont en LECTURE SEULE pour les logins et s'écrivent
-# par les fonctions SECURITY DEFINER projet.fn_asbuilt_segments_upsert/_delete
-# et projet.fn_asbuilt_connectors_upsert/_delete (Farois, 086 / mig 574).
+# directement). Modes ``projet`` et ``data`` : points et non géocodées restent
+# éditables ; segments et connecteurs sont en LECTURE SEULE pour les logins et
+# s'écrivent par les fonctions SECURITY DEFINER projet.fn_asbuilt_segments_upsert
+# /_delete et projet.fn_asbuilt_connectors_upsert/_delete (Farois, 086 / mig
+# 574, toujours dans projet après la 596).
 # ===========================================================================
 SCHEMA_MODE_PUBLIC = "public"
 SCHEMA_MODE_PROJET = "projet"
+SCHEMA_MODE_DATA = "data"
+SCHEMA_MODES = (SCHEMA_MODE_PUBLIC, SCHEMA_MODE_PROJET, SCHEMA_MODE_DATA)
 
 POINTS_TABLE_NAME = "geofiber_asbuilt_depth_points"
 SEGMENTS_TABLE_NAME = "geofiber_asbuilt_depth_segments"
@@ -1244,20 +1249,30 @@ UNGEOCODED_TABLE_NAME = "geofiber_asbuilt_ungeocoded"
 CONNECTORS_TABLE_NAME = "geofiber_asbuilt_depth_connectors"
 
 # Sonde de détection : la table des points existe-t-elle dans ``projet`` ?
-# Équivalent de ``to_regclass('projet.geofiber_asbuilt_depth_points') IS NOT
-# NULL``, mais lu dans le catalogue : to_regclass lève 42501 (« permission
-# denied for schema projet ») pour un login sans USAGE sur ``projet``, schéma
-# créé dès la migration 573 — la 1.4.0 s'arrêterait alors sur une base encore
-# en public. Le catalogue est lisible par tous.
+# dans ``data`` ? Équivalent de ``to_regclass('<schéma>.geofiber_asbuilt_depth_points')
+# IS NOT NULL``, mais lu dans le catalogue : to_regclass lève 42501 (« permission
+# denied for schema … ») pour un login sans USAGE sur le schéma (``projet`` créé
+# dès la migration 573, ``data`` sans aucun droit pour ftth_editor) — le script
+# s'arrêterait alors à tort. Le catalogue est lisible par tous.
+# Colonnes : (points dans projet, points dans data) — la première est celle de
+# la sonde 1.4.0. Priorité : data, puis projet, sinon public.
+def _points_table_exists_sql(schema: str) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM pg_catalog.pg_class c "
+        "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+        f"WHERE n.nspname = '{schema}' "
+        f"AND c.relname = '{POINTS_TABLE_NAME}' AND c.relkind IN ('r', 'p'))"
+    )
+
+
 SCHEMA_PROBE_SQL = (
-    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c "
-    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-    f"WHERE n.nspname = '{SCHEMA_MODE_PROJET}' "
-    f"AND c.relname = '{POINTS_TABLE_NAME}' AND c.relkind IN ('r', 'p'))"
+    f"SELECT {_points_table_exists_sql(SCHEMA_MODE_PROJET)}, "
+    f"{_points_table_exists_sql(SCHEMA_MODE_DATA)}"
 )
 
-# Fonctions exigées en mode ``projet`` (signature d'identité, types seuls).
-# Une seule absente = base à moitié migrée -> arrêt, jamais de DML direct.
+# Fonctions exigées en modes ``projet`` et ``data`` (signature d'identité, types
+# seuls), toujours dans le schéma ``projet``. Une seule absente = base à moitié
+# migrée -> arrêt, jamais de DML direct.
 PROJET_REQUIRED_FUNCTIONS = (
     "fn_asbuilt_segments_upsert(jsonb)",
     "fn_asbuilt_segments_delete(jsonb)",
@@ -1284,17 +1299,21 @@ class AsbuiltSchemaError(Exception):
 
 @dataclass(frozen=True)
 class AsbuiltSchema:
-    """Noms qualifiés des objets As-Built pour UN mode (``public`` / ``projet``).
+    """Noms qualifiés des objets As-Built pour UN mode (``public`` / ``projet``
+    / ``data``).
 
     Seul point de qualification du script : tables, fonctions et textes du
-    journal en dérivent. ``uses_writers`` : segments et connecteurs écrits par
-    les fonctions SECURITY DEFINER (mode ``projet``), jamais par DML direct.
+    journal en dérivent. ``schema`` : schéma des TABLES (couches, styles,
+    catalogue des tables) ; ``function_schema`` : schéma des FONCTIONS
+    (``projet`` en mode ``data``). ``uses_writers`` : segments et connecteurs
+    écrits par les fonctions SECURITY DEFINER (modes ``projet`` et ``data``),
+    jamais par DML direct.
     """
 
     mode: str = SCHEMA_MODE_PUBLIC
 
     def __post_init__(self):
-        if self.mode not in (SCHEMA_MODE_PUBLIC, SCHEMA_MODE_PROJET):
+        if self.mode not in SCHEMA_MODES:
             raise ValueError(f"mode de schéma As-Built inconnu : {self.mode!r}")
 
     @property
@@ -1302,8 +1321,12 @@ class AsbuiltSchema:
         return self.mode
 
     @property
+    def function_schema(self) -> str:
+        return SCHEMA_MODE_PROJET if self.mode == SCHEMA_MODE_DATA else self.mode
+
+    @property
     def uses_writers(self) -> bool:
-        return self.mode == SCHEMA_MODE_PROJET
+        return self.mode in (SCHEMA_MODE_PROJET, SCHEMA_MODE_DATA)
 
     def qualify(self, name: str) -> str:
         return f"{self.schema}.{name}"
@@ -1326,10 +1349,20 @@ class AsbuiltSchema:
 
     def function(self, name: str) -> str:
         """Nom qualifié d'une fonction As-Built (``fn_asbuilt_*``…)."""
-        return self.qualify(name)
+        return f"{self.function_schema}.{name}"
 
     def describe(self) -> str:
         """Ligne de journal : mode retenu pour TOUTE l'exécution."""
+        if self.mode == SCHEMA_MODE_DATA:
+            return (
+                f"Schéma As-Built : {self.schema} (migration Farois 596 appliquée) — "
+                f"tables {self.schema}.geofiber_asbuilt_* ; segments et connecteurs "
+                f"écrits par les fonctions {self.function('fn_asbuilt_segments_upsert')}"
+                "/_delete et "
+                f"{self.function('fn_asbuilt_connectors_upsert')}/_delete "
+                f"(tables en lecture seule, fonctions restées dans {self.function_schema}). "
+                "Mode figé pour toute l'exécution."
+            )
         if self.uses_writers:
             return (
                 f"Schéma As-Built : {self.schema} (migration Farois 574 appliquée) — "
@@ -1357,7 +1390,13 @@ def _probe_is_true(rows) -> bool:
 
 
 def schema_mode_from_probe(rows) -> str:
-    """Résultat de :data:`SCHEMA_PROBE_SQL` -> ``projet`` ou ``public``. PURE."""
+    """Résultat de :data:`SCHEMA_PROBE_SQL` -> ``data``, ``projet`` ou ``public``. PURE.
+
+    Ligne ``(points dans projet, points dans data)`` ; ``data`` l'emporte. Une
+    ligne d'une seule colonne (sonde 1.4.0) ne dit que ``projet``.
+    """
+    if rows and rows[0] and len(rows[0]) > 1 and _probe_is_true([rows[0][1:]]):
+        return SCHEMA_MODE_DATA
     return SCHEMA_MODE_PROJET if _probe_is_true(rows) else SCHEMA_MODE_PUBLIC
 
 
@@ -1385,12 +1424,14 @@ def missing_projet_functions(rows) -> list:
     return [sig for sig in PROJET_REQUIRED_FUNCTIONS if sig not in present]
 
 
-def half_migrated_message(missing) -> str:
-    """Arrêt explicite : table ``projet`` présente, fonction(s) absente(s). PURE."""
+def half_migrated_message(missing, names=None) -> str:
+    """Arrêt explicite : table ``projet`` (ou ``data``) présente, fonction(s)
+    absente(s) dans ``projet``. PURE."""
+    names = names or AsbuiltSchema(SCHEMA_MODE_PROJET)
     listed = ", ".join(f"{SCHEMA_MODE_PROJET}.{sig}" for sig in missing)
     return (
         "Base Farois à moitié migrée : la table "
-        f"{SCHEMA_MODE_PROJET}.{POINTS_TABLE_NAME} existe mais il manque "
+        f"{names.points} existe mais il manque "
         f"{listed} (migration Farois 574 incomplète). Arrêt avant tout "
         "géocodage et toute écriture : le script n'écrit jamais directement "
         "les segments ni les connecteurs. Prévenez l'administrateur Farois "
@@ -1447,7 +1488,7 @@ def write_denied_message(detail: str = "") -> str:
 def write_allowed_sql(names: AsbuiltSchema) -> str:
     """Pré-contrôle du droit d'écriture de la session (mode ``projet`` seulement)."""
     if not names.uses_writers:
-        raise ValueError("pré-contrôle d'écriture réservé au mode projet")
+        raise ValueError("pré-contrôle d'écriture réservé aux modes projet et data")
     return f"SELECT {names.function('geofiber_asbuilt_write_allowed')}()"
 
 
@@ -1455,9 +1496,10 @@ def detect_asbuilt_schema(execute, warn=None) -> AsbuiltSchema:
     """Détecte le schéma As-Built sur la connexion 'be' — UNE fois par exécution.
 
     ``execute`` : ``sql -> lignes`` (``executeSql`` de la connexion 'be').
-    :data:`SCHEMA_PROBE_SQL` (table des points présente dans ``projet``,
-    lue dans le catalogue) -> mode ``projet``, sinon ``public`` (comportement
-    1.3.0). En mode ``projet`` :
+    :data:`SCHEMA_PROBE_SQL` (table des points présente dans ``data``, sinon
+    dans ``projet``, lue dans le catalogue) -> mode ``data`` / ``projet``,
+    sinon ``public`` (comportement 1.3.0). En modes ``projet`` et ``data``
+    (fonctions toujours dans ``projet``) :
     fonctions exigées présentes (:data:`PROJET_REQUIRED_FUNCTIONS`, sinon
     :func:`half_migrated_message`), puis pré-contrôle du droit d'écriture de
     la session (refus -> :func:`write_denied_message`, AVANT tout géocodage).
@@ -1483,7 +1525,7 @@ def detect_asbuilt_schema(execute, warn=None) -> AsbuiltSchema:
         ) from exc
     missing = missing_projet_functions(rows)
     if missing:
-        raise AsbuiltSchemaError(half_migrated_message(missing))
+        raise AsbuiltSchemaError(half_migrated_message(missing, names))
     try:
         rows = execute(write_allowed_sql(names))
     except Exception as exc:
@@ -3692,7 +3734,7 @@ def batch_locate_sql(items, radius, schema=SCHEMA_MODE_PUBLIC) -> str:
     ``WITH ORDINALITY`` conserve l'ordre des lignes de la fonction : la
     PREMIÈRE ligne par tag est celle qu'aurait prise l'appel unitaire
     (``result[0]``, cf. :func:`first_rows_by_tag`). ``schema`` : celui de la
-    fonction (:attr:`AsbuiltSchema.schema`). Fonction PURE.
+    fonction (:attr:`AsbuiltSchema.function_schema`). Fonction PURE.
     """
     values = ", ".join(
         f"({int(tag)}, {float(x)!r}::double precision, {float(y)!r}::double precision, "
@@ -3718,7 +3760,7 @@ def batch_road_geometry_sql(items, radius, schema=SCHEMA_MODE_PUBLIC) -> str:
     ``items`` : ``(tag, x, y, littéral du nom)`` — un point représentant par
     road_key, avec le nom qui l'a localisé. Retour : tag, road_key, géométrie
     en WKT, road_highway ; première ligne par tag (WITH ORDINALITY).
-    ``schema`` : celui de la fonction (:attr:`AsbuiltSchema.schema`). PURE.
+    ``schema`` : celui de la fonction (:attr:`AsbuiltSchema.function_schema`). PURE.
     """
     values = ", ".join(
         f"({int(tag)}, {float(x)!r}::double precision, {float(y)!r}::double precision, "
@@ -4205,7 +4247,7 @@ def store_osm_ways_sql(payload, schema=SCHEMA_MODE_PUBLIC) -> str:
     """Appel SQL de fn_asbuilt_store_osm_ways avec le lot en JSON, sans injection.
 
     JSON passé par :func:`dollar_quoted_json` ; ``schema`` : celui de la
-    fonction (:attr:`AsbuiltSchema.schema`). PURE.
+    fonction (:attr:`AsbuiltSchema.function_schema`). PURE.
     """
     return (
         f"SELECT {schema}.fn_asbuilt_store_osm_ways("
@@ -5909,9 +5951,11 @@ if HAS_QGIS:
                 "signalé en avertissement sans interrompre les étapes suivantes.\n\n"
                 "SCHÉMA — les tables et fonctions As-Built sont dans le schéma "
                 "« public » avant la migration Farois 574 et dans le schéma "
-                "« projet » après. Le script le détecte au début de chaque "
+                "« projet » après ; depuis la migration Farois 596, les tables "
+                "sont dans le schéma « data » et les fonctions restent dans "
+                "« projet ». Le script le détecte au début de chaque "
                 "exécution (le journal indique le schéma retenu) et ne mélange "
-                "jamais les deux. Schéma projet : points et non géocodées sont "
+                "jamais deux schémas. Schémas projet et data : points et non géocodées sont "
                 "écrits directement ; segments et connecteurs sont en lecture "
                 "seule et écrits par les fonctions fn_asbuilt_segments_* et "
                 "fn_asbuilt_connectors_* de la base ; il faut un login nominatif "
@@ -7721,7 +7765,7 @@ if HAS_QGIS:
                         try:
                             rows_by_tag = first_rows_by_tag(
                                 be_connection.executeSql(
-                                    batch_locate_sql(items, LOCATE_RADIUS_M, self._names.schema)
+                                    batch_locate_sql(items, LOCATE_RADIUS_M, self._names.function_schema)
                                 ) or []
                             )
                             for k, _x, _y, literal in items:
@@ -7780,7 +7824,7 @@ if HAS_QGIS:
                         chunk = probe_items[start:start + SQL_BATCH_SIZE]
                         rows_by_tag = first_rows_by_tag(
                             be_connection.executeSql(
-                                batch_locate_sql(chunk, LOCATE_RADIUS_M, self._names.schema)
+                                batch_locate_sql(chunk, LOCATE_RADIUS_M, self._names.function_schema)
                             ) or []
                         )
                         for tag, *_rest in chunk:
@@ -7990,7 +8034,7 @@ if HAS_QGIS:
                 try:
                     probe = be_connection.executeSql(
                         "SELECT count(*) FROM pg_proc p JOIN pg_namespace n "
-                        f"ON n.oid = p.pronamespace WHERE n.nspname = '{self._names.schema}' "
+                        f"ON n.oid = p.pronamespace WHERE n.nspname = '{self._names.function_schema}' "
                         "AND p.proname = 'fn_asbuilt_road_geometry'"
                     )
                     state["available"] = bool(probe and int(probe[0][0]) > 0)
@@ -8031,7 +8075,7 @@ if HAS_QGIS:
                         for n, key in enumerate(chunk)
                     ]
                     rows_by_tag = first_rows_by_tag(
-                        be_connection.executeSql(batch_road_geometry_sql(items, LOCATE_RADIUS_M, self._names.schema))
+                        be_connection.executeSql(batch_road_geometry_sql(items, LOCATE_RADIUS_M, self._names.function_schema))
                         or []
                     )
                     for n, key in enumerate(chunk):
@@ -8286,7 +8330,7 @@ if HAS_QGIS:
                 try:
                     probe = be_connection.executeSql(
                         "SELECT count(*) FROM pg_proc p JOIN pg_namespace n "
-                        f"ON n.oid = p.pronamespace WHERE n.nspname = '{self._names.schema}' "
+                        f"ON n.oid = p.pronamespace WHERE n.nspname = '{self._names.function_schema}' "
                         "AND p.proname = 'fn_asbuilt_store_osm_ways'"
                     )
                     state["available"] = bool(probe and int(probe[0][0]) > 0)
@@ -8304,7 +8348,7 @@ if HAS_QGIS:
             for start in range(0, len(payload), OSM_STORE_BATCH_SIZE):
                 batch = payload[start:start + OSM_STORE_BATCH_SIZE]
                 try:
-                    rows = be_connection.executeSql(store_osm_ways_sql(batch, self._names.schema)) or []
+                    rows = be_connection.executeSql(store_osm_ways_sql(batch, self._names.function_schema)) or []
                     inserted = int(rows[0][0]) if rows and rows[0][0] is not None else 0
                 except Exception as exc:
                     state["failed"] += len(batch)

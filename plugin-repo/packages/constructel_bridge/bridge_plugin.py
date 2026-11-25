@@ -59,7 +59,8 @@ from .bridge_presets import (
 )
 from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
-from .bridge_projets import NO_CAPABILITIES
+from .bridge_projets import NO_CAPABILITIES, projet_layer_schemas
+from .bridge_relocate import relocate_project_layers
 from .bridge_project_archive import write_project_archive
 from .bridge_db_save import (
     bridge_uri,
@@ -96,7 +97,7 @@ from .bridge_operators import (
     LAST_OPERATORS_KEY,
     OPERATOR_KEYS,
     OPERATORS_QUERY,
-    PROJET_SCHEMA,
+    PROJET_STORE_SCHEMA,
     SCOPE_CODES_QUERY,
     SUFFIX_SETTINGS_KEY,
     OperatorInfo,
@@ -1360,6 +1361,11 @@ class ConstructelBridgePlugin:
             self._fix_layer_credentials()
         except Exception as exc:
             self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
+        # 2.2 (Farois mig 596) : couches projet.<t> deplacees -> schema du registre.
+        try:
+            self._relocate_projet_layers()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Repointage des couches de projet metier impossible : {exc}", Qgis.MessageLevel.Warning)
 
         # Volet D2 : lecture seule selon le perimetre, projet Bridge ou non
         # (toute couche de nos serveurs est concernee).
@@ -2427,6 +2433,11 @@ class ConstructelBridgePlugin:
             self._fix_layer_credentials()
         except Exception as exc:
             self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
+        # 2.2 : projet ouvert avant la connexion (registre lu a la connexion).
+        try:
+            self._relocate_projet_layers()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Repointage des couches de projet metier impossible : {exc}", Qgis.MessageLevel.Warning)
 
         try:
             self._check_layer_datasources()
@@ -2866,6 +2877,22 @@ class ConstructelBridgePlugin:
     # =====================================================================
     # Configuration connexion QGIS
     # =====================================================================
+
+    def _relocate_projet_layers(self) -> int:
+        """Bridge 2.2 (spec Farois schema data § 6.4) : les couches
+        ``projet.<t>`` dont le registre (lu a la connexion) place ``<t>`` dans
+        un autre schema (``data`` apres la mig Farois 596) sont repointees, en
+        memoire. Registre illisible (pas de scope PROJET, hors connexion) :
+        aucune modification."""
+        schemas = {table: schema for table, schema in projet_layer_schemas(self._projets).items()
+                   if schema != PROJET_STORE_SCHEMA}
+        if not schemas:
+            return 0
+        moved = relocate_project_layers(QgsProject.instance(), schemas)
+        if moved:
+            self._log(f"{moved} couche(s) de projet metier repointee(s) vers le schema du registre "
+                      f"({', '.join(sorted(set(schemas.values())))})")
+        return moved
 
     def _fix_layer_credentials(self):
         """Reecrit les datasources PG pour utiliser les credentials courants.
@@ -4184,7 +4211,8 @@ class ConstructelBridgePlugin:
             connected=connected,
             header=self._home_header() if connected else "",
             operators=operators,
-            counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry)),
+            counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry),
+                                       projet_layer_schemas(self._projets)),
             labels=labels,
             last_selection=self._home_last_selection(settings),
             project_suffix=info["operator_suffix"],
@@ -4433,7 +4461,7 @@ class ConstructelBridgePlugin:
         qui fait d'un enregistrement une mise a jour. Le record est pose APRES
         ``project.read`` (qui emet ``cleared``)."""
         self._last_open_row = None
-        if not self._open_db_project(PROJET_SCHEMA, row.name):
+        if not self._open_db_project(PROJET_STORE_SCHEMA, row.name):
             return False
         open_row = self._last_open_row
         if open_row is None:
@@ -4732,8 +4760,8 @@ class ConstructelBridgePlugin:
         """Schemas des ``qgis_projects`` : operateurs utilisables, ``public``,
         puis le schema transverse ``projet`` s'il existe en base (2.0 R7)."""
         schemas = self._base_project_schemas()
-        if PROJET_SCHEMA not in schemas and self._projet_schema_exists():
-            schemas = (*schemas, PROJET_SCHEMA)
+        if PROJET_STORE_SCHEMA not in schemas and self._projet_schema_exists():
+            schemas = (*schemas, PROJET_STORE_SCHEMA)
         return schemas
 
     def _read_and_clean_project(self, project, schema: str, name: str) -> bool:
@@ -4757,10 +4785,10 @@ class ConstructelBridgePlugin:
         # ensuite (mot reserve : user, order...), le filtre exclut les guillemets.
         # (la base n'est lue que pour le schema transverse ``projet``)
         if schema not in self._base_project_schemas() and not (
-                schema == PROJET_SCHEMA and self._projet_schema_exists()):
+                schema == PROJET_STORE_SCHEMA and self._projet_schema_exists()):
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
-        if schema == PROJET_SCHEMA and PROJET_SCHEMA not in self._base_project_schemas():
+        if schema == PROJET_STORE_SCHEMA and PROJET_STORE_SCHEMA not in self._base_project_schemas():
             # 2.1 : lecture sous RLS (content, metadata, version, projet_id) ;
             # la ligne est rendue a _open_qgis_project par _last_open_row.
             try:
@@ -4953,7 +4981,7 @@ class ConstructelBridgePlugin:
             results: list[dict] = []
             errors: list[Exception] = []
             for schema in self._project_schemas():
-                if schema == PROJET_SCHEMA and self._projet_caps.qgis_projects:
+                if schema == PROJET_STORE_SCHEMA and self._projet_caps.qgis_projects:
                     continue  # 2.1 : projets QGIS du schema projet lus par fn_qgis_projects_visible
                 try:
                     cur.execute(

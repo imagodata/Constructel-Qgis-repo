@@ -36,7 +36,7 @@ from .bridge_operators import (
     OPERATOR_TABLES,
     CATALOG_FALLBACKS,
     OPERATOR_TEMPLATE_SCHEMA,
-    PROJET_SCHEMA,
+    PROJET_STORE_SCHEMA,
     OperatorInfo,
     base_key,
     canonical_group,
@@ -49,6 +49,7 @@ from .bridge_operators import (
     relation_id,
     style_sources,
 )
+from .bridge_projets import projet_layer_schemas
 from .i18n.layer_translations import GROUP_NAMES
 
 TAG = "Constructel Bridge"
@@ -631,17 +632,28 @@ class LoadedCounts:
     per_operator: dict   # schema -> couches operateur presentes dans l'arbre de couches
     common: int          # couches communes de travail (hors v_form_lists, docs_elements)
     basemaps: int        # fonds de plan de BASEMAPS presents (chacun compte une fois)
-    projet: int = 0      # 2.1 : couches du schema `projet` (projets metier)
+    projet: int = 0      # 2.1 : couches des projets metier (projet.<t> ou schema du registre, 2.2)
 
 
-def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> LoadedCounts:
+def _is_projet_table(schema: str, table: str, projet_schemas: Mapping[str, str]) -> bool:
+    """``schema.table`` est une table de projet metier : ancienne source
+    ``projet.<t>`` (avant la mig Farois 596, ou projet pas encore repointe) ou
+    schema du registre pour *table* (2.2)."""
+    return schema == PROJET_STORE_SCHEMA or projet_schemas.get(table) == schema
+
+
+def count_loaded_layers(project, known: Optional[Iterable[str]] = None,
+                        projet_schemas: Optional[Mapping[str, str]] = None) -> LoadedCounts:
     """Ce que le projet contient deja, pour l'ecran d'accueil (§ 6.2) : seules
     les couches qui ont un noeud dans l'arbre comptent (les couches fantomes
     creees par les relations des QML n'en ont pas). *per_operator* suit
     l'ordre de l'arbre. *known* (schemas operateur connus, voir
     known_operator_schemas) : une table operateur d'un autre schema (copie
-    dans public...) ne fait pas naitre d'operateur ; None = tout schema."""
+    dans public...) ne fait pas naitre d'operateur ; None = tout schema.
+    *projet_schemas* (2.2, projet_layer_schemas) : table de projet metier ->
+    schema du registre ; une couche ``projet.<t>`` compte toujours."""
     known = None if known is None else set(known)
+    projet_schemas = dict(projet_schemas or {})
     common_ids = {table_id for e in LAYER_CATALOG
                   if e[1] not in OPERATOR_GROUPS and e[0] not in _TECHNICAL_KEYS
                   for table_id in catalog_table_ids(e)}
@@ -660,7 +672,7 @@ def count_loaded_layers(project, known: Optional[Iterable[str]] = None) -> Loade
             basemaps.add(layer.name())
         for table_id in _layer_table_ids(layer):
             schema, dot, table = table_id.partition(".")
-            if schema == PROJET_SCHEMA and dot:
+            if dot and _is_projet_table(schema, table, projet_schemas):
                 projet += 1
             elif table_id in common_ids:
                 common += 1
@@ -773,10 +785,18 @@ def projet_layer_key(table: str) -> str:
     return f"projet:{table}"
 
 
-def existing_projet_tables(project) -> set[str]:
-    """Tables du schema `projet` deja chargees (couches PostgreSQL)."""
-    prefix = PROJET_SCHEMA + "."
-    return {table_id[len(prefix):] for table_id in _existing_layer_index(project) if table_id.startswith(prefix)}
+def existing_projet_tables(project, schemas: Optional[Mapping[str, str]] = None) -> set[str]:
+    """Tables de projet metier deja chargees (couches PostgreSQL) : source
+    ``projet.<t>`` ou, 2.2, ``<schemas[t]>.<t>`` (schema du registre, voir
+    projet_layer_schemas). Les deux comptent pendant la transition de la mig
+    Farois 596 : une table n'est jamais chargee deux fois."""
+    schemas = dict(schemas or {})
+    found = set()
+    for table_id in _existing_layer_index(project):
+        schema, dot, table = table_id.partition(".")
+        if dot and _is_projet_table(schema, table, schemas):
+            found.add(table)
+    return found
 
 
 def ensure_projet_group(root, projet):
@@ -809,7 +829,7 @@ def load_projet_layers(conn_params: dict, password: str, projet, tables: Iterabl
     project = QgsProject.instance()
     _stamp_version(project)
     wanted = set(tables)
-    present = existing_projet_tables(project)
+    present = existing_projet_tables(project, projet_layer_schemas((projet,)))
     root = project.layerTreeRoot()
     group = None
     added: dict = {}
@@ -817,10 +837,12 @@ def load_projet_layers(conn_params: dict, password: str, projet, tables: Iterabl
     for entry in projet.layers:
         if entry.table not in wanted or entry.table in present:
             continue
-        uri = _build_uri(conn_params, password, PROJET_SCHEMA, entry.table, entry.geom_column or "", "")
+        # 2.2 : schema du registre (data apres la mig Farois 596) ; le style
+        # est cherche dans ce schema (_apply_styles_from_db lit l'URI).
+        uri = _build_uri(conn_params, password, entry.schema, entry.table, entry.geom_column or "", "")
         layer = QgsVectorLayer(uri.uri(False), entry.label, "postgres")
         if not layer or not layer.isValid():
-            _log(f"Couche invalide: {PROJET_SCHEMA}.{entry.table} (projet metier {projet.code})",
+            _log(f"Couche invalide: {entry.schema}.{entry.table} (projet metier {projet.code})",
                  Qgis.MessageLevel.Warning)
             continue
         project.addMapLayer(layer, False)

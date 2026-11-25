@@ -91,7 +91,7 @@ VISIBLE = ("Vue", "ad", "a0b1", "GOFIBER", "GoFiber", False, False, "BE", 2,
 # ---------------------------------------------------------------- Task 5 : lectures
 
 def test_read_capabilities_passes_function_names_and_survives_errors(conn):
-    conn.answer(all=[("r", "projets", True), ("r", "projet_couches", True)])
+    conn.answer(all=[("r", "projets", True), ("r", "projet_couches", True), ("r", "projet_tables", True)])
     caps = store.read_capabilities(conn)
     sql, params = conn.executed[-1]
     assert sql == pj.CAPABILITIES_QUERY and list(params) == [list(pj.CAPABILITY_FUNCTIONS)]

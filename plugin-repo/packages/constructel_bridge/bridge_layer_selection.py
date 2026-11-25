@@ -67,6 +67,7 @@ from .bridge_project_init import (
     existing_by_schema,
     existing_projet_tables,
 )
+from .bridge_projets import projet_layer_schemas
 from .i18n import get_language, tr
 from .i18n.layer_translations import LAYER_DISPLAY_NAMES, LAYER_TREE_LABELS
 
@@ -198,7 +199,7 @@ class LayerSelectionWidget(QWidget):
         self._operator_memory: Optional[Tuple[list, set]] = None
         self._basemap_items: Dict[str, QTreeWidgetItem] = {}
         self._existing_basemaps = _detect_existing_basemaps()
-        # 2.1 : projets metier coches et tables du schema `projet` deja chargees.
+        # 2.1 : projets metier coches et tables deja chargees (projet ou schema du registre, 2.2).
         self._projets: tuple = ()
         self._projet_existing: set = set()
         self._build_ui()
@@ -326,7 +327,8 @@ class LayerSelectionWidget(QWidget):
         return key in self._existing.get(schema, ())
 
     def _read_projet_existing(self) -> None:
-        self._projet_existing = existing_projet_tables(_project_init.QgsProject.instance())
+        self._projet_existing = existing_projet_tables(_project_init.QgsProject.instance(),
+                                                       projet_layer_schemas(self._projets))
 
     def _checked_keys(self) -> set:
         return {k for k, item in self._items.items()
@@ -350,7 +352,8 @@ class LayerSelectionWidget(QWidget):
 
     def _add_projet_group(self, projet, checked: set):
         """Groupe d'un projet metier : ses couches declarees, dans l'ordre du
-        registre, libelle du registre (jamais traduit), infobulle projet.<table>."""
+        registre, libelle du registre (jamais traduit), infobulle <schema>.<table>
+        (schema du registre, 2.2)."""
         schema = projet_tree_key(projet.code)
         group_item = QTreeWidgetItem(self._tree, [""])
         group_item.setCheckState(0, Qt.CheckState.Unchecked)
@@ -362,11 +365,11 @@ class LayerSelectionWidget(QWidget):
             item.setCheckState(0, Qt.CheckState.Unchecked)
             if loaded:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                item.setToolTip(0, f"projet.{entry.table} — {tr('init.already_loaded')}")
+                item.setToolTip(0, f"{entry.schema}.{entry.table} — {tr('init.already_loaded')}")
                 item.setDisabled(True)
             else:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setToolTip(0, f"projet.{entry.table}")
+                item.setToolTip(0, f"{entry.schema}.{entry.table}")
                 if (schema, entry.table) in checked:
                     item.setCheckState(0, Qt.CheckState.Checked)
                 loadable.append(item)
@@ -557,7 +560,8 @@ class LayerSelectionWidget(QWidget):
         return self._projets
 
     def loaded_projet_tables(self) -> frozenset:
-        """Tables du schema `projet` deja chargees (relues du projet)."""
+        """Tables des projets metier deja chargees, dans projet ou dans le
+        schema du registre (relues du projet)."""
         self._read_projet_existing()
         return frozenset(self._projet_existing)
 
