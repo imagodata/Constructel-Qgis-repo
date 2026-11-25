@@ -35,7 +35,8 @@ def test_two_projets_keep_query_order():
 
 
 def test_capabilities_full_and_absent():
-    rows = ([("r", "projets", True), ("r", "projet_couches", True), ("r", "qgis_projects", True)]
+    rows = ([("r", "projets", True), ("r", "projet_couches", True), ("r", "projet_tables", True),
+             ("r", "qgis_projects", True)]
             + [("f", n, True) for n in pj.CAPABILITY_FUNCTIONS])
     caps = pj.parse_capabilities(rows)
     assert caps.registry and caps.qgis_projects and caps.save and caps.delete and caps.share and caps.share_project
@@ -43,7 +44,7 @@ def test_capabilities_full_and_absent():
 
 
 def test_capabilities_partial_lot_a_only():
-    caps = pj.parse_capabilities([("r", "projets", True), ("r", "projet_couches", True)])
+    caps = pj.parse_capabilities([("r", "projets", True), ("r", "projet_couches", True), ("r", "projet_tables", True)])
     assert caps.registry and not caps.qgis_table and not caps.qgis_projects and not caps.save
 
 
@@ -96,3 +97,35 @@ def test_group_projets_sorts_inside_a_group_by_label():
         return pj.ProjetInfo(code.lower(), code, label, "WYRE", (pj.ProjetLayer("t", "T", None, "default", None, 0),))
     groups = pj.group_projets([mk("Z", "zz"), mk("A", "Ébène"), mk("B", "beta")], ["WYRE"], {})
     assert [p.code for p in groups[0][1]] == ["B", "A", "Z"]
+
+
+# --- Bridge 2.2 : schema des tables lu dans le registre (Farois mig 596) ---------------
+
+
+def test_parse_projets_lit_le_schema():
+    rows = [couche("geofiber_asbuilt_depth_points", "Points", 1) + ("data",),
+            couche("geofiber_meta", "Meta", 2) + ("projet",)]
+    (projet,) = pj.parse_projet_rows(rows)
+    assert {l.table: l.schema for l in projet.layers} == {"geofiber_asbuilt_depth_points": "data", "geofiber_meta": "projet"}
+    assert pj.projet_layer_schemas((projet,)) == {"geofiber_asbuilt_depth_points": "data", "geofiber_meta": "projet"}
+    q = pj.PROJETS_QUERY
+    assert "JOIN projet.projet_tables t ON (t.projet_id, t.table_name) = (c.projet_id, c.table_name)" in q
+    assert "COALESCE(to_jsonb(t) ->> 'schema_name', 'projet')" in q
+    assert "LEFT JOIN" not in q
+
+
+def test_parse_projets_schema_absent_vaut_projet():
+    # Ligne a 10 colonnes (requete 2.1) ou schema NULL : projet.
+    (projet,) = pj.parse_projet_rows([couche("t", "T", 1), couche("u", "U", 2) + (None,)])
+    assert [l.schema for l in projet.layers] == ["projet", "projet"]
+    assert pj.ProjetLayer("t", "T", None, "default", None, 0).schema == "projet"
+    # Schema qui n'est pas un identifiant simple : la couche est ecartee.
+    assert pj.parse_projet_rows([couche("t", "T", 1) + ('data"; x',)]) == ()
+
+
+def test_capabilities_exige_projet_tables():
+    base = [("r", "projets", True), ("r", "projet_couches", True)]
+    assert not pj.parse_capabilities(base).registry
+    assert not pj.parse_capabilities(base + [("r", "projet_tables", False)]).registry
+    assert pj.parse_capabilities(base + [("r", "projet_tables", True)]).registry
+    assert "'projet_tables'" in pj.CAPABILITIES_QUERY

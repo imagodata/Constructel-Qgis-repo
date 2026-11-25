@@ -110,3 +110,22 @@ def test_projet_done_when_every_layer_is_loaded(sel):  # noqa: F811
     assert widget.projet_done("GOFIBER") and not widget.projet_done("AUTRE")
     assert f"GoFiber  {sel.tr('home.group_loaded')}" in _captions(widget)
     assert widget.selection().projet == {}
+
+
+# --- Bridge 2.2 : infobulle et « deja chargee » dans le schema du registre ------------
+
+GOFIBER_DATA = pj.ProjetInfo("b3", "GOFIBER", "GoFiber", "WYRE", (
+    pj.ProjetLayer("geofiber_connectors", "Connecteurs", None, "default", "geom", 10, "data"),
+    pj.ProjetLayer("geofiber_points", "Points", None, "default", "geom", 20, "data"),
+))
+
+
+def test_infobulle_data(sel):  # noqa: F811
+    sel.project.add_pg("data", "geofiber_points", "Points")
+    widget, _calls = _widget(sel)
+    widget.set_projets((GOFIBER_DATA,))
+    item = widget._items[("projet:GOFIBER", "geofiber_connectors")]
+    assert item.toolTip(0) == "data.geofiber_connectors"
+    loaded = widget._items[("projet:GOFIBER", "geofiber_points")]
+    assert _greyed(loaded) and loaded.toolTip(0).startswith("data.geofiber_points")
+    assert widget.loaded_projet_tables() == frozenset({"geofiber_points"})

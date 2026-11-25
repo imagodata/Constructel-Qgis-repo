@@ -40,7 +40,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .bridge_home_model import QGIS_NOMINATIVE, QGIS_OFFLINE, HomeActions
 from .bridge_home_style import set_role
-from .bridge_operators import PROJET_SCHEMA
+from .bridge_operators import PROJET_STORE_SCHEMA
 from .bridge_qgis_projects import build_sections
 from .i18n import tr
 
@@ -216,7 +216,7 @@ class ProjectsPage(QWidget):
         self._projects = list(projects or [])
         if self._mode in (MODE_QGIS, MODE_NOMINATIVE):
             # Les projets QGIS du schema `projet` viennent de list_visible.
-            self._projects = [p for p in self._projects if p.get("schema") != PROJET_SCHEMA]
+            self._projects = [p for p in self._projects if p.get("schema") != PROJET_STORE_SCHEMA]
         self._rows = list(rows or [])
 
     # -- affichage ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ class ProjectsPage(QWidget):
     def _group_label(self, schema: str) -> str:
         if schema == COMMON_SCHEMA:
             return tr("home.projects_common")
-        if schema == PROJET_SCHEMA:
+        if schema == PROJET_STORE_SCHEMA:
             return tr("qgis.legacy_projet_group")
         return self._labels.get(schema, schema)
 

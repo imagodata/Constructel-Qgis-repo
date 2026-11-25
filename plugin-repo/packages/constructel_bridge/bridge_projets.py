@@ -9,6 +9,12 @@ base pour le Bridge 2.1, sans Qt ni QGIS.
   sous RLS ; `operateur_code` par `to_jsonb(p)` (colonne absente d'une base
   du lot (a) anterieure : NULL sans erreur). Le Bridge ne lit ni
   `lecture_qfield` ni les comptes partages.
+- 2.2 (Farois mig 596) : le schema de chaque table vient du registre
+  (`projet.projet_tables.schema_name`, `data` apres la 596). Avant la 596 la
+  colonne n'existe pas : `to_jsonb(t)` la lit sans erreur et le schema vaut
+  `projet`. Toute autre erreur SQL (droit, requete) remonte a l'appelant,
+  jamais de repli silencieux. Le depot des projets QGIS et le registre restent
+  dans `projet` (PROJET_STORE_SCHEMA).
 """
 from __future__ import annotations
 
@@ -17,7 +23,9 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-PROJET_SCHEMA = "projet"
+# Schema du depot des projets QGIS (qgis_projects) et du registre des projets
+# metier. Le schema des TABLES de donnees vient du registre (ProjetLayer.schema).
+PROJET_STORE_SCHEMA = "projet"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
@@ -30,6 +38,7 @@ class ProjetLayer:
     style_name: str
     geom_column: Optional[str]
     sort_order: int
+    schema: str = PROJET_STORE_SCHEMA   # 2.2 : projet_tables.schema_name (projet avant la 596)
 
 
 @dataclass(frozen=True)
@@ -69,7 +78,7 @@ CAPABILITY_FUNCTIONS = (
     "fn_qgis_project_shares_list",
 )
 
-_REGISTRY_TABLES = ("projets", "projet_couches", "qgis_projects")
+_REGISTRY_TABLES = ("projets", "projet_couches", "projet_tables", "qgis_projects")
 
 CAPABILITIES_QUERY = (
     "SELECT 'r' AS kind, c.relname::text AS name, "
@@ -77,7 +86,7 @@ CAPABILITIES_QUERY = (
     "AND pg_catalog.has_table_privilege(c.oid, 'SELECT')) AS allowed "
     "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
     "WHERE n.nspname = 'projet' AND c.relkind IN ('r', 'p', 'v') "
-    "AND c.relname IN ('projets', 'projet_couches', 'qgis_projects') "
+    "AND c.relname IN ('projets', 'projet_couches', 'projet_tables', 'qgis_projects') "
     "UNION ALL "
     "SELECT 'f', p.proname::text, "
     "bool_or(pg_catalog.has_schema_privilege(n.oid, 'USAGE') "
@@ -89,8 +98,10 @@ CAPABILITIES_QUERY = (
 
 PROJETS_QUERY = (
     "SELECT p.id::text, p.code, p.label, to_jsonb(p) ->> 'operateur_code', "
-    "c.table_name, c.label, c.layer_group, c.style_name, c.geom_column, c.sort_order "
+    "c.table_name, c.label, c.layer_group, c.style_name, c.geom_column, c.sort_order, "
+    "COALESCE(to_jsonb(t) ->> 'schema_name', 'projet') "
     "FROM projet.projets p JOIN projet.projet_couches c ON c.projet_id = p.id "
+    "JOIN projet.projet_tables t ON (t.projet_id, t.table_name) = (c.projet_id, c.table_name) "
     "WHERE p.active ORDER BY p.code, c.sort_order, c.label"
 )
 
@@ -123,7 +134,7 @@ def parse_capabilities(rows: Iterable[tuple]) -> ProjetCapabilities:
     visible = "fn_qgis_projects_visible" in functions
     usable = qgis_table and visible
     return ProjetCapabilities(
-        registry="projets" in tables and "projet_couches" in tables,
+        registry=all(t in tables for t in ("projets", "projet_couches", "projet_tables")),
         qgis_table=qgis_table,
         visible=visible,
         save=usable and "fn_qgis_project_save" in functions,
@@ -138,8 +149,9 @@ def parse_capabilities(rows: Iterable[tuple]) -> ProjetCapabilities:
 def parse_projet_rows(rows: Iterable[tuple]) -> Tuple[ProjetInfo, ...]:
     """Lignes de PROJETS_QUERY -> projets metier (ordre de la requete).
 
-    Une couche dont la table ou la colonne de geometrie n'est pas un
-    identifiant simple est ecartee ; un projet sans couche restante aussi."""
+    Une couche dont la table, le schema ou la colonne de geometrie n'est pas
+    un identifiant simple est ecartee ; un projet sans couche restante aussi.
+    Ligne sans 11e colonne (requete 2.1) ou schema NULL : `projet`."""
     heads: Dict[str, Tuple[str, str, str, Optional[str]]] = {}
     layers: Dict[str, List[ProjetLayer]] = {}
     order: List[str] = []
@@ -159,6 +171,9 @@ def parse_projet_rows(rows: Iterable[tuple]) -> Tuple[ProjetInfo, ...]:
             continue
         if geom is not None and not is_identifier(geom):
             continue
+        schema = (row[10] if len(row) > 10 else None) or PROJET_STORE_SCHEMA
+        if not is_identifier(schema):
+            continue
         try:
             rank = int(sort_order or 0)
         except (TypeError, ValueError):
@@ -170,6 +185,7 @@ def parse_projet_rows(rows: Iterable[tuple]) -> Tuple[ProjetInfo, ...]:
             style_name=style or "default",
             geom_column=geom or None,
             sort_order=rank,
+            schema=schema,
         ))
     result = []
     for key in order:
@@ -179,6 +195,17 @@ def parse_projet_rows(rows: Iterable[tuple]) -> Tuple[ProjetInfo, ...]:
         pid, code, label, operateur = heads[key]
         result.append(ProjetInfo(pid, code, label, operateur, tuple(kept)))
     return tuple(result)
+
+
+def projet_layer_schemas(projets: Iterable[ProjetInfo]) -> Dict[str, str]:
+    """Schema de chaque table de projet metier (table -> schema du registre).
+    Une table declaree par deux projets garde le premier schema lu (le
+    registre n'en donne qu'un par table)."""
+    schemas: Dict[str, str] = {}
+    for projet in projets or ():
+        for layer in projet.layers:
+            schemas.setdefault(layer.table, layer.schema)
+    return schemas
 
 
 def group_projets(projets: Sequence[ProjetInfo], usable_codes: Sequence[str],

@@ -59,7 +59,7 @@ from .bridge_presets import (
 )
 from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
-from .bridge_projets import NO_CAPABILITIES
+from .bridge_projets import NO_CAPABILITIES, projet_layer_schemas
 from .bridge_project_archive import write_project_archive
 from .bridge_db_save import (
     bridge_uri,
@@ -96,7 +96,7 @@ from .bridge_operators import (
     LAST_OPERATORS_KEY,
     OPERATOR_KEYS,
     OPERATORS_QUERY,
-    PROJET_SCHEMA,
+    PROJET_STORE_SCHEMA,
     SCOPE_CODES_QUERY,
     SUFFIX_SETTINGS_KEY,
     OperatorInfo,
@@ -4184,7 +4184,8 @@ class ConstructelBridgePlugin:
             connected=connected,
             header=self._home_header() if connected else "",
             operators=operators,
-            counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry)),
+            counts=count_loaded_layers(project, known_operator_schemas(project, self._operator_registry),
+                                       projet_layer_schemas(self._projets)),
             labels=labels,
             last_selection=self._home_last_selection(settings),
             project_suffix=info["operator_suffix"],
@@ -4433,7 +4434,7 @@ class ConstructelBridgePlugin:
         qui fait d'un enregistrement une mise a jour. Le record est pose APRES
         ``project.read`` (qui emet ``cleared``)."""
         self._last_open_row = None
-        if not self._open_db_project(PROJET_SCHEMA, row.name):
+        if not self._open_db_project(PROJET_STORE_SCHEMA, row.name):
             return False
         open_row = self._last_open_row
         if open_row is None:
@@ -4732,8 +4733,8 @@ class ConstructelBridgePlugin:
         """Schemas des ``qgis_projects`` : operateurs utilisables, ``public``,
         puis le schema transverse ``projet`` s'il existe en base (2.0 R7)."""
         schemas = self._base_project_schemas()
-        if PROJET_SCHEMA not in schemas and self._projet_schema_exists():
-            schemas = (*schemas, PROJET_SCHEMA)
+        if PROJET_STORE_SCHEMA not in schemas and self._projet_schema_exists():
+            schemas = (*schemas, PROJET_STORE_SCHEMA)
         return schemas
 
     def _read_and_clean_project(self, project, schema: str, name: str) -> bool:
@@ -4757,10 +4758,10 @@ class ConstructelBridgePlugin:
         # ensuite (mot reserve : user, order...), le filtre exclut les guillemets.
         # (la base n'est lue que pour le schema transverse ``projet``)
         if schema not in self._base_project_schemas() and not (
-                schema == PROJET_SCHEMA and self._projet_schema_exists()):
+                schema == PROJET_STORE_SCHEMA and self._projet_schema_exists()):
             self._log(f"Rejected invalid schema: {schema!r}", Qgis.MessageLevel.Warning)
             return False
-        if schema == PROJET_SCHEMA and PROJET_SCHEMA not in self._base_project_schemas():
+        if schema == PROJET_STORE_SCHEMA and PROJET_STORE_SCHEMA not in self._base_project_schemas():
             # 2.1 : lecture sous RLS (content, metadata, version, projet_id) ;
             # la ligne est rendue a _open_qgis_project par _last_open_row.
             try:
@@ -4953,7 +4954,7 @@ class ConstructelBridgePlugin:
             results: list[dict] = []
             errors: list[Exception] = []
             for schema in self._project_schemas():
-                if schema == PROJET_SCHEMA and self._projet_caps.qgis_projects:
+                if schema == PROJET_STORE_SCHEMA and self._projet_caps.qgis_projects:
                     continue  # 2.1 : projets QGIS du schema projet lus par fn_qgis_projects_visible
                 try:
                     cur.execute(

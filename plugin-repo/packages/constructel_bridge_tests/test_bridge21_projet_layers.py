@@ -139,3 +139,52 @@ def test_projet_group_is_not_moved_by_reorganize(pi, monkeypatch):  # noqa: F811
     pi.load_projet_layers({}, "", chantier, {"t"}, apply_styles=False)
     root = project.layerTreeRoot()
     assert _names(root) == ["Chantier"] and not pi.needs_reorganization(root)
+
+
+# --- Bridge 2.2 : tables de projet dans le schema du registre (Farois mig 596) ---------
+
+DATA = pj.ProjetInfo("b3", "GOFIBER", "GoFiber", "WYRE", (
+    pj.ProjetLayer("geofiber_connectors", "Connecteurs", GROUP, "default", "geom", 10, "data"),
+    pj.ProjetLayer("geofiber_points", "Points", GROUP, "gofiber_points", "geom", 20, "data"),
+))
+DATA_SCHEMAS = {"geofiber_connectors": "data", "geofiber_points": "data"}
+
+
+def test_existing_reconnait_projet_et_data(pi, monkeypatch):  # noqa: F811
+    project = install_fake_project(pi, monkeypatch)
+    project.add_pg("data", "geofiber_connectors")
+    project.add_pg("projet", "geofiber_points")          # ancienne source, transition
+    project.add_pg("data", "autre_table")                # hors registre : ignoree
+    project.add_pg("wyre", "geofiber_meta")              # autre schema : ignoree
+    assert pi.existing_projet_tables(project, DATA_SCHEMAS) == {"geofiber_connectors", "geofiber_points"}
+    # Sans registre : seul projet.<t> compte (comportement 2.1).
+    assert pi.existing_projet_tables(project) == {"geofiber_points"}
+    # Deja chargee dans projet ou data : jamais rechargee.
+    assert pi.load_projet_layers({}, "", DATA, {"geofiber_connectors", "geofiber_points"}, apply_styles=False) == 0
+
+
+def test_loaded_counts_data(pi, monkeypatch):  # noqa: F811
+    project = install_fake_project(pi, monkeypatch)
+    project.add_pg("data", "geofiber_connectors")
+    project.add_pg("projet", "geofiber_points")
+    project.add_pg("data", "autre_table")
+    project.add_pg("wyre", "cables")
+    counts = pi.count_loaded_layers(project, {"wyre"}, DATA_SCHEMAS)
+    assert counts.projet == 2 and counts.per_operator == {"wyre": 1} and counts.common == 0
+    assert pi.count_loaded_layers(project, {"wyre"}).projet == 1
+
+
+def test_uri_couche_dans_data(pi, monkeypatch):  # noqa: F811
+    project = install_fake_project(pi, monkeypatch)
+    styled = []
+
+    def spy(_p, _pw, loaded, style_names=None):
+        styled.append({key: project.schema_of(layer.id()) for key, layer in loaded.items()})
+        return set()
+
+    monkeypatch.setattr(pi, "_apply_styles_from_db", spy)
+    assert pi.load_projet_layers({}, "", DATA, {"geofiber_connectors", "geofiber_points"}, apply_styles=True) == 2
+    assert project.count_pg("data", "geofiber_points") == 1 and project.count_pg("projet", "geofiber_points") == 0
+    assert '"data"."geofiber_points"' in project.pg_layers("data", "geofiber_points")[0].source()
+    # Style cherche dans le schema de la couche (URI data), cle projet:<t> inchangee.
+    assert styled == [{"projet:geofiber_connectors": "data", "projet:geofiber_points": "data"}]
