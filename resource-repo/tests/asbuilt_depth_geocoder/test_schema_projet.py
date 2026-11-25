@@ -27,6 +27,7 @@ from geocode_asbuilt_depth import (  # noqa: E402
 
 PUBLIC = AsbuiltSchema(mod.SCHEMA_MODE_PUBLIC)
 PROJET = AsbuiltSchema(mod.SCHEMA_MODE_PROJET)
+DATA = AsbuiltSchema(mod.SCHEMA_MODE_DATA)
 
 # Message réel de la garde Farois (086, écrivain des segments).
 GUARD_ERROR = (
@@ -597,7 +598,7 @@ def test_aucun_schema_en_dur_dans_le_code():
         line for line in _source().splitlines() if not line.lstrip().startswith("#")
     )
     # Aucun nom qualifié en dur : tout passe par AsbuiltSchema.
-    assert not re.search(r"\b(public|projet)\.(geofiber_asbuilt_|fn_asbuilt_)", code)
+    assert not re.search(r"\b(public|projet|data)\.(geofiber_asbuilt_|fn_asbuilt_)", code)
     assert "nspname = 'public'" not in code
     # Aucun SQL de DML direct sur segments / connecteurs dans le script.
     assert not re.search(
@@ -615,3 +616,73 @@ def test_aide_sans_schema_en_dur():
     assert "public.geofiber" not in help_text and "projet.geofiber" not in help_text
     assert "public.fn_asbuilt" not in help_text and "projet.fn_asbuilt" not in help_text
     assert "SCHÉMA" in help_text and "PROJET GOFIBER" in help_text
+
+
+# --- mode data (migration Farois 596) ---------------------------------------------
+# Tables GoFiber déplacées de projet vers data ; fonctions (garde, écrivains,
+# localisation) restées dans projet.
+
+def _data_db(functions=ALL_FUNCTIONS, allowed=True):
+    db = _projet_db(functions, allowed)
+    db.answers[0] = (PROBE, [[True, True]])   # (points dans projet, points dans data)
+    return db
+
+
+def test_sonde_data_prioritaire():
+    sql = mod.SCHEMA_PROBE_SQL
+    assert "to_regclass" not in sql and "pg_catalog.pg_class" in sql
+    assert "n.nspname = 'data'" in sql and "n.nspname = 'projet'" in sql
+    # Colonnes : (points dans projet, points dans data) ; data l'emporte.
+    assert mod.schema_mode_from_probe([[False, True]]) == "data"
+    assert mod.schema_mode_from_probe([[True, True]]) == "data"
+    assert mod.schema_mode_from_probe([["f", "t"]]) == "data"
+    assert mod.schema_mode_from_probe([[True, False]]) == "projet"
+    assert mod.schema_mode_from_probe([[True, None]]) == "projet"
+    assert mod.schema_mode_from_probe([[True]]) == "projet"          # sonde 1.4.0
+    assert mod.schema_mode_from_probe([[False, False]]) == "public"
+    assert mod.schema_mode_from_probe([]) == "public"
+    db = _data_db()
+    assert mod.detect_asbuilt_schema(db) == DATA
+    assert db.calls[0] == mod.SCHEMA_PROBE_SQL
+    assert "n.nspname = 'projet'" in db.calls[1]        # fonctions cherchées dans projet
+    assert db.calls[2] == "SELECT projet.geofiber_asbuilt_write_allowed()"
+
+
+def test_mode_data_tables_data_fonctions_projet():
+    assert DATA.schema == "data" and DATA.function_schema == "projet"
+    assert PROJET.function_schema == "projet" and PUBLIC.function_schema == "public"
+    assert DATA.points == "data.geofiber_asbuilt_depth_points"
+    assert DATA.segments == "data.geofiber_asbuilt_depth_segments"
+    assert DATA.ungeocoded == "data.geofiber_asbuilt_ungeocoded"
+    assert DATA.connectors == "data.geofiber_asbuilt_depth_connectors"
+    assert DATA.function("fn_asbuilt_locate_on_road") == "projet.fn_asbuilt_locate_on_road"
+    assert mod.write_allowed_sql(DATA) == "SELECT projet.geofiber_asbuilt_write_allowed()"
+    assert mod.segments_upsert_sql(DATA, []).startswith("SELECT projet.fn_asbuilt_segments_upsert(")
+    assert mod.connectors_delete_sql(DATA, ["X1"]).startswith("SELECT projet.fn_asbuilt_connectors_delete(")
+    items = [(0, 1.5, 2.5, "'Rue X'")]
+    assert "LATERAL projet.fn_asbuilt_locate_on_road(" in mod.batch_locate_sql(
+        items, 150.0, DATA.function_schema)
+    text = DATA.describe()
+    assert "data" in text and "596" in text and "projet.fn_asbuilt_segments_upsert" in text
+    # Appels de fonctions et sondes pg_proc : schéma des fonctions, jamais celui des tables.
+    code = _source()
+    assert "nspname = '{self._names.schema}'" not in code
+    for helper in ("batch_locate_sql", "batch_road_geometry_sql", "store_osm_ways_sql"):
+        assert not re.search(helper + r"\([^)]*self\._names\.schema\)", code), helper
+
+
+def test_mode_data_exige_les_ecrivains():
+    assert DATA.uses_writers
+    present = [[sig] for sig in mod.PROJET_REQUIRED_FUNCTIONS
+               if not sig.startswith("fn_asbuilt_segments")]
+    db = _data_db(functions=present)
+    with pytest.raises(AsbuiltSchemaError) as info:
+        mod.detect_asbuilt_schema(db)
+    message = str(info.value)
+    assert "moitié migrée" in message
+    assert "data.geofiber_asbuilt_depth_points" in message
+    assert "projet.fn_asbuilt_segments_upsert(jsonb)" in message
+    assert len(db.calls) == 2
+    with pytest.raises(AsbuiltSchemaError) as info:
+        mod.detect_asbuilt_schema(_data_db(allowed=False))
+    assert "scope PROJET GOFIBER" in str(info.value)

@@ -1,3 +1,32 @@
+GeoFiber As-Built — schéma data (migration Farois 596)
+Version de collection : 1.5.0.
+
+La migration Farois 596 déplace les TABLES As-Built GoFiber
+(geofiber_asbuilt_depth_points, _depth_segments, _depth_connectors,
+geofiber_asbuilt_ungeocoded) du schéma projet vers le schéma data. Les
+FONCTIONS (fn_asbuilt_*, geofiber_asbuilt_write_allowed) restent dans
+projet. Cette version fonctionne avant comme après la 596 : au début de
+chaque exécution, elle cherche la table des points d'abord dans data,
+puis dans projet, sinon elle reste en public (comportement 1.3.0).
+
+- Table dans data : tables lues et écrites dans data, segments et
+  connecteurs écrits par les fonctions projet.fn_asbuilt_*, comme en mode
+  projet. Le journal indique « Schéma As-Built : data ».
+- Table dans projet : comportement identique à la 1.4.0.
+
+Droits : inchangés (login nominatif, scope PROJET GOFIBER en écriture).
+
+À publier AVANT la migration 596 : une 1.4.0 lancée après la 596 ne
+trouve plus projet.geofiber_asbuilt_depth_points et retombe en mode
+public, où les tables n'existent pas.
+
+Projets QGIS existants : les couches As-Built qui pointent vers
+projet.geofiber_asbuilt_* sont repointées vers data par Farois
+(« farois qgis-project relocate-sources », projets enregistrés en base)
+et par le Bridge 2.2 à l'ouverture d'un projet. Les styles par défaut
+de la base suivent les tables (lignes layer_styles passées à data par
+la migration).
+
 GeoFiber As-Built — schéma projet (migration Farois 574)
 Version de collection : 1.4.0.
 
