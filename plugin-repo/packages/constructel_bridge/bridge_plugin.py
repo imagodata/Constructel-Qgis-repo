@@ -60,6 +60,7 @@ from .bridge_presets import (
 from .bridge_expressions import register_expressions, unregister_expressions
 from . import bridge_qgis_store as qgis_store
 from .bridge_projets import NO_CAPABILITIES, projet_layer_schemas
+from .bridge_relocate import relocate_project_layers
 from .bridge_project_archive import write_project_archive
 from .bridge_db_save import (
     bridge_uri,
@@ -1360,6 +1361,11 @@ class ConstructelBridgePlugin:
             self._fix_layer_credentials()
         except Exception as exc:
             self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
+        # 2.2 (Farois mig 596) : couches projet.<t> deplacees -> schema du registre.
+        try:
+            self._relocate_projet_layers()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Repointage des couches de projet metier impossible : {exc}", Qgis.MessageLevel.Warning)
 
         # Volet D2 : lecture seule selon le perimetre, projet Bridge ou non
         # (toute couche de nos serveurs est concernee).
@@ -2427,6 +2433,11 @@ class ConstructelBridgePlugin:
             self._fix_layer_credentials()
         except Exception as exc:
             self._log(f"Fix layer credentials failed: {exc}", Qgis.MessageLevel.Warning)
+        # 2.2 : projet ouvert avant la connexion (registre lu a la connexion).
+        try:
+            self._relocate_projet_layers()
+        except Exception as exc:  # noqa: BLE001 -- jamais bloquant
+            self._log(f"Repointage des couches de projet metier impossible : {exc}", Qgis.MessageLevel.Warning)
 
         try:
             self._check_layer_datasources()
@@ -2866,6 +2877,22 @@ class ConstructelBridgePlugin:
     # =====================================================================
     # Configuration connexion QGIS
     # =====================================================================
+
+    def _relocate_projet_layers(self) -> int:
+        """Bridge 2.2 (spec Farois schema data § 6.4) : les couches
+        ``projet.<t>`` dont le registre (lu a la connexion) place ``<t>`` dans
+        un autre schema (``data`` apres la mig Farois 596) sont repointees, en
+        memoire. Registre illisible (pas de scope PROJET, hors connexion) :
+        aucune modification."""
+        schemas = {table: schema for table, schema in projet_layer_schemas(self._projets).items()
+                   if schema != PROJET_STORE_SCHEMA}
+        if not schemas:
+            return 0
+        moved = relocate_project_layers(QgsProject.instance(), schemas)
+        if moved:
+            self._log(f"{moved} couche(s) de projet metier repointee(s) vers le schema du registre "
+                      f"({', '.join(sorted(set(schemas.values())))})")
+        return moved
 
     def _fix_layer_credentials(self):
         """Reecrit les datasources PG pour utiliser les credentials courants.
